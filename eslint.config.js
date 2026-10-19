@@ -18,4 +18,13 @@ export default tseslint.config(
       "no-void": "off",
     },
   },
+  {
+    files: ["e2e/**/*.mjs"],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      ecmaVersion: 2024,
+      sourceType: "module",
+      globals: globals.node,
+    },
+  },
 );

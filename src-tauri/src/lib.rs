@@ -9,6 +9,7 @@ mod proc;
 mod pty;
 mod quick;
 mod shell_integration;
+mod updater;
 mod usage;
 
 use pty_core::PtyManager;
@@ -51,6 +52,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(PtyManager::default())
         .manage(UsageHub::default())
+        .manage(updater::PendingUpdate::default())
         .setup(|app| {
             agents::reset_bridge_dir();
             if let Err(e) = agents::write_claude_settings() {
@@ -63,6 +65,7 @@ pub fn run() {
             #[cfg(unix)]
             mcp::spawn_socket(app.handle().clone());
             usage::spawn(app.handle().clone());
+            updater::init(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -117,6 +120,9 @@ pub fn run() {
             quick::quick_hide,
             mcp::pane_set_title,
             agents::agent_baseline,
+            updater::update_supported,
+            updater::update_check,
+            updater::update_install,
         ])
         .build(tauri::generate_context!())
         .expect("error while building termCode");

@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { QuickApp } from "./QuickApp";
 import { loadSettings, startSettingsSync } from "./lib/settings";
+import { startUpdateChecks } from "./lib/updates";
 import { useTerminalStore } from "./store/terminalStore";
 import { startBridge } from "./lib/bridge";
 import { startProjectTracking } from "./lib/project";
@@ -60,6 +61,7 @@ async function boot(root: HTMLElement) {
   if (!isQuick) {
     startAutosave();
     startProjectTracking();
+    startUpdateChecks();
   }
 
   ReactDOM.createRoot(root).render(<React.StrictMode>{isQuick ? <QuickApp /> : <App />}</React.StrictMode>);

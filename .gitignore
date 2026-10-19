@@ -25,3 +25,6 @@ dist-ssr
 
 # Rust (workspace)
 /target/
+
+# Capturas de las pruebas e2e fallidas
+/e2e/artifacts/

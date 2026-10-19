@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { X } from "lucide-react";
 import {
   DEFAULT_FONT,
@@ -12,6 +13,8 @@ import {
 import { useTerminalStore } from "../store/terminalStore";
 import { useUiStore } from "../store/uiStore";
 import { cn } from "../lib/layout";
+import { IS_TAURI } from "../lib/ipc";
+import { checkForUpdate, installUpdate, updatesSupported, type UpdateInfo, type UpdateProgress } from "../lib/updates";
 import { IconButton } from "./ui";
 
 /** Fuentes monoespaciadas comunes; solo se ofrecen las que el sistema tiene. */
@@ -254,6 +257,8 @@ const SettingsPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
               onChange={set("holdHints")}
             />
           </Section>
+
+          <AboutSection />
         </div>
 
         <div className="flex shrink-0 items-center justify-between border-t border-line bg-chrome px-4 py-2.5">
@@ -436,5 +441,117 @@ const ShortcutInput: React.FC<{ value: string; onChange: (v: string) => void }> 
       }}
       className="h-8 w-44 select-text rounded-md border border-line bg-canvas px-2.5 font-mono text-[12px] text-ink outline-none focus:border-line-strong"
     />
+  );
+};
+
+type UpdateState =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "current" }
+  | { kind: "available"; info: UpdateInfo }
+  | { kind: "installing"; info: UpdateInfo; progress: UpdateProgress | null }
+  | { kind: "error"; message: string };
+
+const formatMb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
+/** Versión y actualizaciones (solo en compilaciones firmadas para actualizarse). */
+const AboutSection: React.FC = () => {
+  const [version, setVersion] = useState<string | null>(null);
+  const [supported, setSupported] = useState<boolean | null>(null);
+  const [state, setState] = useState<UpdateState>({ kind: "idle" });
+  const askConfirm = useUiStore((s) => s.askConfirm);
+
+  useEffect(() => {
+    if (!IS_TAURI) return;
+    let alive = true;
+    void Promise.all([getVersion().catch(() => null), updatesSupported()]).then(([v, ok]) => {
+      if (!alive) return;
+      setVersion(v);
+      setSupported(ok);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const check = async () => {
+    setState({ kind: "checking" });
+    try {
+      const info = await checkForUpdate();
+      setState(info ? { kind: "available", info } : { kind: "current" });
+    } catch (err) {
+      setState({ kind: "error", message: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  const install = (info: UpdateInfo) =>
+    askConfirm({
+      title: `¿Instalar termCode ${info.version} y reiniciar?`,
+      body: "termCode se cierra y vuelve a abrir: tus pestañas y carpetas se restauran, pero los procesos que estén corriendo en las terminales terminan.",
+      confirmLabel: "Instalar y reiniciar",
+      onConfirm: () => {
+        setState({ kind: "installing", info, progress: null });
+        installUpdate((progress) => setState({ kind: "installing", info, progress })).catch((err: unknown) =>
+          setState({ kind: "error", message: err instanceof Error ? err.message : String(err) }),
+        );
+      },
+    });
+
+  const percent =
+    state.kind === "installing" && state.progress?.total ? Math.round((state.progress.downloaded / state.progress.total) * 100) : null;
+
+  return (
+    <Section title="Acerca de">
+      <Row label="termCode" hint={version ? `Versión ${version}` : "Versión de desarrollo"}>
+        {supported ? (
+          <button
+            type="button"
+            onClick={() => void check()}
+            disabled={state.kind === "checking" || state.kind === "installing"}
+            className="h-7 rounded-md border border-line px-2.5 text-[12px] text-ink-2 hover:bg-hover hover:text-ink disabled:opacity-50"
+          >
+            {state.kind === "checking" ? "Buscando…" : "Buscar actualizaciones"}
+          </button>
+        ) : (
+          <span className="text-[11.5px] text-ink-3">{supported === null ? "" : "Sin actualizaciones automáticas en esta compilación"}</span>
+        )}
+      </Row>
+      {state.kind === "current" && <p className="text-[12px] text-ink-3">Ya tienes la última versión.</p>}
+      {state.kind === "error" && (
+        <p role="alert" className="text-[12px] text-signal">
+          {state.message}
+        </p>
+      )}
+      {(state.kind === "available" || state.kind === "installing") && (
+        <div className="rounded-md border border-amber/50 bg-amber/[0.06] p-3">
+          <p className="text-[13px] text-ink">
+            termCode {state.info.version} disponible
+            <span className="text-ink-3"> · tienes {state.info.currentVersion}</span>
+          </p>
+          {state.info.notes && (
+            <p className="mt-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap text-[12px] leading-relaxed text-ink-2">{state.info.notes}</p>
+          )}
+          <div className="mt-2.5 flex items-center gap-3">
+            {state.kind === "available" ? (
+              <button
+                type="button"
+                onClick={() => install(state.info)}
+                className="h-7 rounded-md bg-amber px-3 text-[12px] font-medium text-on-amber hover:opacity-90"
+              >
+                Instalar y reiniciar
+              </button>
+            ) : (
+              <span className="font-mono text-[12px] text-ink-2" aria-live="polite">
+                {state.progress
+                  ? percent !== null
+                    ? `Descargando… ${percent} %`
+                    : `Descargando… ${formatMb(state.progress.downloaded)}`
+                  : "Preparando…"}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </Section>
   );
 };

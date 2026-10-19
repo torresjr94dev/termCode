@@ -23,9 +23,30 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
+      # Actualizaciones automáticas: solo si existen la llave privada (secreto) y
+      # la pública (variable del repo). Sin ellas la release sale igual, sin updater.
+      - name: Configurar el updater
+        id: updater
+        shell: bash
+        env:
+          PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBKEY" ]; then
+            echo "::warning::Sin TAURI_SIGNING_PRIVATE_KEY o TAURI_UPDATER_PUBKEY: esta release no se actualizará sola."
+            exit 0
+          fi
+          conf="$RUNNER_TEMP/updater.conf.json"
+          jq -n --arg pubkey "$PUBKEY" --arg url "https://github.com/$REPO/releases/latest/download/latest.json" \
+            '{bundle: {createUpdaterArtifacts: true}, plugins: {updater: {pubkey: $pubkey, endpoints: [$url]}}}' > "$conf"
+          echo "args=--config $conf" >> "$GITHUB_OUTPUT"
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Firma de los artefactos de actualización (minisign).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Firma + notarización. Sin estos secretos el build sale sin firmar
           # (Gatekeeper lo bloqueará en otras Macs).
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -38,4 +59,4 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: termCode ${{ github.ref_name }}
           releaseDraft: true
-          args: --target universal-apple-darwin
+          args: --target universal-apple-darwin ${{ steps.updater.outputs.args }}
