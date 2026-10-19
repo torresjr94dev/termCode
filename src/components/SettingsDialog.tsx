@@ -247,6 +247,12 @@ const SettingsPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
               checked={settings.screenReader}
               onChange={set("screenReader")}
             />
+            <Toggle
+              label="Mostrar atajos al mantener ⌘"
+              hint="Medio segundo con ⌘ presionada (sin otra tecla) abre la hoja de atajos"
+              checked={settings.holdHints}
+              onChange={set("holdHints")}
+            />
           </Section>
         </div>
 

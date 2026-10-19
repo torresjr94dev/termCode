@@ -153,7 +153,7 @@ pub async fn git_repo(cwd: String) -> Result<Option<RepoMeta>, String> {
     blocking(move || {
         let meta = repo_meta(Path::new(&cwd));
         if let Some(m) = &meta {
-            log::info!("git: repo {} ({:?})", m.name, m.host);
+            log::debug!("git: repo {} ({:?})", m.name, m.host);
         }
         Ok(meta)
     })

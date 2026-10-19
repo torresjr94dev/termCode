@@ -13,8 +13,12 @@ import { PrDialog } from "./components/project/PrDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { MissionControl } from "./components/MissionControl";
 import { FileFinder } from "./components/FileFinder";
+import { Overview } from "./components/Overview";
+import { ShortcutHints } from "./components/ShortcutHints";
+import { Welcome } from "./components/Welcome";
 import { useTerminalStore } from "./store/terminalStore";
 import { useUiStore } from "./store/uiStore";
+import { settingsNow } from "./store/settingsStore";
 import { terminalManager } from "./terminal/TerminalManager";
 import { actions } from "./lib/actions";
 import { openBranchPicker, openProject } from "./lib/project";
@@ -139,8 +143,9 @@ export const App: React.FC = () => {
         return;
       }
       // Con la paleta o un diálogo abiertos, el resto de atajos no debe actuar a ciegas.
-      if (ui.isPaletteOpen || ui.confirm || ui.isSettingsOpen) return;
+      if (ui.isPaletteOpen || ui.confirm || ui.isSettingsOpen || !settingsNow().onboardingDone) return;
       if (ui.isFinderOpen && shortcut !== "fileFinder") return;
+      if (ui.isOverviewOpen && shortcut !== "overview") return;
       if (ui.isMissionOpen && shortcut !== "missionControl") return;
 
       if (shortcut === "toggleUsage" && useTerminalStore.getState().isUsageDrawerOpen) closeUsage();
@@ -199,6 +204,9 @@ export const App: React.FC = () => {
       <SettingsDialog onClosed={focusActivePane} />
       <MissionControl onClosed={focusActivePane} />
       <FileFinder onClosed={focusActivePane} />
+      <Overview onClosed={focusActivePane} />
+      <ShortcutHints />
+      <Welcome onClosed={focusActivePane} />
       <ConfirmDialog onSettled={focusActivePane} />
       <ToastHost />
     </div>

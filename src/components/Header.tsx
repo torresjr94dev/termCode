@@ -4,7 +4,9 @@ import { useTerminalStore } from "../store/terminalStore";
 import { useProjectStore } from "../store/projectStore";
 import { openProject } from "../lib/project";
 import { actions } from "../lib/actions";
-import { cn, collectPanes, findPane, tabLabel } from "../lib/layout";
+import { cn, collectPanes, findPane } from "../lib/layout";
+import { projectTone, shortCommand, tabDisplayName } from "../lib/identity";
+import { useRunningCommand } from "../terminal/useRunningCommand";
 import { IS_MAC, shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
 import type { ProviderUsage, Tab } from "../types/layout";
 import { terminalManager } from "../terminal/TerminalManager";
@@ -226,9 +228,14 @@ const TabItem: React.FC<TabItemProps> = ({
   onSelect,
 }) => {
   const renameTab = useTerminalStore((s) => s.renameTab);
+  const paneProject = useTerminalStore((s) => s.paneProject);
   const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const label = tabLabel(tab);
+  const label = tabDisplayName(tab, paneProject);
+  const project = paneProject[tab.activePaneId];
+  const running = useRunningCommand(tab.activePaneId);
+  // Si el nombre ya es el comando (p. ej. el título que puso vim), no se repite.
+  const runningHint = running && !label.startsWith(running.split(" ")[0]) ? shortCommand(running, 2) : null;
   const agentType = findPane(tab.root, tab.activePaneId)?.agentType;
   const hint = tabShortcutLabel(index);
   const progress = useTabProgress(tab.activePaneId);
@@ -260,6 +267,18 @@ const TabItem: React.FC<TabItemProps> = ({
           className={cn("absolute inset-y-1 w-0.5 rounded-full bg-amber", dropMarker === "before" ? "-left-1" : "-right-1")}
         />
       )}
+      {/* Franja del proyecto: mismo color para todas las pestañas del mismo repo. */}
+      {project && (
+        <span
+          aria-hidden="true"
+          title={project.name}
+          className={cn(
+            "pointer-events-none absolute inset-x-2.5 top-0 h-[2px] rounded-b-full",
+            projectTone(project.root ?? project.cwd),
+            isActive ? "opacity-90" : "opacity-45",
+          )}
+        />
+      )}
       {editing ? (
         <input
           ref={inputRef}
@@ -277,7 +296,7 @@ const TabItem: React.FC<TabItemProps> = ({
         <button
           type="button"
           aria-current={isActive ? "page" : undefined}
-          title={`${label}${hint ? `  ${hint}` : ""} · doble clic para renombrar`}
+          title={`${label}${project ? ` · ${project.cwd}` : ""}${running ? ` · corriendo: ${running}` : ""}${hint ? `  ${hint}` : ""} · doble clic para renombrar`}
           onClick={onSelect}
           onDoubleClick={() => setEditing(true)}
           onAuxClick={(e) => {
@@ -292,6 +311,7 @@ const TabItem: React.FC<TabItemProps> = ({
           )}
           <AgentGlyph agentType={agentType} className="shrink-0 opacity-80" />
           <span className="max-w-[180px] truncate font-mono text-[12px]">{label}</span>
+          {runningHint && <span className="max-w-[110px] shrink-0 truncate font-mono text-[11px] text-ink-3">{runningHint}</span>}
           {tab.zoomedPaneId && (
             <Maximize2 size={11} strokeWidth={2} aria-label="Panel maximizado" className="shrink-0 text-amber" />
           )}

@@ -1,5 +1,5 @@
 import { LazyStore } from "@tauri-apps/plugin-store";
-import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
+import { isRegistered, register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import { invoke } from "@tauri-apps/api/core";
 import { info as logInfo, warn as logWarn } from "@tauri-apps/plugin-log";
 import { sanitize, useSettingsStore, type Settings } from "../store/settingsStore";
@@ -40,6 +40,9 @@ async function syncQuickShortcut(settings: Settings) {
     if (registeredShortcut) await unregister(registeredShortcut);
     registeredShortcut = null;
     if (wanted) {
+      // Tras recargar el webview (⌘R, HMR) el registro nativo anterior sigue vivo
+      // con un callback muerto: se suelta y se vuelve a registrar con este.
+      if (await isRegistered(wanted)) await unregister(wanted);
       await register(wanted, (event) => {
         if (event.state === "Pressed") void invoke("quick_toggle").catch(() => {});
       });

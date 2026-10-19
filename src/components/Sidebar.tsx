@@ -2,7 +2,8 @@ import React from "react";
 import { Asterisk, GitBranch, Hexagon, SquareTerminal, type LucideIcon } from "lucide-react";
 import { useTerminalStore } from "../store/terminalStore";
 import { actions, AGENTS, type AgentKind } from "../lib/actions";
-import { cn, collectPanes, tabLabel } from "../lib/layout";
+import { cn, collectPanes } from "../lib/layout";
+import { paneDisplayName, projectTone, tabDisplayName } from "../lib/identity";
 import { IS_MAC, shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
 import { Kbd, Lamp, SectionLabel } from "./ui";
 
@@ -12,6 +13,7 @@ export const Sidebar: React.FC = () => {
   const activeTabId = useTerminalStore((s) => s.activeTabId);
   const setActiveTab = useTerminalStore((s) => s.setActiveTab);
   const attention = useTerminalStore((s) => s.attention);
+  const paneProject = useTerminalStore((s) => s.paneProject);
   const agents = useTerminalStore((s) => s.agents);
 
   if (!isOpen) return null;
@@ -34,7 +36,8 @@ export const Sidebar: React.FC = () => {
             {tabs.map((tab, index) => {
               const isActiveTab = tab.id === activeTabId;
               const panes = collectPanes(tab.root);
-              const label = tabLabel(tab);
+              const label = tabDisplayName(tab, paneProject);
+              const project = paneProject[tab.activePaneId];
               const needsAttention = panes.some((p) => p.id in attention);
 
               return (
@@ -58,6 +61,13 @@ export const Sidebar: React.FC = () => {
                       {needsAttention && panes.length === 1 ? <Lamp state="attention" /> : index + 1}
                     </span>
                     <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{label}</span>
+                    {project && (
+                      <span
+                        aria-hidden="true"
+                        title={project.name}
+                        className={cn("mr-1 size-1.5 shrink-0 rounded-full", projectTone(project.root ?? project.cwd))}
+                      />
+                    )}
                   </button>
 
                   {panes.length > 1 && (
@@ -79,7 +89,9 @@ export const Sidebar: React.FC = () => {
                                   pane.id in attention ? "attention" : isFocused ? (isActiveTab ? "on" : "idle") : "off"
                                 }
                               />
-                              <span className="min-w-0 truncate font-mono text-[12px]">{pane.title}</span>
+                              <span className="min-w-0 truncate font-mono text-[12px]">
+                                {paneDisplayName(pane, paneProject[pane.id])}
+                              </span>
                             </button>
                           </li>
                         );

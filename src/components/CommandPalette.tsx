@@ -132,6 +132,7 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       { id: "files", group: "Proyecto", title: "Explorar archivos", icon: FolderTree, shortcut: sc("projectFiles"), run: () => openProject("files") },
 
       { id: "settings", group: "Vista", title: "Ajustes", icon: Settings2, shortcut: sc("settings"), run: actions.openSettings },
+      { id: "overview", group: "Vista", title: "Ver todos los paneles", hint: "miniaturas en vivo", icon: LayoutGrid, shortcut: sc("overview"), run: () => useUiStore.getState().setOverviewOpen(true) },
       { id: "zoom", group: "Vista", title: "Maximizar / restaurar panel", icon: Maximize2, shortcut: sc("zoomPane"), run: actions.toggleZoom },
       { id: "equalize", group: "Vista", title: "Igualar tamaño de paneles", icon: StretchHorizontal, run: actions.equalizeSplits },
       { id: "reopen", group: "Sesión", title: "Reabrir lo último cerrado", icon: Undo2, shortcut: sc("reopenClosed"), run: actions.reopenClosed },

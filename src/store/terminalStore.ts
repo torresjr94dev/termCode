@@ -22,6 +22,14 @@ export interface PaneSpec {
   agentType?: AgentKind | null;
 }
 
+export interface PaneProject {
+  cwd: string;
+  /** Nombre del repo que contiene `cwd`, o la carpeta si no hay repo. */
+  name: string;
+  /** Raíz del repo (null fuera de git): da el color estable del proyecto. */
+  root: string | null;
+}
+
 export interface Attention {
   kind: string;
   message: string;
@@ -89,6 +97,8 @@ interface TerminalState {
   agents: AgentsInfo | null;
   agentStatus: Record<string, AgentStatus>;
   agentActivity: Record<string, AgentActivity>;
+  /** Carpeta y proyecto (repo o carpeta) de cada panel, según la shell (OSC 7). */
+  paneProject: Record<string, PaneProject>;
   attention: Record<string, Attention>;
 
   createTab: (spec?: PaneSpec) => void;
@@ -112,6 +122,7 @@ interface TerminalState {
   setAgents: (agents: AgentsInfo) => void;
   setAgentStatus: (status: AgentStatus) => void;
   setAgentActivity: (activity: AgentActivity) => void;
+  setPaneProject: (paneId: string, project: PaneProject) => void;
   setAttention: (paneId: string, attention: Attention | null) => void;
   hydrate: (session: PersistedSession) => void;
 }
@@ -129,6 +140,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   agents: null,
   agentStatus: {},
   agentActivity: {},
+  paneProject: {},
   attention: {},
 
   createTab: (spec) => {
@@ -152,6 +164,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         activeTabId: fresh.id,
         agentStatus: omit(state.agentStatus, paneIds),
         agentActivity: omit(state.agentActivity, paneIds),
+        paneProject: omit(state.paneProject, paneIds),
         attention: omit(state.attention, paneIds),
       }));
       return;
@@ -164,6 +177,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       activeTabId: nextActive,
       agentStatus: omit(state.agentStatus, paneIds),
       agentActivity: omit(state.agentActivity, paneIds),
+      paneProject: omit(state.paneProject, paneIds),
       attention: omit(state.attention, paneIds),
     }));
   },
@@ -210,6 +224,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       tabs: state.tabs.map((t) => (t.id === owner.id ? { ...t, root, activePaneId, zoomedPaneId } : t)),
       agentStatus: omit(state.agentStatus, [paneId]),
       agentActivity: omit(state.agentActivity, [paneId]),
+      paneProject: omit(state.paneProject, [paneId]),
       attention: omit(state.attention, [paneId]),
     }));
     if (owner.id === activeTabId && activePaneId) {
@@ -297,6 +312,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   setAgentActivity: (activity) => {
     if (!findOwnerTab(get().tabs, activity.paneId)) return;
     set((state) => ({ agentActivity: { ...state.agentActivity, [activity.paneId]: activity } }));
+  },
+
+  setPaneProject: (paneId, project) => {
+    const current = get().paneProject[paneId];
+    if (!findOwnerTab(get().tabs, paneId)) return;
+    if (current?.cwd === project.cwd && current.name === project.name && current.root === project.root) return;
+    set((state) => ({ paneProject: { ...state.paneProject, [paneId]: project } }));
   },
 
   setAttention: (paneId, attention) => {

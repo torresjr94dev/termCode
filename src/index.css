@@ -33,6 +33,14 @@
   --color-add: #a3b865;
   --color-del: #e5604a;
 
+  /* Identidad de proyecto en pestañas: tonos cálidos y apagados, ninguno se confunde con error. */
+  --color-proj-0: #c98a4b;
+  --color-proj-1: #9fb05f;
+  --color-proj-2: #b48ead;
+  --color-proj-3: #8fae8a;
+  --color-proj-4: #d8b98a;
+  --color-proj-5: #c9a227;
+
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
@@ -103,6 +111,12 @@
   --color-signal: #ad2e17;
   --color-add: #42661a;
   --color-del: #b0361c;
+  --color-proj-0: #9a5b22;
+  --color-proj-1: #5f7428;
+  --color-proj-2: #7d4f78;
+  --color-proj-3: #4f7a4a;
+  --color-proj-4: #8a6a3a;
+  --color-proj-5: #8a6d0f;
 }
 
 /* Sintaxis del visor: tonos cálidos (sin cian); los comentarios usan ink-3 (contraste ≥ 4.5:1). */

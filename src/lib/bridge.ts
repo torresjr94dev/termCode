@@ -102,6 +102,33 @@ async function openPath(target: FileLinkTarget) {
   }
 }
 
+/** Raíz de repo por carpeta: un `cd` dentro del mismo proyecto no relanza git. */
+const repoCache = new Map<string, { root: string; name: string } | null>();
+
+async function resolveProject(paneId: string, cwd: string) {
+  const folder = cwd.split("/").filter(Boolean).pop() ?? cwd;
+  // Respuesta inmediata con la carpeta; el repo llega después (o sale de la caché).
+  const cached = repoCache.get(cwd);
+  if (cached !== undefined || !IS_TAURI) {
+    state().setPaneProject(paneId, { cwd, name: cached?.name ?? folder, root: cached?.root ?? null });
+    return;
+  }
+  const previous = state().paneProject[paneId];
+  // Mientras git responde se conserva el proyecto anterior: sin parpadeo de color al hacer cd.
+  if (!previous) state().setPaneProject(paneId, { cwd, name: folder, root: null });
+  try {
+    const { gitApi } = await import("./git");
+    const repo = await gitApi.repo(cwd);
+    const info = repo ? { root: repo.root, name: repo.name } : null;
+    if (repoCache.size > 500) repoCache.clear();
+    repoCache.set(cwd, info);
+    state().setPaneProject(paneId, { cwd, name: info?.name ?? folder, root: info?.root ?? null });
+  } catch {
+    repoCache.set(cwd, null);
+    state().setPaneProject(paneId, { cwd, name: folder, root: null });
+  }
+}
+
 /** La atención se considera vista cuando el panel está al frente y la ventana enfocada. */
 function clearSeenAttention() {
   const { tabs, activeTabId, attention } = state();
@@ -120,6 +147,7 @@ export function startBridge(): () => void {
     onAttention: raiseAttention,
     onCommandFinished,
     onCwd: (paneId, cwd) => {
+      void resolveProject(paneId, cwd);
       if (!integrated.has(paneId)) {
         integrated.add(paneId);
         if (IS_TAURI) void logInfo(`[webview] integración con la shell activa (${paneId.slice(0, 12)}…, ${cwd})`).catch(() => {});

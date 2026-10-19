@@ -28,6 +28,8 @@ export interface Settings {
   /** Los agentes pueden leer la salida de otros paneles (MCP de solo lectura). */
   agentsReadPanes: boolean;
   screenReader: boolean;
+  /** Mantener ⌘ sola muestra la hoja de atajos (macOS). */
+  holdHints: boolean;
   onboardingDone: boolean;
 }
 
@@ -54,6 +56,7 @@ export const DEFAULT_SETTINGS: Settings = {
   quotaGuard: true,
   agentsReadPanes: true,
   screenReader: false,
+  holdHints: true,
   onboardingDone: false,
 };
 
@@ -96,6 +99,7 @@ export function sanitize(input: unknown): Settings {
     quotaGuard: pick("quotaGuard", isBool),
     agentsReadPanes: pick("agentsReadPanes", isBool),
     screenReader: pick("screenReader", isBool),
+    holdHints: pick("holdHints", isBool),
     onboardingDone: pick("onboardingDone", isBool),
   };
 }

@@ -5,6 +5,7 @@ import { terminalManager } from "../terminal/TerminalManager";
 import { actions } from "../lib/actions";
 import { cn, collectPanes } from "../lib/layout";
 import { formatDuration } from "../lib/format";
+import { paneDisplayName } from "../lib/identity";
 import { useNow } from "../lib/useNow";
 import { shortcutLabel } from "../lib/shortcuts";
 import { Lamp } from "./ui";
@@ -14,6 +15,7 @@ export const StatusBar: React.FC = () => {
   const tabs = useTerminalStore((s) => s.tabs);
   const activeTabId = useTerminalStore((s) => s.activeTabId);
   const isBroadcastEnabled = useTerminalStore((s) => s.isBroadcastEnabled);
+  const paneProject = useTerminalStore((s) => s.paneProject);
 
   const tabIndex = tabs.findIndex((t) => t.id === activeTabId);
   const tab = tabs[tabIndex];
@@ -44,7 +46,7 @@ export const StatusBar: React.FC = () => {
         {activePane && (
           <span className="flex min-w-0 items-center gap-2">
             <Lamp state="on" />
-            <span className="truncate text-ink-2">{activePane.title}</span>
+            <span className="truncate text-ink-2">{paneDisplayName(activePane, paneProject[activePane.id])}</span>
             {panes.length > 1 && (
               <span className="shrink-0 tabular-nums">
                 panel {paneIndex + 1}/{panes.length}
