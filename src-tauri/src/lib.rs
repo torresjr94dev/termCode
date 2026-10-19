@@ -1,7 +1,9 @@
 //! termCode desktop app: Tauri commands bridging the webview and `pty-core`.
 
 pub mod agents;
+mod fs;
 mod git;
+mod proc;
 mod pty;
 mod usage;
 
@@ -64,7 +66,25 @@ pub fn run() {
             usage::usage_get,
             usage::usage_refresh,
             agents::agents_info,
-            git::git_worktree_create,
+            git::worktree::git_worktree_create,
+            git::git_repo,
+            git::git_status,
+            git::git_diff,
+            git::git_stage,
+            git::git_unstage,
+            git::git_discard,
+            git::git_commit,
+            git::git_push,
+            git::git_pull,
+            git::git_log,
+            git::git_commit_detail,
+            git::git_commit_diff,
+            git::pr::pr_status,
+            git::pr::pr_create,
+            git::ai::ai_commit_message,
+            git::ai::ai_pr_description,
+            fs::fs_list,
+            fs::fs_read,
         ])
         .build(tauri::generate_context!())
         .expect("error while building termCode");

@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::process::Command;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Pane that owns the process (set by the app in every PTY it spawns).
@@ -314,79 +314,95 @@ fn scan(app: &AppHandle, seen: &mut HashMap<PathBuf, SystemTime>) {
 }
 
 // ---------------------------------------------------------------------------
-// Agent availability (is `claude` / `codex` on the user's PATH?)
+// Tools on the user's PATH (claude, codex, gh)
 // ---------------------------------------------------------------------------
+
+/// Where the user's tools live, as seen by their login + interactive shell.
+/// GUI apps on macOS do not inherit the PATH set up in .zshrc / nvm / brew,
+/// so anything we spawn ourselves (claude -p, gh) uses this PATH.
+#[derive(Debug, Clone, Default)]
+pub struct Tools {
+    pub claude: Option<String>,
+    pub codex: Option<String>,
+    pub gh: Option<String>,
+    pub path: Option<String>,
+}
+
+static TOOLS: parking_lot::Mutex<Option<Tools>> = parking_lot::Mutex::new(None);
+
+#[cfg(unix)]
+fn detect_tools() -> Tools {
+    let script = r#"printf '\n__TC_claude=%s\n__TC_codex=%s\n__TC_gh=%s\n__TC_path=%s\n' "$(command -v claude)" "$(command -v codex)" "$(command -v gh)" "$PATH""#;
+    let mut cmd = Command::new(pty_core::user_shell());
+    cmd.args(["-l", "-i", "-c", script]);
+    let Ok(out) = crate::proc::run(cmd, None, Duration::from_secs(8), 64 * 1024) else {
+        return Tools::default();
+    };
+    let text = out.stdout_str();
+    let find = |key: &str| {
+        text.lines()
+            .find_map(|l| l.strip_prefix(key))
+            .map(str::trim)
+            .filter(|v| v.starts_with('/'))
+            .map(str::to_owned)
+    };
+    Tools {
+        claude: find("__TC_claude="),
+        codex: find("__TC_codex="),
+        gh: find("__TC_gh="),
+        path: find("__TC_path="),
+    }
+}
+
+#[cfg(not(unix))]
+fn detect_tools() -> Tools {
+    Tools::default()
+}
+
+/// Cached detection (first call blocks ~1 s while the login shell starts).
+pub fn tools() -> Tools {
+    if let Some(cached) = TOOLS.lock().clone() {
+        return cached;
+    }
+    refresh_tools()
+}
+
+fn refresh_tools() -> Tools {
+    let fresh = detect_tools();
+    *TOOLS.lock() = Some(fresh.clone());
+    fresh
+}
+
+/// A command for one of the user's tools, with their login PATH.
+pub fn tool_command(binary: &str) -> Command {
+    let mut cmd = Command::new(binary);
+    if let Some(path) = tools().path {
+        cmd.env("PATH", path);
+    }
+    // Never route helper invocations through the agent bridge.
+    cmd.env_remove(ENV_PANE).env_remove(ENV_STATE_DIR);
+    cmd
+}
 
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentsInfo {
     pub claude: Option<String>,
     pub codex: Option<String>,
+    pub gh: Option<String>,
     pub claude_settings_path: Option<String>,
-}
-
-/// Asks the user's login + interactive shell, which is what the PTY will use
-/// (GUI apps on macOS do not inherit the PATH set up in .zshrc / nvm).
-#[cfg(unix)]
-fn detect_on_path() -> (Option<String>, Option<String>) {
-    let shell = pty_core::user_shell();
-    let script = r#"printf '\n__TC_claude=%s\n__TC_codex=%s\n' "$(command -v claude)" "$(command -v codex)""#;
-    let Ok(mut child) = Command::new(&shell)
-        .args(["-l", "-i", "-c", script])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return (None, None);
-    };
-
-    let mut stdout = child.stdout.take();
-    let reader = std::thread::spawn(move || {
-        let mut out = String::new();
-        if let Some(s) = stdout.as_mut() {
-            let _ = s.take(64 * 1024).read_to_string(&mut out);
-        }
-        out
-    });
-
-    let deadline = Instant::now() + Duration::from_secs(8);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(40)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break;
-            }
-        }
-    }
-    let out = reader.join().unwrap_or_default();
-    let find = |key: &str| {
-        out.lines()
-            .find_map(|l| l.strip_prefix(key))
-            .map(str::trim)
-            .filter(|p| p.starts_with('/'))
-            .map(str::to_owned)
-    };
-    (find("__TC_claude="), find("__TC_codex="))
-}
-
-#[cfg(not(unix))]
-fn detect_on_path() -> (Option<String>, Option<String>) {
-    (None, None)
 }
 
 #[tauri::command]
 pub async fn agents_info() -> AgentsInfo {
-    let (claude, codex) = tauri::async_runtime::spawn_blocking(detect_on_path)
+    let tools = tauri::async_runtime::spawn_blocking(refresh_tools)
         .await
         .unwrap_or_default();
     let settings = state_dir().join("claude-settings.json");
     AgentsInfo {
-        claude,
-        codex,
+        claude: tools.claude,
+        codex: tools.codex,
+        gh: tools.gh,
         claude_settings_path: settings
             .is_file()
             .then(|| settings.to_string_lossy().into_owned()),

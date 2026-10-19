@@ -5,7 +5,9 @@
 //! created from the current HEAD. Git is invoked directly (no shell), and the
 //! label is validated, so no user input reaches a command line unescaped.
 
+use super::git;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::process::Command;
 
 fn valid_label(label: &str) -> bool {
@@ -17,27 +19,13 @@ fn valid_label(label: &str) -> bool {
         && !label.starts_with('-')
 }
 
-fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .map_err(|e| format!("No se pudo ejecutar git: {e}"))?;
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
-    }
-}
-
 fn create(cwd: &Path, label: &str) -> Result<PathBuf, String> {
     if !valid_label(label) {
         return Err("Etiqueta inválida para el worktree.".into());
     }
     let top = git(cwd, &["rev-parse", "--show-toplevel"])
         .map_err(|_| "La carpeta del panel no está dentro de un repositorio git.".to_owned())?;
-    let top = PathBuf::from(top);
+    let top = PathBuf::from(top.trim());
     let name = top
         .file_name()
         .and_then(|n| n.to_str())
