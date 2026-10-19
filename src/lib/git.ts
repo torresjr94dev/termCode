@@ -124,6 +124,10 @@ export interface FilePreview {
   size: number;
   truncated: boolean;
   binary: boolean;
+  /** UTF-8 válido: solo entonces se puede editar sin dañarlo. */
+  utf8: boolean;
+  /** Versión en disco al leerlo (para detectar cambios de otros). */
+  version: string;
   absolute: string;
 }
 
@@ -184,6 +188,11 @@ export const gitApi = {
   files: (root: string) => call<string[]>("fs_files", { root }),
   list: (root: string, path: string) => call<FsEntry[]>("fs_list", { root, path }),
   read: (root: string, path: string) => call<FilePreview>("fs_read", { root, path }),
+  readImage: (root: string, path: string) => call<ArrayBuffer>("fs_read_image", { root, path }),
+  /** Devuelve la versión nueva. `expectedVersion` null = sobrescribir aunque haya cambiado. */
+  writeFile: (root: string, path: string, content: string, expectedVersion: string | null) =>
+    call<string>("fs_write", { root, path, content, expectedVersion }),
+  fileVersion: (root: string, path: string) => call<string>("fs_version", { root, path }),
 };
 
 /** Cambio preparado (en el índice). */

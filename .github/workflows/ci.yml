@@ -14,6 +14,7 @@ permissions:
 jobs:
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4 # versión desde "packageManager"
@@ -26,8 +27,25 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
       - run: pnpm build
-      # Chrome viene preinstalado en ubuntu-latest; el runner levanta su propio Vite.
+
+  e2e:
+    # macOS: es la plataforma que se distribuye. En Linux, el Chromium headless con
+    # GL por software se bloquea al crear la segunda terminal (no es la app:
+    # E2E_PLATFORM=linux en macOS pasa completo).
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Chrome viene preinstalado en el runner; las pruebas levantan su propio Vite.
       - run: pnpm e2e
+        env:
+          E2E_DIAG: "1"
       - name: Capturas de e2e fallidas
         if: failure()
         uses: actions/upload-artifact@v4
@@ -39,6 +57,7 @@ jobs:
   rust:
     # macOS: los tests del PTY usan proc_pidinfo y Tauri no necesita dependencias de sistema.
     runs-on: macos-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4

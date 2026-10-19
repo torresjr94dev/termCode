@@ -5,6 +5,8 @@ export interface ConfirmRequest {
   body: string;
   confirmLabel: string;
   onConfirm: () => void;
+  /** Se llama si se cancela (Esc, botón o clic fuera). */
+  onCancel?: () => void;
 }
 
 export interface Toast {
@@ -70,6 +72,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     const request = get().confirm;
     set({ confirm: null });
     if (accepted) request?.onConfirm();
+    else request?.onCancel?.();
   },
 
   showToast: (text, tone = "info") => {

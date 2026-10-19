@@ -1,16 +1,32 @@
-//! Read-only file access for the Project panel (tree + preview).
+//! File access for the Project panel: tree, preview, images and editing.
 //!
 //! Every path is resolved inside the project root sent by the webview: no
 //! absolute paths, no `..`, and the canonical result must stay under the
-//! canonical root (symlinks pointing outside are refused).
+//! canonical root (symlinks pointing outside are refused). Writes only replace
+//! existing regular files, never touch `.git/`, and refuse to overwrite a file
+//! that changed on disk since it was read (an agent may be editing it too).
 
 use crate::git;
 use serde::Serialize;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 const MAX_ENTRIES: usize = 5_000;
-const MAX_PREVIEW: u64 = 512 * 1024;
+/// Text files up to this size open (and can be edited) in the viewer.
+const MAX_PREVIEW: u64 = 2 * 1024 * 1024;
+const MAX_IMAGE: u64 = 30 * 1024 * 1024;
+const MAX_WRITE: usize = 4 * 1024 * 1024;
+
+/// Identity of a file's content on disk: changes whenever someone writes it.
+fn version_of(meta: &std::fs::Metadata) -> String {
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos());
+    format!("{modified}:{}", meta.len())
+}
 
 fn resolve(root: &str, rel: &str) -> Result<(PathBuf, PathBuf), String> {
     let root = Path::new(root);
@@ -199,6 +215,10 @@ pub struct Preview {
     pub size: u64,
     pub truncated: bool,
     pub binary: bool,
+    /// Valid UTF-8: only then can it be edited without corrupting it.
+    pub utf8: bool,
+    /// Pass back to [`fs_write`] to detect concurrent changes.
+    pub version: String,
     /// Absolute path (for "copy path", "reveal in Finder", pasting into a pane).
     pub absolute: String,
 }
@@ -214,6 +234,12 @@ fn read(root: &str, rel: &str) -> Result<Preview, String> {
         .and_then(|f| f.take(MAX_PREVIEW).read_to_end(&mut buf))
         .map_err(|e| format!("No se puede leer el archivo: {e}"))?;
     let binary = buf.iter().take(8192).any(|&b| b == 0);
+    let truncated = meta.len() > MAX_PREVIEW;
+    // Recortado, el final puede caer a mitad de un carácter: eso no cuenta como inválido.
+    let utf8 = match std::str::from_utf8(&buf) {
+        Ok(_) => true,
+        Err(e) => truncated && e.error_len().is_none(),
+    };
     Ok(Preview {
         text: if binary {
             String::new()
@@ -221,8 +247,10 @@ fn read(root: &str, rel: &str) -> Result<Preview, String> {
             String::from_utf8_lossy(&buf).into_owned()
         },
         size: meta.len(),
-        truncated: meta.len() > MAX_PREVIEW,
+        truncated,
         binary,
+        utf8: utf8 && !binary,
+        version: version_of(&meta),
         absolute: file.to_string_lossy().into_owned(),
     })
 }
@@ -232,6 +260,133 @@ pub async fn fs_read(root: String, path: String) -> Result<Preview, String> {
     tauri::async_runtime::spawn_blocking(move || read(&root, &path))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Image formats the webview can show, recognised by their first bytes (the
+/// extension alone could lie). SVG goes into an `<img>`, where scripts never run.
+fn is_image(head: &[u8], rel: &str) -> bool {
+    let starts = |magic: &[u8]| head.starts_with(magic);
+    let brand = head.get(4..12);
+    starts(b"\x89PNG\r\n\x1a\n")
+        || starts(&[0xff, 0xd8, 0xff])
+        || starts(b"GIF87a")
+        || starts(b"GIF89a")
+        || (starts(b"RIFF") && head.get(8..12) == Some(b"WEBP"))
+        || starts(b"BM")
+        || starts(&[0, 0, 1, 0])
+        || starts(b"II*\0")
+        || starts(b"MM\0*")
+        || matches!(brand, Some(b) if b == b"ftypavif" || b == b"ftypavis")
+        || (rel.to_ascii_lowercase().ends_with(".svg") && {
+            let text = String::from_utf8_lossy(&head[..head.len().min(1024)]).to_ascii_lowercase();
+            text.contains("<svg")
+        })
+}
+
+fn read_image(root: &str, rel: &str) -> Result<Vec<u8>, String> {
+    let (_, file) = resolve(root, rel)?;
+    let meta = std::fs::metadata(&file).map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err("No es un archivo.".into());
+    }
+    if meta.len() > MAX_IMAGE {
+        return Err(format!(
+            "La imagen pesa {} MB: demasiado para previsualizarla aquí.",
+            meta.len() >> 20
+        ));
+    }
+    let bytes = std::fs::read(&file).map_err(|e| format!("No se puede leer la imagen: {e}"))?;
+    if !is_image(&bytes[..bytes.len().min(1024)], rel) {
+        return Err("El archivo no es una imagen que se pueda mostrar.".into());
+    }
+    Ok(bytes)
+}
+
+/// Raw bytes (binary IPC, no base64): the webview turns them into a blob URL.
+#[tauri::command]
+pub async fn fs_read_image(root: String, path: String) -> Result<tauri::ipc::Response, String> {
+    tauri::async_runtime::spawn_blocking(move || read_image(&root, &path))
+        .await
+        .map_err(|e| e.to_string())?
+        .map(tauri::ipc::Response::new)
+}
+
+/// Current version of a file, to notice when someone else changed it.
+#[tauri::command]
+pub async fn fs_version(root: String, path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (_, file) = resolve(&root, &path)?;
+        std::fs::metadata(&file)
+            .map(|m| version_of(&m))
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+pub(crate) const CHANGED_ON_DISK: &str = "El archivo cambió en disco desde que lo abriste.";
+
+/// Replaces an existing file atomically (temp file + rename, same permissions).
+/// `expected`: the version that was read; `None` overwrites whatever is there.
+fn write(root: &str, rel: &str, content: &str, expected: Option<&str>) -> Result<String, String> {
+    if content.len() > MAX_WRITE {
+        return Err("El contenido es demasiado grande para guardarlo desde aquí.".into());
+    }
+    if Path::new(rel).components().any(|c| c.as_os_str() == ".git") {
+        return Err("Los archivos de .git no se editan desde aquí.".into());
+    }
+    let (_, file) = resolve(root, rel)?;
+    let meta = std::fs::metadata(&file).map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err("No es un archivo.".into());
+    }
+    if expected.is_some_and(|v| v != version_of(&meta)) {
+        return Err(CHANGED_ON_DISK.into());
+    }
+    let dir = file.parent().ok_or("Ruta inválida.")?;
+    let name = file
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("Nombre de archivo inválido.")?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let tmp = dir.join(format!(
+        ".{name}.termcode-{}-{nonce}.tmp",
+        std::process::id()
+    ));
+    let written = (|| -> std::io::Result<()> {
+        // create_new: nunca se sigue un enlace ni se pisa nada que ya exista con ese nombre.
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        out.write_all(content.as_bytes())?;
+        out.sync_all()?;
+        std::fs::set_permissions(&tmp, meta.permissions())?;
+        std::fs::rename(&tmp, &file)
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("No se pudo guardar: {e}"));
+    }
+    std::fs::metadata(&file)
+        .map(|m| version_of(&m))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn fs_write(
+    root: String,
+    path: String,
+    content: String,
+    expected_version: Option<String>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        write(&root, &path, &content, expected_version.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(all(test, unix))]
@@ -300,6 +455,88 @@ mod tests {
         assert!(read(&root, "/etc/passwd").is_err());
         std::os::unix::fs::symlink("/etc", dir.join("fuga")).unwrap();
         assert!(list(&root, "fuga").is_err(), "symlink outside the root");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn recognises_images_by_content() {
+        let dir = fixture("recognises_images");
+        let root = dir.to_string_lossy().into_owned();
+        let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+        std::fs::write(dir.join("logo.png"), png).unwrap();
+        std::fs::write(
+            dir.join("icono.svg"),
+            "<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+        )
+        .unwrap();
+        std::fs::write(dir.join("falsa.png"), "no soy una imagen").unwrap();
+        assert_eq!(read_image(&root, "logo.png").unwrap(), png);
+        assert!(read_image(&root, "icono.svg").is_ok());
+        assert!(
+            read_image(&root, "falsa.png").is_err(),
+            "la extensión no basta"
+        );
+        assert!(read_image(&root, "../afuera.png").is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn writes_atomically_and_detects_concurrent_changes() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = fixture("writes");
+        let root = dir.to_string_lossy().into_owned();
+        let path = dir.join("A.md");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+
+        let opened = read(&root, "A.md").unwrap();
+        assert!(opened.utf8);
+        let v2 = write(&root, "A.md", "# editado\n", Some(&opened.version)).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# editado\n");
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+
+        // Otro proceso (un agente) cambia el archivo: la versión vieja ya no sirve.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::fs::write(&path, "# del agente\n").unwrap();
+        assert_eq!(
+            write(&root, "A.md", "# mío\n", Some(&v2)).unwrap_err(),
+            CHANGED_ON_DISK
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# del agente\n");
+        // Sobrescribir a sabiendas.
+        write(&root, "A.md", "# mío\n", None).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# mío\n");
+
+        // Ningún temporal queda tirado.
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains(".termcode-"))
+            .collect();
+        assert!(leftovers.is_empty());
+
+        assert!(write(&root, "../fuera.md", "x", None).is_err());
+        assert!(write(&root, "src", "x", None).is_err(), "carpeta");
+        assert!(
+            write(&root, "nuevo.md", "x", None).is_err(),
+            "solo archivos existentes"
+        );
+        std::fs::create_dir_all(dir.join(".git/hooks")).unwrap();
+        std::fs::write(dir.join(".git/hooks/pre-commit"), "").unwrap();
+        assert!(write(&root, ".git/hooks/pre-commit", "rm -rf /", None).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn flags_non_utf8_files_as_not_editable() {
+        let dir = fixture("latin1");
+        let root = dir.to_string_lossy().into_owned();
+        std::fs::write(dir.join("viejo.txt"), b"caf\xe9 con leche").unwrap();
+        let p = read(&root, "viejo.txt").unwrap();
+        assert!(!p.binary);
+        assert!(!p.utf8, "editarlo lo convertiría a UTF-8 y lo dañaría");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

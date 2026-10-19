@@ -27,6 +27,11 @@ const ARTIFACTS = join(ROOT, "e2e", "artifacts");
 const VITE_PORT = Number(process.env.E2E_PORT ?? 1437);
 const CDP_PORT = Number(process.env.E2E_CDP_PORT ?? 9347);
 const filter = process.argv.slice(2).find((a) => a !== "--");
+const TEST_TIMEOUT_MS = 30_000;
+/** E2E_DIAG=1: si la página se cuelga, imprime la pila del JavaScript que la bloquea. */
+const DIAG = Boolean(process.env.E2E_DIAG);
+// Tope de toda la corrida: pase lo que pase, CI no se queda esperando horas.
+const RUN_TIMEOUT_MS = 4 * 60_000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -60,7 +65,7 @@ async function waitForHttp(url, timeoutMs) {
 }
 
 function startVite() {
-  const vite = spawn(process.execPath, [join(ROOT, "node_modules/vite/bin/vite.js"), "--port", String(VITE_PORT), "--strictPort", "--host", "127.0.0.1"], {
+  const vite = spawn(process.execPath, [join(ROOT, "node_modules/vite/bin/vite.js"), "--config", join(ROOT, "e2e/vite.config.ts"), "--port", String(VITE_PORT), "--strictPort", "--host", "127.0.0.1"], {
     cwd: ROOT,
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, BROWSER: "none" },
@@ -84,7 +89,15 @@ function startChrome(profile) {
   ];
   // Los runners de Ubuntu restringen los user namespaces que usa el sandbox.
   if (process.platform === "linux" && process.env.CI) args.unshift("--no-sandbox");
-  return spawn(findChrome(), args, { stdio: "ignore" });
+  // Flags extra para depurar (p. ej. E2E_CHROME_ARGS="--disable-gpu" emula un runner sin GPU).
+  if (process.env.E2E_CHROME_ARGS) args.unshift(...process.env.E2E_CHROME_ARGS.split(/\s+/).filter(Boolean));
+  if (DIAG) args.unshift("--enable-logging=stderr", "--v=0");
+  const chrome = spawn(findChrome(), args, { stdio: ["ignore", "ignore", DIAG ? "pipe" : "ignore"] });
+  if (DIAG) {
+    chrome.log = "";
+    chrome.stderr.on("data", (d) => (chrome.log = (chrome.log + d).slice(-20_000)));
+  }
+  return chrome;
 }
 
 /* ------------------------------------------------------------------ */
@@ -111,6 +124,7 @@ async function connect() {
   let seq = 0;
   const pending = new Map();
   const errors = [];
+  let onPaused = null;
   ws.addEventListener("message", (event) => {
     const msg = JSON.parse(event.data);
     if (msg.id && pending.has(msg.id)) {
@@ -118,6 +132,13 @@ async function connect() {
       pending.delete(msg.id);
       if (msg.error) reject(new Error(msg.error.message));
       else resolve(msg.result);
+    } else if (msg.method === "Page.javascriptDialogOpening") {
+      errors.push(`diálogo ${msg.params.type} abierto: ${msg.params.message}`);
+    } else if (msg.method === "Inspector.targetCrashed") {
+      errors.push("el renderer de la página se cayó (Inspector.targetCrashed)");
+      if (DIAG) console.log("    [diag] el renderer se cayó");
+    } else if (msg.method === "Debugger.paused") {
+      onPaused?.(msg.params.callFrames);
     } else if (msg.method === "Runtime.exceptionThrown") {
       const d = msg.params.exceptionDetails;
       errors.push(d.exception?.description ?? d.text);
@@ -125,13 +146,41 @@ async function connect() {
       errors.push(msg.params.args.map((a) => a.value ?? a.description).join(" "));
     }
   });
-  const send = (method, params = {}) =>
+  // Una página colgada no debe colgar la corrida: cada llamada tiene plazo.
+  const send = (method, params = {}, timeoutMs = 15_000) =>
     new Promise((resolve, reject) => {
       const id = ++seq;
-      pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(`CDP ${method} no respondió en ${timeoutMs / 1000} s (¿página colgada?)`));
+      }, timeoutMs);
+      pending.set(id, {
+        resolve: (v) => (clearTimeout(timer), resolve(v)),
+        reject: (e) => (clearTimeout(timer), reject(e)),
+      });
       ws.send(JSON.stringify({ id, method, params }));
     });
-  return { ws, send, errors };
+  /**
+   * Diagnóstico de una página colgada: pausa el JavaScript que esté corriendo
+   * y devuelve la pila. Requiere haber habilitado Debugger antes (E2E_DIAG=1).
+   */
+  const stackOfHang = async () => {
+    const frames = new Promise((resolve) => {
+      onPaused = resolve;
+      setTimeout(() => resolve(null), 5000);
+    });
+    await send("Debugger.pause", {}, 5000).catch(() => {});
+    const callFrames = await frames;
+    onPaused = null;
+    if (!callFrames) return "(no se pudo pausar: el bloqueo no es JavaScript)";
+    await send("Debugger.resume", {}, 5000).catch(() => {});
+    return callFrames
+      .slice(0, 20)
+      .map((f) => `${f.functionName || "(anónima)"}  ${f.url.replace(/^https?:\/\/[^/]+/, "")}:${f.location.lineNumber + 1}`)
+      .join("\n      ");
+  };
+
+  return { ws, send, errors, stackOfHang };
 }
 
 /* ------------------------------------------------------------------ */
@@ -196,6 +245,13 @@ function makePage(cdp) {
 
   const type = (text) => cdp.send("Input.insertText", { text });
 
+  /** ⌘ en macOS, Ctrl en el resto (como "Mod" de CodeMirror). */
+  let mac;
+  const pressMod = async (key) => {
+    mac ??= await run(`return (await mod("/src/lib/shortcuts.ts")).IS_MAC;`);
+    await press(key, mac ? 4 : 2);
+  };
+
   const click = (selector, text) =>
     evaluate(`(() => {
       const els = [...document.querySelectorAll(${JSON.stringify(selector)})];
@@ -213,7 +269,7 @@ function makePage(cdp) {
     writeFileSync(join(ARTIFACTS, `${name}.png`), Buffer.from(data, "base64"));
   };
 
-  return { evaluate, run, waitFor, press, shortcut, type, click, screenshot };
+  return { evaluate, run, waitFor, press, pressMod, shortcut, type, click, screenshot };
 }
 
 /* ------------------------------------------------------------------ */
@@ -322,6 +378,75 @@ const TESTS = [
     },
   },
   {
+    name: "imagen",
+    async run(p) {
+      await p.run(`
+        const { gitApi } = await mod("/src/lib/git.ts");
+        const { useProjectStore } = await mod("/src/store/projectStore.ts");
+        const project = await mod("/src/lib/project.ts");
+        // Un PNG real de 40×24 dibujado en la página.
+        const canvas = document.createElement("canvas");
+        canvas.width = 40; canvas.height = 24;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#ffb224"; ctx.fillRect(0, 0, 40, 24);
+        const png = await new Promise((r) => canvas.toBlob(r, "image/png"));
+        const bytes = await png.arrayBuffer();
+        gitApi.readImage = async () => bytes;
+        useProjectStore.setState({ cwd: "/repo-e2e", repo: null });
+        await project.openFile("assets/logo.png");`);
+      await p.waitFor(`document.querySelector('[data-viewer] img')?.naturalWidth === 40`, "la imagen se dibuja");
+      await p.waitFor(`document.querySelector('[data-viewer]').textContent.includes("40×24")`, "muestra sus dimensiones");
+      await p.press("Escape");
+      await p.waitFor(`!document.querySelector("[data-viewer]")`, "Esc cierra la imagen");
+    },
+  },
+  {
+    name: "editar-y-guardar",
+    async run(p) {
+      await p.run(`
+        const { gitApi } = await mod("/src/lib/git.ts");
+        const { useProjectStore } = await mod("/src/store/projectStore.ts");
+        const project = await mod("/src/lib/project.ts");
+        useProjectStore.setState({ cwd: "/repo-e2e", repo: null });
+        window.__writes = [];
+        window.__failNext = false;
+        gitApi.read = async (_root, path) => ({ text: "export const a = 1;\\n", size: 20, truncated: false, binary: false, utf8: true, version: "v1", absolute: "/repo-e2e/" + path });
+        gitApi.fileVersion = async () => window.__writes.length ? "v" + (window.__writes.length + 1) : "v1";
+        gitApi.writeFile = async (_root, _path, content, expected) => {
+          if (window.__failNext) { window.__failNext = false; throw new Error("El archivo cambió en disco desde que lo abriste."); }
+          window.__writes.push({ content, expected });
+          return "v" + (window.__writes.length + 1);
+        };
+        await project.openFile("src/notas.ts");`);
+      await p.waitFor(`document.querySelector("[data-viewer] .cm-content")`, "el editor se abre");
+      await p.evaluate(`document.querySelector("[data-viewer] .cm-content").focus(), true`);
+      await p.type("// hola\n");
+      await p.waitFor(`document.querySelector("[data-viewer]").textContent.includes("Sin guardar")`, "marca cambios sin guardar");
+      await p.pressMod("s");
+      const first = await p.waitFor(`window.__writes[0]`, "⌘S guarda");
+      if (first.content !== "// hola\nexport const a = 1;\n" || first.expected !== "v1") {
+        throw new Error(`Guardado inesperado: ${JSON.stringify(first)}`);
+      }
+      await p.waitFor(`!document.querySelector("[data-viewer]").textContent.includes("Sin guardar")`, "queda guardado");
+
+      // Alguien más cambió el archivo: no se pisa sin preguntar.
+      await p.evaluate(`window.__failNext = true`);
+      await p.type("x");
+      await p.pressMod("s");
+      await p.waitFor(`document.querySelector('[data-viewer] [role="alert"]')?.textContent.includes("cambió en disco")`, "avisa del cambio en disco");
+      await p.click("[data-viewer] button", "Sobrescribir con lo mío");
+      const forced = await p.waitFor(`window.__writes[1]`, "sobrescribe a sabiendas");
+      if (forced.expected !== null) throw new Error("Sobrescribir debe ignorar la versión");
+
+      // Esc con cambios: pregunta antes de cerrar.
+      await p.type("y");
+      await p.press("Escape");
+      await p.waitFor(`[...document.querySelectorAll("button")].some((b) => b.textContent.includes("Descartar cambios"))`, "pide confirmar");
+      await p.click("button", "Descartar cambios");
+      await p.waitFor(`!document.querySelector("[data-viewer]")`, "se cierra tras confirmar");
+    },
+  },
+  {
     name: "vista-general",
     async run(p) {
       await p.shortcut("newTab");
@@ -346,6 +471,11 @@ const TESTS = [
 /* ------------------------------------------------------------------ */
 
 async function main() {
+  const watchdog = setTimeout(() => {
+    console.error(`e2e: la corrida excedió ${RUN_TIMEOUT_MS / 60_000} min; se aborta.`);
+    process.exit(1);
+  }, RUN_TIMEOUT_MS);
+  watchdog.unref();
   const selected = TESTS.filter((t) => !filter || t.name.includes(filter));
   if (!selected.length) throw new Error(`Ninguna prueba coincide con «${filter}».`);
 
@@ -361,27 +491,55 @@ async function main() {
     const cdp = await connect();
     await cdp.send("Page.enable");
     await cdp.send("Runtime.enable");
+    if (DIAG) await cdp.send("Debugger.enable");
+    // E2E_PLATFORM=linux en una Mac: prueba la ruta de atajos de Linux/Windows (Ctrl+Shift).
+    if (process.env.E2E_PLATFORM === "linux") {
+      await cdp.send("Emulation.setUserAgentOverride", {
+        userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36",
+        platform: "Linux x86_64",
+      });
+    }
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
     await cdp.send("Page.navigate", { url: `http://127.0.0.1:${VITE_PORT}/` });
     const page = makePage(cdp);
     await page.waitFor(`document.querySelector("#root")?.childElementCount > 0`, "la app arranca", 20_000);
+    if (DIAG) {
+      const mac = await page.run(`return (await mod("/src/lib/shortcuts.ts")).IS_MAC;`);
+      console.log(`  [diag] plataforma: ${await page.evaluate("navigator.platform")} · IS_MAC=${mac}`);
+    }
 
     // Las pruebas comparten la página (como un usuario): el orden importa.
     for (const test of TESTS) {
       if (!selected.includes(test) && test.name !== "bienvenida-primera-vez") continue;
       const started = Date.now();
       try {
-        await test.run(page);
+        await Promise.race([
+          test.run(page),
+          sleep(TEST_TIMEOUT_MS).then(() => {
+            throw new Error(`excedió ${TEST_TIMEOUT_MS / 1000} s`);
+          }),
+        ]);
         if (selected.includes(test)) console.log(`  ✓ ${test.name} (${Date.now() - started} ms)`);
       } catch (err) {
         failed++;
         console.log(`  ✗ ${test.name}: ${err.message}`);
+        if (DIAG && /no respondió/.test(err.message)) {
+          console.log(`    pila del bloqueo:\n      ${await cdp.stackOfHang()}`);
+          console.log(`    errores vistos: ${cdp.errors.join(" | ") || "ninguno"}`);
+          const tail = (chrome.log ?? "").split("\n").filter((l) => /ERROR|FATAL|crash|Crash/.test(l)).slice(-15);
+          console.log(`    log de Chrome (errores):\n      ${tail.join("\n      ") || "(nada)"}`);
+          break; // con la página colgada, el resto de pruebas solo repetiría el mismo fallo
+        }
         await page.screenshot(test.name).catch(() => {});
         // Deja la app limpia para la siguiente: Esc cierra cualquier diálogo.
         await page.press("Escape").catch(() => {});
       }
     }
 
+    if (DIAG) {
+      const notes = vite.log().split("\n").filter((l) => /reload|optimiz|error/i.test(l));
+      if (notes.length) console.log(`  [diag] vite:\n    ${notes.slice(-12).join("\n    ")}`);
+    }
     const errors = cdp.errors.filter((e) => !/React DevTools|__TAURI|transformCallback/.test(e));
     if (errors.length) {
       failed++;

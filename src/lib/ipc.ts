@@ -47,6 +47,9 @@ export const ipc = {
   onAgentAttention: (handler: (attention: AgentAttention) => void) => on("agent-attention", handler),
   onAgentActivity: (handler: (activity: AgentActivity) => void) => on("agent-activity", handler),
   paneSetTitle: (paneId: string, title: string) => call<void>("pane_set_title", { paneId, title }),
+  setUnsaved: (unsaved: boolean) => call<void>("editor_set_unsaved", { unsaved }),
+  quitApp: () => call<void>("app_quit"),
+  onQuitRequested: (handler: () => void) => on<null>("quit-requested", handler),
 };
 
 /** Comillas POSIX: rutas con espacios o comillas llegan intactas a la shell. */

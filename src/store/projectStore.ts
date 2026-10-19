@@ -40,7 +40,15 @@ export type Viewer =
       truncated?: boolean;
       error?: string;
     }
-  | { kind: "file"; path: string; line?: number; preview?: FilePreview; error?: string }
+  | {
+      kind: "file";
+      path: string;
+      line?: number;
+      preview?: FilePreview;
+      /** Imágenes: blob URL con los bytes (se libera al cerrar o cambiar de archivo). */
+      image?: { url: string; bytes: number };
+      error?: string;
+    }
   /** Archivo con marcas de conflicto, resuelto bloque a bloque. */
   | { kind: "conflict"; path: string; text?: string; error?: string };
 

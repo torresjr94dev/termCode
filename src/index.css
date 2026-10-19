@@ -200,6 +200,13 @@
   font-style: italic;
 }
 
+/* Fondo de damero para ver la transparencia de las imágenes. */
+.checkerboard {
+  background-color: var(--color-canvas);
+  background-image: conic-gradient(var(--color-raised) 25%, transparent 0 50%, var(--color-raised) 0 75%, transparent 0);
+  background-size: 16px 16px;
+}
+
 @layer base {
   html,
   body,

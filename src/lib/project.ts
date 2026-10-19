@@ -180,17 +180,147 @@ export function toggleDir(path: string) {
   project().set({ expanded });
 }
 
+/* ------------------------------------------------------------------ */
+/* Editor: cambios sin guardar                                         */
+/* ------------------------------------------------------------------ */
+
+let unsaved: { path: string; isDirty: () => boolean } | null = null;
+
+/** El editor abierto se registra para que nada lo cierre con cambios sin preguntar. */
+export function registerUnsaved(entry: { path: string; isDirty: () => boolean } | null) {
+  unsaved = entry;
+}
+
+export function notifyUnsaved(dirty: boolean) {
+  // El backend lo usa para no cerrar la ventana con trabajo sin guardar.
+  if (IS_TAURI) void ipc.setUnsaved(dirty);
+}
+
+export const hasUnsavedEdits = () => Boolean(unsaved?.isDirty());
+
+/** `true` si se puede seguir: no hay cambios, o aceptaste descartarlos. */
+export function confirmDiscard(): Promise<boolean> {
+  const pending = unsaved;
+  if (!pending?.isDirty()) return Promise.resolve(true);
+  return new Promise((resolve) =>
+    useUiStore.getState().askConfirm({
+      title: "¿Descartar los cambios sin guardar?",
+      body: `${pending.path} tiene cambios que no guardaste (⌘S los guarda).`,
+      confirmLabel: "Descartar cambios",
+      onConfirm: () => resolve(true),
+      onCancel: () => resolve(false),
+    }),
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Visor de archivos: texto (editable) e imágenes                      */
+/* ------------------------------------------------------------------ */
+
+const IMAGE_MIME: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  bmp: "image/bmp",
+  ico: "image/x-icon",
+  svg: "image/svg+xml",
+  avif: "image/avif",
+  tif: "image/tiff",
+  tiff: "image/tiff",
+};
+
+export function imageMime(path: string): string | null {
+  const dot = path.lastIndexOf(".");
+  return dot >= 0 ? (IMAGE_MIME[path.slice(dot + 1).toLowerCase()] ?? null) : null;
+}
+
+// Las imágenes viven en blob URLs: se liberan en cuanto el visor deja de mostrarlas.
+useProjectStore.subscribe((state, prev) => {
+  const before = prev.viewer?.kind === "file" ? prev.viewer.image?.url : undefined;
+  const now = state.viewer?.kind === "file" ? state.viewer.image?.url : undefined;
+  if (before && before !== now) URL.revokeObjectURL(before);
+});
+
 export async function openFile(path: string, line?: number) {
   const root = projectRoot();
   if (!root) return;
+  const current = project().viewer;
+  // Mismo archivo (p. ej. ⌘-clic en otra línea): solo se salta, sin perder lo editado.
+  if (current?.kind === "file" && current.path === path && (current.preview || current.image)) {
+    project().set({ viewer: { ...current, line } });
+    return;
+  }
+  if (!(await confirmDiscard())) return;
   project().set({ viewer: { kind: "file", path, line } });
+  const stillOpen = () => {
+    const viewer = project().viewer;
+    return viewer?.kind === "file" && viewer.path === path;
+  };
+  try {
+    const mime = imageMime(path);
+    if (mime) {
+      const bytes = await gitApi.readImage(root, path);
+      const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+      if (stillOpen()) project().set({ viewer: { kind: "file", path, image: { url, bytes: bytes.byteLength } } });
+      else URL.revokeObjectURL(url);
+      return;
+    }
+    const preview = await gitApi.read(root, path);
+    if (stillOpen()) project().set({ viewer: { kind: "file", path, line, preview } });
+  } catch (err) {
+    if (stillOpen()) project().set({ viewer: { kind: "file", path, line, error: errorText(err) } });
+  }
+}
+
+export type SaveResult = "saved" | "conflict" | "error";
+
+/** Guarda lo editado. `force`: sobrescribir aunque el archivo haya cambiado en disco. */
+export async function saveFile(path: string, content: string, force = false): Promise<SaveResult> {
+  const root = projectRoot();
+  const viewer = project().viewer;
+  if (!root || viewer?.kind !== "file" || viewer.path !== path || !viewer.preview) return "error";
+  try {
+    const version = await gitApi.writeFile(root, path, content, force ? null : viewer.preview.version);
+    const now = project().viewer;
+    if (now?.kind === "file" && now.path === path && now.preview) {
+      project().set({ viewer: { ...now, preview: { ...now.preview, text: content, version } } });
+    }
+    void refreshStatus();
+    return "saved";
+  } catch (err) {
+    const text = errorText(err);
+    if (text.includes("cambió en disco")) return "conflict";
+    toast(text, "error");
+    return "error";
+  }
+}
+
+/** Relee el archivo del disco (otro lo cambió). Devuelve el contenido nuevo. */
+export async function reloadFile(path: string): Promise<string | null> {
+  const root = projectRoot();
+  if (!root) return null;
   try {
     const preview = await gitApi.read(root, path);
-    if (project().viewer?.kind === "file" && (project().viewer as { path: string }).path === path) {
-      project().set({ viewer: { kind: "file", path, line, preview } });
-    }
+    const now = project().viewer;
+    if (now?.kind === "file" && now.path === path) project().set({ viewer: { ...now, preview } });
+    return preview.text;
   } catch (err) {
-    project().set({ viewer: { kind: "file", path, line, error: errorText(err) } });
+    toast(errorText(err), "error");
+    return null;
+  }
+}
+
+/** ¿Cambió en disco desde la versión que tiene el visor? (null si no se pudo saber). */
+export async function fileChangedOnDisk(path: string): Promise<boolean | null> {
+  const root = projectRoot();
+  const viewer = project().viewer;
+  if (!root || viewer?.kind !== "file" || viewer.path !== path || !viewer.preview) return null;
+  try {
+    return (await gitApi.fileVersion(root, path)) !== viewer.preview.version;
+  } catch {
+    return null;
   }
 }
 
@@ -238,6 +368,7 @@ export function sourceForChange(change: GitChange, side: "staged" | "unstaged"):
 export async function openDiff(source: DiffSource, siblings: DiffSource[] = [source]) {
   const root = source.root ?? project().repo?.root;
   if (!root) return;
+  if (!(await confirmDiscard())) return;
   project().set({ viewer: { kind: "diff", source, siblings } });
   try {
     const result =
@@ -355,9 +486,12 @@ export function stepDiff(delta: number) {
 }
 
 export function closeViewer() {
-  project().set({ viewer: null });
-  const paneId = activePaneId();
-  if (paneId) terminalManager.focus(paneId);
+  void confirmDiscard().then((ok) => {
+    if (!ok) return;
+    project().set({ viewer: null });
+    const paneId = activePaneId();
+    if (paneId) terminalManager.focus(paneId);
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -781,6 +915,7 @@ export function finishOperation(abort: boolean) {
 export async function openConflict(path: string) {
   const root = project().repo?.root;
   if (!root) return;
+  if (!(await confirmDiscard())) return;
   project().set({ viewer: { kind: "conflict", path } });
   const stillOpen = () => {
     const viewer = project().viewer;

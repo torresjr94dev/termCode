@@ -13,9 +13,31 @@ mod updater;
 mod usage;
 
 use pty_core::PtyManager;
-use tauri::{Manager, RunEvent};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 use usage::UsageHub;
+
+/// The file editor has unsaved changes: closing the window or quitting asks first.
+static UNSAVED: AtomicBool = AtomicBool::new(false);
+/// The user already confirmed quitting without saving.
+static QUIT_CONFIRMED: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+fn editor_set_unsaved(unsaved: bool) {
+    UNSAVED.store(unsaved, Ordering::Relaxed);
+}
+
+/// Quit after the webview confirmed discarding unsaved edits.
+#[tauri::command]
+fn app_quit(app: AppHandle) {
+    QUIT_CONFIRMED.store(true, Ordering::Relaxed);
+    app.exit(0);
+}
+
+fn must_ask_before_quitting() -> bool {
+    UNSAVED.load(Ordering::Relaxed) && !QUIT_CONFIRMED.load(Ordering::Relaxed)
+}
 
 /// With `panic = "abort"` a panic takes every session down with it: make sure
 /// it reaches the log file first.
@@ -114,6 +136,9 @@ pub fn run() {
             fs::fs_list,
             fs::fs_read,
             fs::fs_files,
+            fs::fs_read_image,
+            fs::fs_version,
+            fs::fs_write,
             editor::open_in_editor,
             editor::fs_existing_files,
             quick::quick_toggle,
@@ -123,13 +148,27 @@ pub fn run() {
             updater::update_supported,
             updater::update_check,
             updater::update_install,
+            editor_set_unsaved,
+            app_quit,
         ])
         .build(tauri::generate_context!())
         .expect("error while building termCode");
 
-    app.run(|handle, event| {
-        if let RunEvent::Exit = event {
-            handle.state::<PtyManager>().kill_all();
+    app.run(|handle, event| match event {
+        // Cerrar la ventana principal o salir con cambios sin guardar: la vista pregunta.
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
+            ..
+        } if label == "main" && must_ask_before_quitting() => {
+            api.prevent_close();
+            let _ = handle.emit_to("main", "quit-requested", ());
         }
+        RunEvent::ExitRequested { api, .. } if must_ask_before_quitting() => {
+            api.prevent_exit();
+            let _ = handle.emit_to("main", "quit-requested", ());
+        }
+        RunEvent::Exit => handle.state::<PtyManager>().kill_all(),
+        _ => {}
     });
 }

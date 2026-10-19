@@ -21,7 +21,8 @@ import { useUiStore } from "./store/uiStore";
 import { settingsNow } from "./store/settingsStore";
 import { terminalManager } from "./terminal/TerminalManager";
 import { actions } from "./lib/actions";
-import { openBranchPicker, openProject } from "./lib/project";
+import { closeViewer, hasUnsavedEdits, openBranchPicker, openProject } from "./lib/project";
+import { ipc } from "./lib/ipc";
 import { IS_TAURI, shellQuote } from "./lib/ipc";
 import { collectPanes } from "./lib/layout";
 import { matchShortcut, matchTabIndex, type ShortcutId } from "./lib/shortcuts";
@@ -52,6 +53,8 @@ const SHORTCUT_HANDLERS: Record<Exclude<ShortcutId, "palette">, () => unknown> =
   fileFinder: () => useUiStore.getState().setFinderOpen(!useUiStore.getState().isFinderOpen),
   switchBranch: openBranchPicker,
 };
+
+const EDITOR_OWNED = new Set<ShortcutId>(["find", "splitRight", "prevCommand", "nextCommand"]);
 
 function focusActivePane() {
   const { tabs, activeTabId } = useTerminalStore.getState();
@@ -106,6 +109,35 @@ function useFileDrop() {
   }, []);
 }
 
+/** Cerrar la ventana o salir con un archivo sin guardar: se pregunta antes. */
+function useQuitGuard() {
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void ipc
+      .onQuitRequested(() => {
+        if (!hasUnsavedEdits()) {
+          void ipc.quitApp();
+          return;
+        }
+        useUiStore.getState().askConfirm({
+          title: "¿Salir sin guardar?",
+          body: "Hay un archivo con cambios sin guardar en el visor. Si sales ahora, se pierden.",
+          confirmLabel: "Salir sin guardar",
+          onConfirm: () => void ipc.quitApp(),
+        });
+      })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+}
+
 export const App: React.FC = () => {
   const isPaletteOpen = useUiStore((s) => s.isPaletteOpen);
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
@@ -115,6 +147,7 @@ export const App: React.FC = () => {
   const isBroadcastEnabled = useTerminalStore((s) => s.isBroadcastEnabled);
 
   useFileDrop();
+  useQuitGuard();
 
   const closePalette = useCallback(() => {
     setPaletteOpen(false);
@@ -133,6 +166,11 @@ export const App: React.FC = () => {
       const tabIndex = shortcut ? null : matchTabIndex(e);
       if (!shortcut && tabIndex === null) return;
 
+      // En el editor de archivos, estos acordes son del editor (buscar, siguiente
+      // coincidencia, inicio/fin del documento), no de la terminal de atrás.
+      const target = e.target instanceof Element ? e.target : null;
+      if (shortcut && EDITOR_OWNED.has(shortcut) && target?.closest(".cm-editor")) return;
+
       e.preventDefault();
       e.stopPropagation();
 
@@ -148,7 +186,9 @@ export const App: React.FC = () => {
       if (ui.isOverviewOpen && shortcut !== "overview") return;
       if (ui.isMissionOpen && shortcut !== "missionControl") return;
 
-      if (shortcut === "toggleUsage" && useTerminalStore.getState().isUsageDrawerOpen) closeUsage();
+      // ⌘W con un archivo abierto cierra el archivo, no el panel que está debajo.
+      if (shortcut === "closePane" && target?.closest("[data-viewer]")) closeViewer();
+      else if (shortcut === "toggleUsage" && useTerminalStore.getState().isUsageDrawerOpen) closeUsage();
       else if (shortcut) void SHORTCUT_HANDLERS[shortcut]();
       else if (tabIndex !== null) actions.goToTab(tabIndex);
     };
