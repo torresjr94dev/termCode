@@ -1,6 +1,7 @@
 //! A single PTY session: child process + reader/flusher threads.
 
 use crate::flow::{Batch, Flow, FlowConfig};
+use crate::procinfo::{self, ProcessInfo};
 use crate::shell;
 use crate::{Error, Result};
 use parking_lot::Mutex;
@@ -9,7 +10,13 @@ use serde::Deserialize;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::thread;
+
+/// Pending input chunks per session. Keystrokes are tiny; this only fills up
+/// when the child stops reading stdin, and then dropping input is what a real
+/// terminal does too (instead of growing memory without bound).
+const INPUT_QUEUE: usize = 1024;
 
 pub type SessionId = u32;
 
@@ -26,6 +33,10 @@ pub trait OutputSink: Send + 'static {
 pub struct SpawnOptions {
     /// Program to run. `None` = the user's default shell.
     pub program: Option<String>,
+    /// Command line run through the user's login shell (e.g. an AI agent).
+    /// Ignored when `program` is set.
+    #[serde(default)]
+    pub command: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
@@ -38,8 +49,11 @@ pub struct SpawnOptions {
 pub struct Session {
     id: SessionId,
     master: Mutex<Box<dyn MasterPty + Send>>,
-    writer: Mutex<Box<dyn Write + Send>>,
+    /// Input goes through a dedicated writer thread: a child that stops reading
+    /// stdin can never block the caller (the async runtime / IPC handler).
+    input: SyncSender<Vec<u8>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    child_pid: Option<u32>,
     flow: Arc<Flow>,
 }
 
@@ -66,13 +80,23 @@ impl Session {
         let reader = pair.master.try_clone_reader().map_err(Error::pty)?;
         let writer = pair.master.take_writer().map_err(Error::pty)?;
         let killer = child.clone_killer();
+        let child_pid = child.process_id();
         let flow = Arc::new(Flow::new(flow_cfg));
+
+        // Writer thread: queue -> PTY. Ends when the session (sender) is dropped
+        // or the PTY stops accepting input.
+        let (input, input_rx) = mpsc::sync_channel::<Vec<u8>>(INPUT_QUEUE);
+        thread::Builder::new()
+            .name(format!("pty-{id}-write"))
+            .spawn(move || write_loop(writer, input_rx))
+            .map_err(Error::Io)?;
 
         let session = Arc::new(Self {
             id,
             master: Mutex::new(pair.master),
-            writer: Mutex::new(writer),
+            input,
             killer: Mutex::new(killer),
+            child_pid,
             flow: flow.clone(),
         });
 
@@ -113,15 +137,10 @@ impl Session {
             .name(format!("pty-{id}-flush"))
             .spawn(move || {
                 let mut sink = sink;
-                loop {
-                    match flow.next_batch() {
-                        Batch::Data(bytes) => {
-                            if !sink.data(bytes) {
-                                flow.close();
-                                break;
-                            }
-                        }
-                        Batch::End => break,
+                while let Batch::Data(bytes) = flow.next_batch() {
+                    if !sink.data(bytes) {
+                        flow.close();
+                        break;
                     }
                 }
                 let code = waiter.join().ok().flatten();
@@ -136,11 +155,26 @@ impl Session {
         self.id
     }
 
+    /// Queues input for the child. Never blocks.
     pub fn write(&self, data: &[u8]) -> Result<()> {
-        let mut w = self.writer.lock();
-        w.write_all(data)?;
-        w.flush()?;
-        Ok(())
+        if data.is_empty() {
+            return Ok(());
+        }
+        self.input.try_send(data.to_vec()).map_err(|e| match e {
+            TrySendError::Full(_) => {
+                Error::Pty("input queue full: the process is not reading".into())
+            }
+            TrySendError::Disconnected(_) => Error::Pty("session input is closed".into()),
+        })
+    }
+
+    /// What is running in the terminal right now and where.
+    pub fn info(&self) -> ProcessInfo {
+        #[cfg(unix)]
+        let foreground = self.master.lock().process_group_leader();
+        #[cfg(not(unix))]
+        let foreground = None;
+        procinfo::describe(self.child_pid, foreground)
     }
 
     pub fn resize(&self, cols: u16, rows: u16) -> Result<()> {
@@ -168,6 +202,15 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.kill();
+    }
+}
+
+fn write_loop(mut writer: Box<dyn Write + Send>, input: mpsc::Receiver<Vec<u8>>) {
+    for chunk in input {
+        if let Err(e) = writer.write_all(&chunk).and_then(|()| writer.flush()) {
+            log::debug!("pty writer stopped: {e}");
+            break;
+        }
     }
 }
 

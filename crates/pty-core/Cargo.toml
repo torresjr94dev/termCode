@@ -12,3 +12,4 @@ parking_lot.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 log.workspace = true
+libc.workspace = true

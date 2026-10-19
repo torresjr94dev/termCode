@@ -2,11 +2,16 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
     "core:window:allow-toggle-maximize",
-    "opener:default"
+    "opener:default",
+    "store:default",
+    "notification:default",
+    "log:default"
   ]
 }

@@ -4,11 +4,16 @@
 //! forwards input/resize/ack calls to the [`PtyManager`].
 
 pub mod flow;
+mod procinfo;
 mod session;
 mod shell;
 
 pub use flow::FlowConfig;
+pub use procinfo::ProcessInfo;
 pub use session::{OutputSink, Session, SessionId, SpawnOptions};
+pub use shell::shell_quote;
+#[cfg(unix)]
+pub use shell::user_shell;
 
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -84,6 +89,10 @@ impl PtyManager {
         self.get(id)?.resize(cols, rows)
     }
 
+    pub fn info(&self, id: SessionId) -> Result<ProcessInfo> {
+        Ok(self.get(id)?.info())
+    }
+
     pub fn ack(&self, id: SessionId, bytes: usize) {
         if let Ok(s) = self.get(id) {
             s.ack(bytes);
@@ -156,6 +165,64 @@ mod tests {
     }
 
     #[test]
+    fn input_reaches_the_child_and_info_reports_it() {
+        let mgr = PtyManager::default();
+        let (tx, rx) = mpsc::channel();
+        let id = mgr
+            .spawn(
+                SpawnOptions {
+                    program: Some("/bin/sh".into()),
+                    args: vec!["-c".into(), "read line; printf 'got:%s' \"$line\"".into()],
+                    cols: 80,
+                    rows: 24,
+                    ..Default::default()
+                },
+                |_| ChanSink(tx),
+            )
+            .unwrap();
+
+        let info = mgr.info(id).unwrap();
+        assert!(info.shell_pid.is_some());
+        assert!(info.cwd.is_some(), "cwd of the child is known");
+
+        mgr.write(id, b"termcode\n").unwrap();
+        let mut out = Vec::new();
+        while let Ok(Some(chunk)) = rx.recv_timeout(Duration::from_secs(5)) {
+            mgr.ack(id, chunk.len());
+            out.extend(chunk);
+        }
+        assert!(String::from_utf8_lossy(&out).contains("got:termcode"));
+        mgr.remove(id);
+    }
+
+    #[test]
+    fn command_runs_through_the_login_shell() {
+        let mgr = PtyManager::default();
+        let (tx, rx) = mpsc::channel();
+        let id = mgr
+            .spawn(
+                SpawnOptions {
+                    command: Some("printf agent-ok; exit".into()),
+                    cols: 80,
+                    rows: 24,
+                    ..Default::default()
+                },
+                |_| ChanSink(tx),
+            )
+            .unwrap();
+        let mut out = Vec::new();
+        while let Ok(Some(chunk)) = rx.recv_timeout(Duration::from_secs(10)) {
+            mgr.ack(id, chunk.len());
+            out.extend(chunk);
+            if String::from_utf8_lossy(&out).contains("agent-ok") {
+                break;
+            }
+        }
+        assert!(String::from_utf8_lossy(&out).contains("agent-ok"));
+        mgr.remove(id);
+    }
+
+    #[test]
     fn large_output_is_bounded_by_backpressure() {
         let mgr = PtyManager::default();
         let (tx, rx) = mpsc::channel();
@@ -164,7 +231,10 @@ mod tests {
                 SpawnOptions {
                     program: Some("/bin/sh".into()),
                     // ~8 MB of output.
-                    args: vec!["-c".into(), "head -c 8000000 /dev/zero | tr '\\0' 'x'".into()],
+                    args: vec![
+                        "-c".into(),
+                        "head -c 8000000 /dev/zero | tr '\\0' 'x'".into(),
+                    ],
                     cols: 120,
                     rows: 40,
                     ..Default::default()

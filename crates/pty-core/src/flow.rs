@@ -285,6 +285,10 @@ mod tests {
         f.close();
         idle.close();
         assert!(!reader.join().unwrap(), "throttled reader is released");
-        assert_eq!(flusher.join().unwrap(), Batch::End, "idle flusher is released");
+        assert_eq!(
+            flusher.join().unwrap(),
+            Batch::End,
+            "idle flusher is released"
+        );
     }
 }
