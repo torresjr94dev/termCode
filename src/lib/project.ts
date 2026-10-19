@@ -37,8 +37,9 @@ async function syncContext() {
   syncing = true;
   try {
     const paneId = activePaneId();
-    const info = paneId ? await terminalManager.info(paneId) : null;
-    const cwd = info?.cwd ?? null;
+    // OSC 7 (integración con la shell) es instantáneo; si no hay, se pregunta al proceso.
+    const known = paneId ? terminalManager.knownCwd(paneId) : null;
+    const cwd = known ?? (paneId ? (await terminalManager.info(paneId))?.cwd : null) ?? null;
     if (cwd && cwd !== project().cwd) {
       const previousRoot = projectRoot();
       const repo = await gitApi.repo(cwd).catch(() => null);
@@ -58,6 +59,11 @@ async function syncContext() {
   } finally {
     syncing = false;
   }
+}
+
+/** Re-sincroniza ahora (p. ej. tras un `cd` que avisó la shell). */
+export function syncNow() {
+  void syncContext();
 }
 
 export async function refreshStatus() {
@@ -162,18 +168,26 @@ export function toggleDir(path: string) {
   project().set({ expanded });
 }
 
-export async function openFile(path: string) {
+export async function openFile(path: string, line?: number) {
   const root = projectRoot();
   if (!root) return;
-  project().set({ viewer: { kind: "file", path } });
+  project().set({ viewer: { kind: "file", path, line } });
   try {
     const preview = await gitApi.read(root, path);
     if (project().viewer?.kind === "file" && (project().viewer as { path: string }).path === path) {
-      project().set({ viewer: { kind: "file", path, preview } });
+      project().set({ viewer: { kind: "file", path, line, preview } });
     }
   } catch (err) {
-    project().set({ viewer: { kind: "file", path, error: errorText(err) } });
+    project().set({ viewer: { kind: "file", path, line, error: errorText(err) } });
   }
+}
+
+/** Abre en el visor si el archivo está dentro del proyecto actual. `false` si no. */
+export function openFileAbsolute(absolute: string, line?: number): boolean {
+  const root = projectRoot()?.replace(/\/$/, "");
+  if (!root || !absolute.startsWith(`${root}/`)) return false;
+  void openFile(absolute.slice(root.length + 1), line);
+  return true;
 }
 
 /** Pega la ruta (escapada) en el panel activo de la terminal. */

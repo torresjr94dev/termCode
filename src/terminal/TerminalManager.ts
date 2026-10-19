@@ -4,46 +4,24 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { ImageAddon } from "@xterm/addon-image";
+import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard";
+import { ProgressAddon, type IProgressState } from "@xterm/addon-progress";
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { IS_TAURI } from "../lib/ipc";
+import { IS_MAC } from "../lib/shortcuts";
+import { DEFAULT_SETTINGS, type Settings } from "../store/settingsStore";
 import type { ProcessInfo } from "../types/layout";
+import { CommandTracker, type CommandRecord } from "./commands";
+import { fileLinkProvider, type FileLinkTarget } from "./links";
+import { XTERM_THEMES } from "./themes";
 
-export const FONT_SIZE = { min: 9, max: 24, default: 13 } as const;
+export const FONT_SIZE = { min: 9, max: 24, default: DEFAULT_SETTINGS.fontSize } as const;
 
 /** Contextos WebGL vivos como máximo; los navegadores cortan alrededor de 16. */
 const MAX_WEBGL_CONTEXTS = 10;
-
-/**
- * Paleta ANSI "Fósforo": cálida y desaturada, pensada para el fondo grafito.
- * El slot `cyan` es obligatorio en ANSI (los programas lo usan); aquí es un
- * verde verdigris apagado, no un cian neón.
- */
-const FOSFORO_THEME = {
-  background: "#0f0e0c",
-  foreground: "#e6dfd2",
-  cursor: "#ffb224",
-  cursorAccent: "#0f0e0c",
-  selectionBackground: "rgba(255, 178, 36, 0.24)",
-  selectionInactiveBackground: "rgba(236, 230, 218, 0.08)",
-  black: "#1f1d1a",
-  red: "#e5604a",
-  green: "#a3b865",
-  yellow: "#e8b04b",
-  blue: "#7e9cc8",
-  magenta: "#c58fb5",
-  cyan: "#86b3a4",
-  white: "#d9d2c5",
-  brightBlack: "#7a7367",
-  brightRed: "#ff8a73",
-  brightGreen: "#c2d686",
-  brightYellow: "#ffcf70",
-  brightBlue: "#a3bce0",
-  brightMagenta: "#e0b0d2",
-  brightCyan: "#a9d1c3",
-  brightWhite: "#f7f2e8",
-};
 
 const SEARCH_DECORATIONS: ISearchOptions["decorations"] = {
   matchBackground: "#3b3426",
@@ -66,12 +44,15 @@ interface TerminalInstance {
   term: Terminal;
   fitAddon: FitAddon;
   searchAddon: SearchAddon;
+  tracker: CommandTracker;
+  progress: IProgressState;
   container: HTMLElement | null;
   /** El PTY ya se pidió (evita un segundo spawn si React monta el panel dos veces). */
   spawnRequested: boolean;
   /** Bytes ya procesados por xterm y aún no confirmados al backend. */
   pendingAck: number;
   ackScheduled: boolean;
+  dispose: Array<() => void>;
 }
 
 interface StoreHooks {
@@ -80,11 +61,20 @@ interface StoreHooks {
   onTitle: (paneId: string, title: string) => void;
   /** BEL, OSC 9 u OSC 777: algo en el panel quiere atención. */
   onAttention: (paneId: string, kind: string, message: string) => void;
+  /** Terminó un comando (integración con la shell). */
+  onCommandFinished: (paneId: string, record: CommandRecord) => void;
+  /** La shell avisó de un cambio de carpeta (OSC 7). */
+  onCwd: (paneId: string, cwd: string) => void;
+  /** ⌘-clic en una ruta de archivo de la salida. */
+  onOpenPath: (target: FileLinkTarget) => void;
 }
 
-function openLink(event: MouseEvent, uri: string) {
+/** ⌘-clic (Ctrl-clic fuera de macOS): un clic normal selecciona texto, no abre cosas. */
+const hasLinkModifier = (event: MouseEvent) => (IS_MAC ? event.metaKey : event.ctrlKey);
+
+function openWebLink(event: MouseEvent, uri: string) {
+  if (!hasLinkModifier(event) || !/^https?:\/\//i.test(uri)) return;
   event.preventDefault();
-  if (!/^https?:\/\//i.test(uri)) return;
   if (IS_TAURI) {
     // window.open() devuelve null dentro de Tauri: el plugin abre el navegador del sistema.
     openUrl(uri).catch((err) => console.warn("[termCode] no se pudo abrir el enlace:", err));
@@ -93,16 +83,46 @@ function openLink(event: MouseEvent, uri: string) {
   }
 }
 
+/**
+ * OSC 52: los programas pueden *escribir* en el portapapeles (copiar desde
+ * SSH/tmux) pero nunca leerlo: leer tu portapapeles a escondidas es un riesgo.
+ */
+const writeOnlyClipboard: IClipboardProvider = {
+  readText: () => "",
+  writeText: (_selection, text) => navigator.clipboard.writeText(text).catch(() => {}),
+};
+
+function terminalOptions(s: Settings) {
+  return {
+    fontSize: s.fontSize,
+    fontFamily: `${s.fontFamily}, "Symbols Nerd Font"`,
+    lineHeight: s.lineHeight,
+    cursorStyle: s.cursorStyle,
+    cursorBlink: s.cursorBlink,
+    scrollback: s.scrollback,
+    screenReaderMode: s.screenReader,
+    theme: XTERM_THEMES[s.theme],
+  };
+}
+
 class TerminalManager {
   private instances = new Map<string, TerminalInstance>();
   private sessionToInstanceId = new Map<number, string>();
   private webgl = new Map<string, WebglAddon>();
   private hooks: StoreHooks | null = null;
   private sizeListeners = new Set<() => void>();
-  private fontSize: number = FONT_SIZE.default;
+  private progressListeners = new Set<() => void>();
+  private settings: Settings = DEFAULT_SETTINGS;
+  private home: string | null = null;
 
   constructor() {
     void this.listenForExits();
+    if (IS_TAURI) {
+      void import("@tauri-apps/api/path")
+        .then(({ homeDir }) => homeDir())
+        .then((home) => (this.home = home))
+        .catch(() => {});
+    }
   }
 
   public setStoreHooks(hooks: StoreHooks) {
@@ -133,22 +153,19 @@ class TerminalManager {
 
     const term = new Terminal({
       allowProposedApi: true,
-      cursorBlink: true,
-      cursorStyle: "block",
       cursorInactiveStyle: "outline",
-      fontSize: this.fontSize,
-      fontFamily: '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, Menlo, monospace, "Symbols Nerd Font"',
-      lineHeight: 1.15,
-      scrollback: 10_000,
-      theme: FOSFORO_THEME,
+      ...terminalOptions(this.settings),
     });
 
     const fitAddon = new FitAddon();
     const searchAddon = new SearchAddon({ highlightLimit: 2000 });
+    const progressAddon = new ProgressAddon();
     term.loadAddon(fitAddon);
     term.loadAddon(searchAddon);
     term.loadAddon(new Unicode11Addon());
-    term.loadAddon(new WebLinksAddon(openLink));
+    term.loadAddon(new WebLinksAddon(openWebLink));
+    term.loadAddon(new ClipboardAddon(undefined, writeOnlyClipboard));
+    term.loadAddon(progressAddon);
     term.unicode.activeVersion = "11";
 
     const instance: TerminalInstance = {
@@ -157,11 +174,25 @@ class TerminalManager {
       term,
       fitAddon,
       searchAddon,
+      tracker: new CommandTracker(
+        term,
+        (record) => this.hooks?.onCommandFinished(id, record),
+        (cwd) => this.hooks?.onCwd(id, cwd),
+      ),
+      progress: { state: 0, value: 0 },
       container: null,
       spawnRequested: false,
       pendingAck: 0,
       ackScheduled: false,
+      dispose: [],
     };
+    instance.dispose.push(instance.tracker.attach());
+
+    const progressSub = progressAddon.onChange((state) => {
+      instance.progress = state;
+      this.progressListeners.forEach((l) => l());
+    });
+    instance.dispose.push(() => progressSub.dispose());
 
     term.onData((data) => {
       if (this.hooks?.isBroadcastEnabled()) this.broadcast("pty_write", { data });
@@ -185,7 +216,7 @@ class TerminalManager {
     // Señales de "necesito atención": BEL, OSC 9 (iTerm2) y OSC 777 (notify;título;cuerpo).
     term.onBell(() => this.hooks?.onAttention(id, "bell", ""));
     term.parser.registerOscHandler(9, (data) => {
-      if (/^\d+;/.test(data)) return false; // OSC 9;4 = barra de progreso, no notificación
+      if (/^\d+;/.test(data)) return false; // OSC 9;4 = barra de progreso (la maneja su addon)
       this.hooks?.onAttention(id, "notify", data);
       return true;
     });
@@ -195,6 +226,16 @@ class TerminalManager {
       this.hooks?.onAttention(id, "notify", [title, body].filter(Boolean).join(": "));
       return true;
     });
+
+    term.registerLinkProvider(
+      fileLinkProvider(
+        term,
+        () => ({ cwd: instance.tracker.cwd, home: this.home }),
+        (target, event) => {
+          if (hasLinkModifier(event)) this.hooks?.onOpenPath(target);
+        },
+      ),
+    );
 
     this.instances.set(id, instance);
     return instance;
@@ -216,6 +257,8 @@ class TerminalManager {
       container.replaceChildren();
       instance.term.open(container);
       this.enableWebgl(id);
+      // Imágenes en línea (sixel e iTerm2): con límites de memoria razonables.
+      instance.term.loadAddon(new ImageAddon({ pixelLimit: 16_777_216, storageLimit: 64, sixelSupport: true, iipSupport: true }));
     }
 
     requestAnimationFrame(() => {
@@ -253,6 +296,7 @@ class TerminalManager {
           rows: Math.max(term.rows || 24, 5),
         },
         onData: channel,
+        shellIntegration: this.settings.shellIntegration,
       });
       instance.backendSessionId = sessionId;
       this.sessionToInstanceId.set(sessionId, instance.id);
@@ -305,13 +349,15 @@ class TerminalManager {
     }
     this.webgl.get(id)?.dispose();
     this.webgl.delete(id);
+    instance.dispose.forEach((fn) => fn());
+    instance.tracker.dispose();
     instance.term.dispose();
     this.instances.delete(id);
     this.sizeListeners.forEach((listener) => listener());
   }
 
   /* ------------------------------------------------------------------ */
-  /* Render                                                              */
+  /* Render y ajustes                                                    */
   /* ------------------------------------------------------------------ */
 
   /**
@@ -351,6 +397,15 @@ class TerminalManager {
     }
   }
 
+  public applySettings(settings: Settings) {
+    this.settings = settings;
+    const options = terminalOptions(settings);
+    for (const instance of this.instances.values()) {
+      Object.assign(instance.term.options, options);
+      this.fit(instance.id);
+    }
+  }
+
   public fit(id: string) {
     const instance = this.instances.get(id);
     const container = instance?.container;
@@ -364,14 +419,6 @@ class TerminalManager {
 
   public focus(id: string) {
     this.instances.get(id)?.term.focus();
-  }
-
-  public setFontSize(size: number) {
-    this.fontSize = size;
-    for (const instance of this.instances.values()) {
-      instance.term.options.fontSize = size;
-      this.fit(instance.id);
-    }
   }
 
   /* ------------------------------------------------------------------ */
@@ -389,7 +436,23 @@ class TerminalManager {
     return term ? `${term.cols}×${term.rows}` : "";
   }
 
-  /** El PTY del panel ya arrancó (tiene sesión en el backend). */
+  public subscribeProgress = (listener: () => void): (() => void) => {
+    this.progressListeners.add(listener);
+    return () => this.progressListeners.delete(listener);
+  };
+
+  public getProgress(id: string): IProgressState {
+    return this.instances.get(id)?.progress ?? { state: 0, value: 0 };
+  }
+
+  public getTracker(id: string): CommandTracker | undefined {
+    return this.instances.get(id)?.tracker;
+  }
+
+  public getTerminal(id: string): Terminal | undefined {
+    return this.instances.get(id)?.term;
+  }
+
   public isSpawned(id: string): boolean {
     return (this.instances.get(id)?.backendSessionId ?? null) !== null;
   }
@@ -404,6 +467,11 @@ class TerminalManager {
     }
   }
 
+  /** Carpeta conocida sin preguntar al backend (OSC 7). */
+  public knownCwd(id: string): string | null {
+    return this.instances.get(id)?.tracker.cwd ?? null;
+  }
+
   public getSelection(id: string): string {
     return this.instances.get(id)?.term.getSelection() ?? "";
   }
@@ -411,6 +479,29 @@ class TerminalManager {
   /** Pega respetando el bracketed paste del programa (Claude Code, vim, zsh…). */
   public paste(id: string, text: string) {
     this.instances.get(id)?.term.paste(text);
+  }
+
+  /** Escribe y ejecuta (Enter) una línea en la shell del panel. */
+  public run(id: string, line: string) {
+    const instance = this.instances.get(id);
+    if (!instance) return;
+    this.send(instance, "pty_write", { data: `${line}\r` });
+    instance.term.focus();
+  }
+
+  /** ⌘↑ / ⌘↓: salta al comando anterior/siguiente. */
+  public jumpToCommand(id: string, direction: -1 | 1): boolean {
+    const instance = this.instances.get(id);
+    if (!instance) return false;
+    const { term, tracker } = instance;
+    const top = term.buffer.active.viewportY;
+    const target = tracker.neighbour(direction < 0 ? top : top + 1, direction);
+    if (!target) {
+      if (direction > 0) term.scrollToBottom();
+      return false;
+    }
+    term.scrollToLine(tracker.anchorLine(target));
+    return true;
   }
 
   /** `incremental`: mientras se escribe, la coincidencia actual se amplía en vez de saltar. */
@@ -439,6 +530,17 @@ class TerminalManager {
 
   public clearSearch(id: string) {
     this.instances.get(id)?.searchAddon.clearDecorations();
+  }
+
+  /** Últimas líneas visibles del panel, en texto (miniaturas de la vista general). */
+  public snapshot(id: string, rows: number): string[] {
+    const term = this.instances.get(id)?.term;
+    if (!term) return [];
+    const buffer = term.buffer.active;
+    const end = buffer.baseY + buffer.cursorY + 1;
+    const lines: string[] = [];
+    for (let y = Math.max(0, end - rows); y < end; y++) lines.push(buffer.getLine(y)?.translateToString(true) ?? "");
+    return lines;
   }
 }
 

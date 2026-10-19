@@ -1,6 +1,7 @@
 import { useTerminalStore, type PaneSpec } from "../store/terminalStore";
 import { useUiStore } from "../store/uiStore";
-import { terminalManager, FONT_SIZE } from "../terminal/TerminalManager";
+import { terminalManager } from "../terminal/TerminalManager";
+import { DEFAULT_SETTINGS, settingsNow, useSettingsStore } from "../store/settingsStore";
 import { basename, collectPanes, findOwnerTab, findPane } from "./layout";
 import { ipc, shellQuote } from "./ipc";
 import type { AgentKind, SplitDirection } from "../types/layout";
@@ -30,7 +31,7 @@ function activePaneId(): string | undefined {
 }
 
 /** Directorio real del proceso en primer plano del panel (no el de arranque). */
-async function cwdOf(paneId: string | undefined): Promise<string | undefined> {
+export async function cwdOf(paneId: string | undefined): Promise<string | undefined> {
   if (!paneId) return undefined;
   const info = await terminalManager.info(paneId);
   if (info?.cwd) return info.cwd;
@@ -62,19 +63,53 @@ async function split(direction: SplitDirection, spec: PaneSpec = {}) {
   state().splitPane(target, direction, { ...spec, cwd });
 }
 
+/** Recuerda carpeta y título de lo que se cierra, para ⌘⇧T. */
+async function remember(paneIds: string[], title: string) {
+  const cwds = (await Promise.all(paneIds.map((id) => cwdOf(id)))).filter((c): c is string => Boolean(c));
+  state().rememberClosed({ title, cwds });
+}
+
 /** Cierra si no hay nada corriendo; si lo hay, pide confirmación primero. */
 async function confirmIfBusy(paneIds: string[], what: string, close: () => void) {
+  const closeAndRemember = () => {
+    void remember(paneIds, what).finally(close);
+  };
+  if (!settingsNow().confirmClose) {
+    closeAndRemember();
+    return;
+  }
   const infos = await Promise.all(paneIds.map((id) => terminalManager.info(id)));
   const busy = [...new Set(infos.filter((i) => i?.busy).map((i) => i?.foregroundName ?? "un proceso"))];
   if (!busy.length) {
-    close();
+    closeAndRemember();
     return;
   }
   ui().askConfirm({
     title: `¿Cerrar ${what}?`,
     body: `${busy.join(", ")} ${busy.length === 1 ? "sigue" : "siguen"} en ejecución y se ${busy.length === 1 ? "detendrá" : "detendrán"}.`,
     confirmLabel: "Cerrar",
-    onConfirm: close,
+    onConfirm: closeAndRemember,
+  });
+}
+
+/**
+ * Protección de cuota: con la ventana de 5 h casi agotada, lanzar un agente
+ * cuesta trabajo a medias. Avisa con cuándo se reinicia.
+ */
+function guardQuota(agent: AgentKind, launch: () => void) {
+  const provider = agent === "claude" ? state().usage.claude : state().usage.codex;
+  const session = provider.windows.find((w) => w.kind === "session");
+  if (!settingsNow().quotaGuard || !session || session.usedPercent < 90) {
+    launch();
+    return;
+  }
+  const resets = session.resetsAt ? new Date(typeof session.resetsAt === "number" && session.resetsAt < 1e12 ? session.resetsAt * 1000 : session.resetsAt) : null;
+  const when = resets && !Number.isNaN(resets.getTime()) ? ` Se reinicia a las ${resets.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}.` : "";
+  ui().askConfirm({
+    title: `La sesión de ${AGENTS[agent].title} está al ${Math.round(session.usedPercent)}%`,
+    body: `Es probable que el agente se quede sin cuota a medio trabajo.${when}`,
+    confirmLabel: "Lanzar igualmente",
+    onConfirm: launch,
   });
 }
 
@@ -107,13 +142,13 @@ export const actions = {
   openAgentInSplit: async (agent: AgentKind) => {
     if (!agentAvailable(agent)) return;
     const cwd = await cwdOf(activePaneId());
-    await split("horizontal", agentSpec(agent, cwd));
+    guardQuota(agent, () => void split("horizontal", agentSpec(agent, cwd)));
   },
 
   openAgentInTab: async (agent: AgentKind) => {
     if (!agentAvailable(agent)) return;
     const cwd = await cwdOf(activePaneId());
-    state().createTab(agentSpec(agent, cwd));
+    guardQuota(agent, () => state().createTab(agentSpec(agent, cwd)));
   },
 
   /** Worktree nuevo (rama propia) + agente dentro: varios agentes sin pisarse. */
@@ -133,15 +168,11 @@ export const actions = {
     }
   },
 
-  /** Pega la selección del panel activo en el agente más cercano. */
-  sendSelectionToAgent: () => {
+  /** Pega texto en el agente más cercano (primero el de esta pestaña). */
+  sendTextToAgent: (text: string) => {
     const { tabs } = state();
     const source = activePaneId();
-    const text = source ? terminalManager.getSelection(source).trim() : "";
-    if (!text) {
-      ui().showToast("Selecciona texto en el terminal primero.");
-      return;
-    }
+    if (!text.trim()) return;
     const current = activeTab();
     const candidates = [
       ...(current ? collectPanes(current.root) : []),
@@ -156,6 +187,17 @@ export const actions = {
     if (owner) state().setActiveTab(owner.id);
     terminalManager.paste(target.id, text);
     state().setActivePane(target.id);
+  },
+
+  /** Pega la selección del panel activo en el agente más cercano. */
+  sendSelectionToAgent: () => {
+    const source = activePaneId();
+    const text = source ? terminalManager.getSelection(source).trim() : "";
+    if (!text) {
+      ui().showToast("Selecciona texto en el terminal primero.");
+      return;
+    }
+    actions.sendTextToAgent(text);
   },
 
   focusPaneOffset: (delta: number) => {
@@ -188,9 +230,34 @@ export const actions = {
     }
   },
 
-  fontBigger: () => state().setFontSize(state().fontSize + 1),
-  fontSmaller: () => state().setFontSize(state().fontSize - 1),
-  fontReset: () => state().setFontSize(FONT_SIZE.default),
+  fontBigger: () => useSettingsStore.getState().update({ fontSize: settingsNow().fontSize + 1 }),
+  fontSmaller: () => useSettingsStore.getState().update({ fontSize: settingsNow().fontSize - 1 }),
+  fontReset: () => useSettingsStore.getState().update({ fontSize: DEFAULT_SETTINGS.fontSize }),
+
+  /** ⌘⇧T: reabre lo último cerrado en su carpeta (una pestaña por panel cerrado). */
+  reopenClosed: () => {
+    const entry = state().popClosed();
+    if (!entry) {
+      ui().showToast("No hay nada cerrado que reabrir.");
+      return;
+    }
+    const cwds = entry.cwds.length ? entry.cwds : [undefined];
+    cwds.forEach((cwd) => state().createTab({ cwd }));
+  },
+
+  jumpCommand: (direction: -1 | 1) => {
+    const paneId = activePaneId();
+    if (!paneId) return;
+    if (!terminalManager.getTracker(paneId)?.integrated) {
+      ui().showToast("Saltar entre comandos necesita la integración con zsh (Ajustes → Terminal).");
+      return;
+    }
+    terminalManager.jumpToCommand(paneId, direction);
+  },
+
+  toggleZoom: () => state().toggleZoom(),
+  equalizeSplits: () => state().equalizeSplits(),
+  openSettings: () => ui().setSettingsOpen(true),
 
   refreshUsage: () => void ipc.usageRefresh(),
   toggleSidebar: () => state().toggleSidebar(),

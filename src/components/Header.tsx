@@ -1,12 +1,13 @@
-import React from "react";
-import { Asterisk, GitBranch, Hexagon, PanelLeft, Plus, Search, X } from "lucide-react";
+import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Asterisk, GitBranch, Hexagon, Maximize2, PanelLeft, Plus, Search, X } from "lucide-react";
 import { useTerminalStore } from "../store/terminalStore";
 import { useProjectStore } from "../store/projectStore";
 import { openProject } from "../lib/project";
 import { actions } from "../lib/actions";
 import { cn, collectPanes, findPane, tabLabel } from "../lib/layout";
 import { IS_MAC, shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
-import type { ProviderUsage } from "../types/layout";
+import type { ProviderUsage, Tab } from "../types/layout";
+import { terminalManager } from "../terminal/TerminalManager";
 import { AgentGlyph, IconButton, Kbd, Lamp } from "./ui";
 
 interface HeaderProps {
@@ -19,6 +20,35 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
   const isSidebarOpen = useTerminalStore((s) => s.isSidebarOpen);
   const setActiveTab = useTerminalStore((s) => s.setActiveTab);
   const attention = useTerminalStore((s) => s.attention);
+  const moveTab = useTerminalStore((s) => s.moveTab);
+  const listRef = useRef<HTMLUListElement | null>(null);
+  const [drag, setDrag] = useState<{ from: number; to: number; dragging: boolean } | null>(null);
+
+  /** Arrastrar una pestaña la reordena (umbral de 5 px para no robar clics). */
+  const startDrag = (from: number, e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    const startX = e.clientX;
+    let state = { from, to: from, dragging: false };
+    setDrag(state);
+    const onMove = (ev: PointerEvent) => {
+      if (!state.dragging && Math.abs(ev.clientX - startX) < 5) return;
+      const items = [...(listRef.current?.querySelectorAll<HTMLElement>("li[data-index]") ?? [])];
+      const to = items.findIndex((el) => {
+        const r = el.getBoundingClientRect();
+        return ev.clientX < r.left + r.width / 2;
+      });
+      state = { from, to: to === -1 ? items.length - 1 : to > from ? to - 1 : to, dragging: true };
+      setDrag(state);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      if (state.dragging && state.to !== state.from) moveTab(state.from, state.to);
+      setDrag(null);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
 
   const canClose = tabs.length > 1;
 
@@ -41,68 +71,21 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
       </div>
 
       <nav aria-label="Pestañas" className="ml-2 flex min-w-0 items-end">
-        <ul data-tauri-drag-region className="scrollbar-none flex min-w-0 items-end gap-0.5 overflow-x-auto">
-          {tabs.map((tab, index) => {
-            const isActive = tab.id === activeTabId;
-            const label = tabLabel(tab);
-            const agentType = findPane(tab.root, tab.activePaneId)?.agentType;
-            const hint = tabShortcutLabel(index);
-            const needsAttention = collectPanes(tab.root).some((p) => p.id in attention);
-
-            return (
-              <li
-                key={tab.id}
-                className={cn(
-                  "group relative flex h-[31px] shrink-0 items-center rounded-t-md border-x border-t transition-colors duration-150",
-                  isActive
-                    ? "z-10 border-line bg-canvas text-ink"
-                    : "border-transparent text-ink-3 hover:bg-hover/60 hover:text-ink-2",
-                )}
-              >
-                <button
-                  type="button"
-                  aria-current={isActive ? "page" : undefined}
-                  title={hint ? `${label}  ${hint}` : label}
-                  onClick={() => setActiveTab(tab.id)}
-                  onAuxClick={(e) => {
-                    if (e.button === 1 && canClose) actions.closeTab(tab.id);
-                  }}
-                  className="flex h-full min-w-0 items-center gap-2 pl-3 pr-1 outline-offset-[-2px]"
-                >
-                  {needsAttention ? (
-                    <Lamp state="attention" />
-                  ) : (
-                    <span
-                      className={cn(
-                        "font-mono text-[11px] tabular-nums",
-                        isActive ? "text-amber" : "text-ink-3",
-                      )}
-                    >
-                      {index + 1}
-                    </span>
-                  )}
-                  <AgentGlyph agentType={agentType} className="shrink-0 opacity-80" />
-                  <span className="max-w-[180px] truncate font-mono text-[12px]">{label}</span>
-                </button>
-
-                {canClose ? (
-                  <button
-                    type="button"
-                    aria-label={`Cerrar pestaña ${label}`}
-                    onClick={() => actions.closeTab(tab.id)}
-                    className={cn(
-                      "mr-1.5 grid size-5 place-items-center rounded text-ink-3 transition-opacity duration-150 hover:bg-press hover:text-ink focus-visible:opacity-100",
-                      isActive ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-                    )}
-                  >
-                    <X size={12} strokeWidth={2} aria-hidden="true" />
-                  </button>
-                ) : (
-                  <span className="w-2" />
-                )}
-              </li>
-            );
-          })}
+        <ul ref={listRef} data-tauri-drag-region className="scrollbar-none flex min-w-0 items-end gap-0.5 overflow-x-auto">
+          {tabs.map((tab, index) => (
+            <TabItem
+              key={tab.id}
+              tab={tab}
+              index={index}
+              isActive={tab.id === activeTabId}
+              canClose={canClose}
+              needsAttention={collectPanes(tab.root).some((p) => p.id in attention)}
+              dropMarker={drag?.dragging && drag.to === index ? (drag.to > drag.from ? "after" : drag.to < drag.from ? "before" : null) : null}
+              isDragged={Boolean(drag?.dragging && drag.from === index)}
+              onPointerDownTab={(e) => startDrag(index, e)}
+              onSelect={() => setActiveTab(tab.id)}
+            />
+          ))}
         </ul>
 
         <div className="flex h-[31px] items-center pl-1">
@@ -206,5 +189,149 @@ const BranchButton: React.FC = () => {
       {changes > 0 && <span className="shrink-0 tabular-nums text-amber">●{changes}</span>}
       {sync && <span className="shrink-0 tabular-nums text-ink-3">{sync}</span>}
     </button>
+  );
+};
+
+interface TabItemProps {
+  tab: Tab;
+  index: number;
+  isActive: boolean;
+  canClose: boolean;
+  needsAttention: boolean;
+  dropMarker: "before" | "after" | null;
+  isDragged: boolean;
+  onPointerDownTab: (e: React.PointerEvent) => void;
+  onSelect: () => void;
+}
+
+/** Progreso que reporta el programa del panel activo (OSC 9;4). */
+function useTabProgress(paneId: string): { state: number; value: number } {
+  const snapshot = useSyncExternalStore(terminalManager.subscribeProgress, () => {
+    const p = terminalManager.getProgress(paneId);
+    return `${p.state}:${p.value}`;
+  });
+  const [state, value] = snapshot.split(":").map(Number);
+  return { state, value };
+}
+
+const TabItem: React.FC<TabItemProps> = ({
+  tab,
+  index,
+  isActive,
+  canClose,
+  needsAttention,
+  dropMarker,
+  isDragged,
+  onPointerDownTab,
+  onSelect,
+}) => {
+  const renameTab = useTerminalStore((s) => s.renameTab);
+  const [editing, setEditing] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const label = tabLabel(tab);
+  const agentType = findPane(tab.root, tab.activePaneId)?.agentType;
+  const hint = tabShortcutLabel(index);
+  const progress = useTabProgress(tab.activePaneId);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
+
+  const finish = (save: boolean) => {
+    if (save) renameTab(tab.id, inputRef.current?.value ?? "");
+    setEditing(false);
+  };
+
+  return (
+    <li
+      data-index={index}
+      onPointerDown={(e) => {
+        if (!editing && !(e.target as HTMLElement).closest("[data-no-drag]")) onPointerDownTab(e);
+      }}
+      className={cn(
+        "group relative flex h-[31px] shrink-0 items-center rounded-t-md border-x border-t transition-colors duration-150",
+        isActive ? "z-10 border-line bg-canvas text-ink" : "border-transparent text-ink-3 hover:bg-hover/60 hover:text-ink-2",
+        isDragged && "opacity-50",
+      )}
+    >
+      {dropMarker && (
+        <span
+          aria-hidden="true"
+          className={cn("absolute inset-y-1 w-0.5 rounded-full bg-amber", dropMarker === "before" ? "-left-1" : "-right-1")}
+        />
+      )}
+      {editing ? (
+        <input
+          ref={inputRef}
+          data-no-drag
+          defaultValue={tab.customTitle ?? label}
+          aria-label="Nombre de la pestaña"
+          onBlur={() => finish(true)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") finish(true);
+            else if (e.key === "Escape") finish(false);
+          }}
+          className="ml-2 h-6 w-40 select-text rounded border border-line-strong bg-raised px-1.5 font-mono text-[12px] text-ink outline-none"
+        />
+      ) : (
+        <button
+          type="button"
+          aria-current={isActive ? "page" : undefined}
+          title={`${label}${hint ? `  ${hint}` : ""} · doble clic para renombrar`}
+          onClick={onSelect}
+          onDoubleClick={() => setEditing(true)}
+          onAuxClick={(e) => {
+            if (e.button === 1 && canClose) actions.closeTab(tab.id);
+          }}
+          className="flex h-full min-w-0 items-center gap-2 pl-3 pr-1 outline-offset-[-2px]"
+        >
+          {needsAttention ? (
+            <Lamp state="attention" />
+          ) : (
+            <span className={cn("font-mono text-[11px] tabular-nums", isActive ? "text-amber" : "text-ink-3")}>{index + 1}</span>
+          )}
+          <AgentGlyph agentType={agentType} className="shrink-0 opacity-80" />
+          <span className="max-w-[180px] truncate font-mono text-[12px]">{label}</span>
+          {tab.zoomedPaneId && (
+            <Maximize2 size={11} strokeWidth={2} aria-label="Panel maximizado" className="shrink-0 text-amber" />
+          )}
+        </button>
+      )}
+
+      {canClose ? (
+        <button
+          type="button"
+          data-no-drag
+          aria-label={`Cerrar pestaña ${label}`}
+          onClick={() => actions.closeTab(tab.id)}
+          className={cn(
+            "mr-1.5 grid size-5 place-items-center rounded text-ink-3 transition-opacity duration-150 hover:bg-press hover:text-ink focus-visible:opacity-100",
+            isActive ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+          )}
+        >
+          <X size={12} strokeWidth={2} aria-hidden="true" />
+        </button>
+      ) : (
+        <span className="w-2" />
+      )}
+
+      {progress.state !== 0 && (
+        <span
+          role="progressbar"
+          aria-label="Progreso"
+          aria-valuenow={progress.state === 3 ? undefined : progress.value}
+          className="absolute inset-x-2 bottom-0.5 h-[2px] overflow-hidden rounded-full bg-line"
+        >
+          <span
+            className={cn(
+              "block h-full rounded-full transition-[width] duration-300",
+              progress.state === 2 ? "bg-signal" : progress.state === 4 ? "bg-ink-3" : "bg-amber",
+              progress.state === 3 && "w-1/3 animate-[indeterminate_1.2s_ease-in-out_infinite]",
+            )}
+            style={progress.state === 3 ? undefined : { width: `${Math.max(2, progress.value)}%` }}
+          />
+        </span>
+      )}
+    </li>
   );
 };

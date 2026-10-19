@@ -28,8 +28,12 @@ export type LayoutNode = SplitNode | PaneNode;
 export interface Tab {
   id: string;
   title: string;
+  /** Nombre puesto a mano (doble clic en la pestaña); manda sobre el título vivo. */
+  customTitle?: string;
   root: LayoutNode;
   activePaneId: string;
+  /** Panel maximizado dentro de la pestaña (⌘⇧↵). */
+  zoomedPaneId?: string | null;
 }
 
 /* ---- Datos que llegan del backend (ver src-tauri/src/usage) ---- */
@@ -78,7 +82,10 @@ export interface AgentsInfo {
   claude: string | null;
   codex: string | null;
   gh: string | null;
+  /** Editores encontrados en tu PATH: cursor, code, zed, subl. */
+  editors: string[];
   claudeSettingsPath: string | null;
+  mcpConfigPath: string | null;
 }
 
 export interface ProcessInfo {

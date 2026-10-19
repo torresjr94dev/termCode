@@ -3,7 +3,8 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": [
-    "main"
+    "main",
+    "quick"
   ],
   "permissions": [
     "core:default",
@@ -12,6 +13,9 @@
     "opener:default",
     "store:default",
     "notification:default",
-    "log:default"
+    "log:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "global-shortcut:allow-is-registered"
   ]
 }

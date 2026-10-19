@@ -15,6 +15,11 @@ export interface Toast {
 
 interface UiState {
   isPaletteOpen: boolean;
+  isSettingsOpen: boolean;
+  isOverviewOpen: boolean;
+  isMissionOpen: boolean;
+  /** ⌘ mantenido: se muestran los atajos sobre la interfaz. */
+  showHints: boolean;
   confirm: ConfirmRequest | null;
   toast: Toast | null;
   /** Panel con la barra de búsqueda abierta. */
@@ -23,6 +28,10 @@ interface UiState {
   dropPaneId: string | null;
 
   setPaletteOpen: (open: boolean) => void;
+  setSettingsOpen: (open: boolean) => void;
+  setOverviewOpen: (open: boolean) => void;
+  setMissionOpen: (open: boolean) => void;
+  setShowHints: (show: boolean) => void;
   askConfirm: (request: ConfirmRequest) => void;
   resolveConfirm: (accepted: boolean) => void;
   showToast: (text: string, tone?: Toast["tone"]) => void;
@@ -36,12 +45,22 @@ const TOAST_MS = 4500;
 
 export const useUiStore = create<UiState>((set, get) => ({
   isPaletteOpen: false,
+  isSettingsOpen: false,
+  isOverviewOpen: false,
+  isMissionOpen: false,
+  showHints: false,
   confirm: null,
   toast: null,
   findPaneId: null,
   dropPaneId: null,
 
   setPaletteOpen: (open) => set({ isPaletteOpen: open }),
+  setSettingsOpen: (open) => set({ isSettingsOpen: open }),
+  setOverviewOpen: (open) => set({ isOverviewOpen: open }),
+  setMissionOpen: (open) => set({ isMissionOpen: open }),
+  setShowHints: (show) => {
+    if (get().showHints !== show) set({ showHints: show });
+  },
   askConfirm: (request) => set({ confirm: request }),
   resolveConfirm: (accepted) => {
     const request = get().confirm;

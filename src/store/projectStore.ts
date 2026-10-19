@@ -18,7 +18,7 @@ export type Viewer =
       truncated?: boolean;
       error?: string;
     }
-  | { kind: "file"; path: string; preview?: FilePreview; error?: string };
+  | { kind: "file"; path: string; line?: number; preview?: FilePreview; error?: string };
 
 export type TreeNode = FsEntry[] | "loading" | { error: string };
 

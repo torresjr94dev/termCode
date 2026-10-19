@@ -5,6 +5,11 @@ import {
   ArrowRight,
   ArrowUp,
   FolderTree,
+  Maximize2,
+  Palette,
+  Settings2,
+  StretchHorizontal,
+  Undo2,
   GitCommitHorizontal,
   GitPullRequestArrow,
   History,
@@ -32,6 +37,7 @@ import { useTerminalStore } from "../store/terminalStore";
 import { actions, AGENTS } from "../lib/actions";
 import { commit, generateCommitMessage, openProject, pull, push } from "../lib/project";
 import { useProjectStore } from "../store/projectStore";
+import { useSettingsStore } from "../store/settingsStore";
 import { cn, tabLabel } from "../lib/layout";
 import { shortcutLabel, tabShortcutLabel, type ShortcutId } from "../lib/shortcuts";
 import { Kbd } from "./ui";
@@ -72,7 +78,8 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const activeTabId = useTerminalStore((s) => s.activeTabId);
   const isBroadcastEnabled = useTerminalStore((s) => s.isBroadcastEnabled);
   const isSidebarOpen = useTerminalStore((s) => s.isSidebarOpen);
-  const fontSize = useTerminalStore((s) => s.fontSize);
+  const fontSize = useSettingsStore((s) => s.settings.fontSize);
+  const currentTheme = useSettingsStore((s) => s.settings.theme);
   const agents = useTerminalStore((s) => s.agents);
   const repo = useProjectStore((s) => s.repo);
 
@@ -112,6 +119,20 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         : []),
       { id: "files", group: "Proyecto", title: "Explorar archivos", icon: FolderTree, shortcut: sc("projectFiles"), run: () => openProject("files") },
 
+      { id: "settings", group: "Vista", title: "Ajustes", icon: Settings2, shortcut: sc("settings"), run: actions.openSettings },
+      { id: "zoom", group: "Vista", title: "Maximizar / restaurar panel", icon: Maximize2, shortcut: sc("zoomPane"), run: actions.toggleZoom },
+      { id: "equalize", group: "Vista", title: "Igualar tamaño de paneles", icon: StretchHorizontal, run: actions.equalizeSplits },
+      { id: "reopen", group: "Sesión", title: "Reabrir lo último cerrado", icon: Undo2, shortcut: sc("reopenClosed"), run: actions.reopenClosed },
+      { id: "prev-command", group: "Sesión", title: "Comando anterior", icon: ArrowUp, shortcut: sc("prevCommand"), run: () => actions.jumpCommand(-1) },
+      { id: "next-command", group: "Sesión", title: "Comando siguiente", icon: ArrowDown, shortcut: sc("nextCommand"), run: () => actions.jumpCommand(1) },
+      ...(["fosforo", "fosforo-verde", "papel"] as const).map<Command>((theme) => ({
+        id: `theme-${theme}`,
+        group: "Vista",
+        title: `Tema: ${theme === "fosforo" ? "Fósforo" : theme === "fosforo-verde" ? "Fósforo verde" : "Papel"}`,
+        hint: theme === currentTheme ? "actual" : undefined,
+        icon: Palette,
+        run: () => useSettingsStore.getState().update({ theme }),
+      })),
       { id: "sidebar", group: "Vista", title: isSidebarOpen ? "Ocultar sesiones" : "Mostrar sesiones", icon: PanelLeft, shortcut: sc("toggleSidebar"), run: actions.toggleSidebar },
       { id: "usage", group: "Vista", title: "Cuotas de IA", hint: "Claude · Codex", icon: Gauge, shortcut: sc("toggleUsage"), run: actions.toggleUsage },
       { id: "usage-refresh", group: "Vista", title: "Actualizar cuotas", icon: RefreshCw, run: actions.refreshUsage },
@@ -138,7 +159,7 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         run: () => actions.goToTab(index),
       })),
     ],
-    [tabs, activeTabId, isBroadcastEnabled, isSidebarOpen, fontSize, agents, repo],
+    [tabs, activeTabId, isBroadcastEnabled, isSidebarOpen, fontSize, agents, repo, currentTheme],
   );
 
   const filtered = useMemo(() => {

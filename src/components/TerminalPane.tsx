@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { Columns2, Rows2, X } from "lucide-react";
+import { Columns2, Maximize2, Minimize2, Rows2, X } from "lucide-react";
 import type { PaneNode } from "../types/layout";
 import { terminalManager } from "../terminal/TerminalManager";
 import { useTerminalStore } from "../store/terminalStore";
@@ -9,6 +9,8 @@ import { cn } from "../lib/layout";
 import { formatUsd } from "../lib/format";
 import { shortcutLabel } from "../lib/shortcuts";
 import { FindBar } from "./FindBar";
+import { CommandGutter } from "./CommandGutter";
+import { useSettingsStore } from "../store/settingsStore";
 import { AgentGlyph, IconButton, Lamp } from "./ui";
 
 interface TerminalPaneProps {
@@ -16,15 +18,19 @@ interface TerminalPaneProps {
   isActive: boolean;
   /** Con un solo panel de shell no hay barra: todo el espacio es para el terminal. */
   isSplit: boolean;
+  /** Mostrado maximizado dentro de su pestaña (⌘⇧↵). */
+  isZoomed?: boolean;
 }
 
-export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSplit }) => {
+export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSplit, isZoomed = false }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const setActivePane = useTerminalStore((s) => s.setActivePane);
   const status = useTerminalStore((s) => s.agentStatus[pane.id]);
   const hasAttention = useTerminalStore((s) => pane.id in s.attention);
   const isFindOpen = useUiStore((s) => s.findPaneId === pane.id);
   const isDropTarget = useUiStore((s) => s.dropPaneId === pane.id);
+  const dimInactive = useSettingsStore((s) => s.settings.dimInactivePanes);
+  const toggleZoom = useTerminalStore((s) => s.toggleZoom);
 
   // El spawn solo usa cwd/command la primera vez: cambios posteriores no relanzan nada.
   const spawnSpec = useRef({ cwd: pane.cwd, command: pane.command });
@@ -40,8 +46,8 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
     return () => observer.disconnect();
   }, [pane.id]);
 
-  const showHeader = isSplit || Boolean(pane.agentType);
-  const dimmed = isSplit && !isActive;
+  const showHeader = isSplit || isZoomed || Boolean(pane.agentType);
+  const dimmed = dimInactive && isSplit && !isActive;
 
   /** Los botones actúan sobre *este* panel, no sobre el que estaba activo. */
   const onThisPane = (action: () => unknown) => () => {
@@ -74,9 +80,23 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
           <span className="min-w-0 truncate font-mono text-[12px]">{pane.title}</span>
 
           {status && <AgentReadout model={status.model} context={status.contextPercent} cost={status.costUsd} />}
+          {isZoomed && (
+            <span className="shrink-0 rounded-sm border border-amber/40 px-1.5 font-mono text-[10.5px] leading-4 text-amber">
+              maximizado
+            </span>
+          )}
           <span className="flex-1" />
 
           <div className="flex items-center opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover:opacity-100">
+            {(isSplit || isZoomed) && (
+              <IconButton
+                size="sm"
+                icon={isZoomed ? Minimize2 : Maximize2}
+                label={isZoomed ? "Restaurar" : "Maximizar panel"}
+                shortcut={shortcutLabel("zoomPane")}
+                onClick={() => toggleZoom(pane.id)}
+              />
+            )}
             <IconButton
               size="sm"
               icon={Columns2}
@@ -111,6 +131,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
             dimmed && "opacity-55",
           )}
         />
+        <CommandGutter paneId={pane.id} />
         {isFindOpen && <FindBar paneId={pane.id} />}
         {isDropTarget && (
           <div

@@ -10,6 +10,7 @@ import { ConfirmDialog, ToastHost } from "./components/Overlays";
 import { ProjectPanel } from "./components/project/ProjectPanel";
 import { Viewer } from "./components/project/Viewer";
 import { PrDialog } from "./components/project/PrDialog";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { useTerminalStore } from "./store/terminalStore";
 import { useUiStore } from "./store/uiStore";
 import { terminalManager } from "./terminal/TerminalManager";
@@ -35,6 +36,13 @@ const SHORTCUT_HANDLERS: Record<Exclude<ShortcutId, "palette">, () => unknown> =
   fontReset: actions.fontReset,
   projectFiles: () => openProject("files"),
   projectChanges: () => openProject("changes"),
+  prevCommand: () => actions.jumpCommand(-1),
+  nextCommand: () => actions.jumpCommand(1),
+  zoomPane: actions.toggleZoom,
+  reopenClosed: actions.reopenClosed,
+  settings: actions.openSettings,
+  overview: () => useUiStore.getState().setOverviewOpen(!useUiStore.getState().isOverviewOpen),
+  missionControl: () => useUiStore.getState().setMissionOpen(!useUiStore.getState().isMissionOpen),
 };
 
 function focusActivePane() {
@@ -127,7 +135,7 @@ export const App: React.FC = () => {
         return;
       }
       // Con la paleta o un diálogo abiertos, el resto de atajos no debe actuar a ciegas.
-      if (ui.isPaletteOpen || ui.confirm) return;
+      if (ui.isPaletteOpen || ui.confirm || ui.isSettingsOpen) return;
 
       if (shortcut === "toggleUsage" && useTerminalStore.getState().isUsageDrawerOpen) closeUsage();
       else if (shortcut) void SHORTCUT_HANDLERS[shortcut]();
@@ -160,7 +168,7 @@ export const App: React.FC = () => {
           <main className="relative min-w-0 flex-1 bg-canvas">
             {tabs.map((tab) => (
               <div key={tab.id} hidden={tab.id !== activeTabId} className="absolute inset-0">
-                <SplitView node={tab.root} activePaneId={tab.activePaneId} />
+                <SplitView node={tab.root} activePaneId={tab.activePaneId} zoomedPaneId={tab.zoomedPaneId} />
               </div>
             ))}
             {/* Broadcast es peligroso: el marco rojo no se puede pasar por alto */}
@@ -182,6 +190,7 @@ export const App: React.FC = () => {
       <UsagePopover onClose={closeUsage} />
       <CommandPalette isOpen={isPaletteOpen} onClose={closePalette} />
       <PrDialog />
+      <SettingsDialog onClosed={focusActivePane} />
       <ConfirmDialog onSettled={focusActivePane} />
       <ToastHost />
     </div>

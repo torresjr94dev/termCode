@@ -48,3 +48,13 @@ const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD",
 export function formatUsd(value: number): string {
   return usd.format(value);
 }
+
+/** 2.3 s · 14 s · 2 min 14 s · 1 h 3 min */
+export function formatDuration(ms: number): string {
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)} s`;
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ${seconds % 60} s`;
+  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}

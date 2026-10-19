@@ -325,6 +325,11 @@ pub struct Tools {
     pub claude: Option<String>,
     pub codex: Option<String>,
     pub gh: Option<String>,
+    /// Editors that can open `file:line` (first found wins for "auto").
+    pub cursor: Option<String>,
+    pub code: Option<String>,
+    pub zed: Option<String>,
+    pub subl: Option<String>,
     pub path: Option<String>,
 }
 
@@ -332,7 +337,7 @@ static TOOLS: parking_lot::Mutex<Option<Tools>> = parking_lot::Mutex::new(None);
 
 #[cfg(unix)]
 fn detect_tools() -> Tools {
-    let script = r#"printf '\n__TC_claude=%s\n__TC_codex=%s\n__TC_gh=%s\n__TC_path=%s\n' "$(command -v claude)" "$(command -v codex)" "$(command -v gh)" "$PATH""#;
+    let script = r#"for t in claude codex gh cursor code zed subl; do printf '\n__TC_%s=%s' "$t" "$(command -v $t)"; done; printf '\n__TC_path=%s\n' "$PATH""#;
     let mut cmd = Command::new(pty_core::user_shell());
     cmd.args(["-l", "-i", "-c", script]);
     let Ok(out) = crate::proc::run(cmd, None, Duration::from_secs(8), 64 * 1024) else {
@@ -350,6 +355,10 @@ fn detect_tools() -> Tools {
         claude: find("__TC_claude="),
         codex: find("__TC_codex="),
         gh: find("__TC_gh="),
+        cursor: find("__TC_cursor="),
+        code: find("__TC_code="),
+        zed: find("__TC_zed="),
+        subl: find("__TC_subl="),
         path: find("__TC_path="),
     }
 }
@@ -390,7 +399,10 @@ pub struct AgentsInfo {
     pub claude: Option<String>,
     pub codex: Option<String>,
     pub gh: Option<String>,
+    /// Editors found on the user's PATH (`cursor`, `code`, `zed`, `subl`).
+    pub editors: Vec<String>,
     pub claude_settings_path: Option<String>,
+    pub mcp_config_path: Option<String>,
 }
 
 #[tauri::command]
@@ -399,13 +411,26 @@ pub async fn agents_info() -> AgentsInfo {
         .await
         .unwrap_or_default();
     let settings = state_dir().join("claude-settings.json");
+    let mcp = state_dir().join("mcp.json");
+    let editors = [
+        ("cursor", &tools.cursor),
+        ("code", &tools.code),
+        ("zed", &tools.zed),
+        ("subl", &tools.subl),
+    ]
+    .into_iter()
+    .filter(|(_, path)| path.is_some())
+    .map(|(name, _)| name.to_owned())
+    .collect();
     AgentsInfo {
         claude: tools.claude,
         codex: tools.codex,
         gh: tools.gh,
+        editors,
         claude_settings_path: settings
             .is_file()
             .then(|| settings.to_string_lossy().into_owned()),
+        mcp_config_path: mcp.is_file().then(|| mcp.to_string_lossy().into_owned()),
     }
 }
 

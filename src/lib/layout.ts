@@ -15,9 +15,15 @@ export function findOwnerTab(tabs: Tab[], paneId: string): Tab | undefined {
   return tabs.find((tab) => findPane(tab.root, paneId));
 }
 
-/** Etiqueta visible de una pestaña: el título vivo de su panel activo. */
+/** Etiqueta visible de una pestaña: su nombre manual o el título vivo de su panel activo. */
 export function tabLabel(tab: Tab): string {
-  return findPane(tab.root, tab.activePaneId)?.title || tab.title;
+  return tab.customTitle || findPane(tab.root, tab.activePaneId)?.title || tab.title;
+}
+
+/** Todas las proporciones a 50/50. */
+export function equalize(node: LayoutNode): LayoutNode {
+  if (node.type === "pane") return node;
+  return { ...node, ratio: 0.5, first: equalize(node.first), second: equalize(node.second) };
 }
 
 export function replacePane(

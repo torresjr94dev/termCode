@@ -1,0 +1,199 @@
+import type { IMarker, Terminal } from "@xterm/xterm";
+
+/**
+ * Comandos de un panel, a partir de las marcas de la integración con la shell
+ * (OSC 133 A/C/D, 633 E y 7). Sin integración no hay registros y todo lo que
+ * depende de esto simplemente no aparece.
+ */
+export interface CommandRecord {
+  id: number;
+  command: string;
+  cwd: string | null;
+  /** Línea donde empezó el prompt (para saltar entre comandos). */
+  prompt: IMarker | null;
+  /** Primera línea de salida. */
+  start: IMarker;
+  /** Línea siguiente a la última salida (al terminar). */
+  end: IMarker | null;
+  startedAt: number;
+  endedAt: number | null;
+  exitCode: number | null;
+}
+
+const MAX_RECORDS = 400;
+let nextId = 1;
+
+/** `633;E` escapa `\` como `\\` y bytes como `\xNN` (p. ej. `;` = `\x3b`). */
+export function decodeCommandLine(raw: string): string {
+  return raw.replace(/\\(\\|x([0-9a-fA-F]{2}))/g, (_, escaped: string, hex?: string) =>
+    hex ? String.fromCharCode(parseInt(hex, 16)) : escaped,
+  );
+}
+
+/** `file://host/Users/x/Mi%20dir` → `/Users/x/Mi dir`. */
+export function decodeCwd(raw: string): string | null {
+  const match = /^file:\/\/[^/]*(\/.*)$/.exec(raw);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+}
+
+export class CommandTracker {
+  records: CommandRecord[] = [];
+  cwd: string | null = null;
+  /** Hay integración activa en este panel (se vio al menos un prompt). */
+  integrated = false;
+  private pendingCommand = "";
+  private lastPrompt: IMarker | null = null;
+  private listeners = new Set<() => void>();
+  version = 0;
+
+  constructor(
+    private readonly term: Terminal,
+    private readonly onFinished: (record: CommandRecord) => void,
+    private readonly onCwd: (cwd: string) => void,
+  ) {}
+
+  /** Conecta los manejadores OSC. Devuelve cómo desconectarlos. */
+  attach(): () => void {
+    const parser = this.term.parser;
+    const subs = [
+      parser.registerOscHandler(133, (data) => this.on133(data)),
+      parser.registerOscHandler(633, (data) => {
+        if (!data.startsWith("E;")) return false;
+        this.pendingCommand = decodeCommandLine(data.slice(2)).trim();
+        return true;
+      }),
+      parser.registerOscHandler(7, (data) => {
+        const cwd = decodeCwd(data);
+        if (cwd && cwd !== this.cwd) {
+          this.cwd = cwd;
+          this.onCwd(cwd);
+          this.changed();
+        }
+        return true;
+      }),
+    ];
+    return () => subs.forEach((s) => s.dispose());
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private changed() {
+    this.version++;
+    this.listeners.forEach((l) => l());
+  }
+
+  private on133(data: string): boolean {
+    const [kind, arg] = data.split(";");
+    switch (kind) {
+      case "A":
+        this.integrated = true;
+        this.lastPrompt?.dispose();
+        this.lastPrompt = this.term.registerMarker(0);
+        return true;
+      case "C": {
+        const start = this.term.registerMarker(0);
+        if (!start) return true;
+        this.records.push({
+          id: nextId++,
+          command: this.pendingCommand,
+          cwd: this.cwd,
+          prompt: this.lastPrompt,
+          start,
+          end: null,
+          startedAt: Date.now(),
+          endedAt: null,
+          exitCode: null,
+        });
+        this.lastPrompt = null;
+        this.pendingCommand = "";
+        this.trim();
+        this.changed();
+        return true;
+      }
+      case "D": {
+        const record = this.running();
+        if (record) {
+          record.end = this.term.registerMarker(0) ?? null;
+          record.endedAt = Date.now();
+          const code = Number(arg);
+          record.exitCode = Number.isFinite(code) ? code : null;
+          this.changed();
+          this.onFinished(record);
+        }
+        return true;
+      }
+      default:
+        return false;
+    }
+  }
+
+  private trim() {
+    while (this.records.length > MAX_RECORDS) {
+      const old = this.records.shift();
+      old?.prompt?.dispose();
+      old?.start.dispose();
+      old?.end?.dispose();
+    }
+  }
+
+  running(): CommandRecord | undefined {
+    const last = this.records[this.records.length - 1];
+    return last && last.endedAt === null ? last : undefined;
+  }
+
+  last(): CommandRecord | undefined {
+    return this.records[this.records.length - 1];
+  }
+
+  /** Texto de la salida de un comando (sin las líneas vacías del final). */
+  output(record: CommandRecord, maxChars = 200_000): string {
+    const buffer = this.term.buffer.active;
+    const from = record.start.line;
+    const to = record.end ? record.end.line : buffer.baseY + buffer.cursorY;
+    if (from < 0) return "";
+    const lines: string[] = [];
+    let size = 0;
+    for (let y = from; y < to && size < maxChars; y++) {
+      const line = buffer.getLine(y);
+      if (!line) break;
+      const text = line.translateToString(true);
+      // Las líneas envueltas continúan la anterior.
+      if (line.isWrapped && lines.length) lines[lines.length - 1] += text;
+      else lines.push(text);
+      size += text.length;
+    }
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    return lines.join("\n");
+  }
+
+  /** Comando anterior/siguiente respecto a la línea `fromLine` (para ⌘↑ / ⌘↓). */
+  neighbour(fromLine: number, direction: -1 | 1): CommandRecord | undefined {
+    const anchor = (r: CommandRecord) => (r.prompt && !r.prompt.isDisposed ? r.prompt.line : r.start.line);
+    const valid = this.records.filter((r) => !r.start.isDisposed && anchor(r) >= 0);
+    if (direction < 0) return [...valid].reverse().find((r) => anchor(r) < fromLine);
+    return valid.find((r) => anchor(r) > fromLine);
+  }
+
+  anchorLine(record: CommandRecord): number {
+    return record.prompt && !record.prompt.isDisposed ? record.prompt.line : record.start.line;
+  }
+
+  dispose() {
+    this.records.forEach((r) => {
+      r.prompt?.dispose();
+      r.start.dispose();
+      r.end?.dispose();
+    });
+    this.records = [];
+    this.lastPrompt?.dispose();
+    this.listeners.clear();
+  }
+}

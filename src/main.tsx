@@ -1,6 +1,8 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { QuickApp } from "./QuickApp";
+import { loadSettings, startSettingsSync } from "./lib/settings";
 import { useTerminalStore } from "./store/terminalStore";
 import { startBridge } from "./lib/bridge";
 import { startProjectTracking } from "./lib/project";
@@ -35,25 +37,35 @@ function forwardErrorsToLog() {
   window.addEventListener("securitypolicyviolation", (e) => report(`CSP bloqueó ${e.blockedURI} (${e.violatedDirective})`));
 }
 
+async function windowLabel(): Promise<string> {
+  if (!IS_TAURI) return "main";
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  return getCurrentWindow().label;
+}
+
 async function boot(root: HTMLElement) {
   forwardErrorsToLog();
-  // La sesión se restaura antes del primer render: así ningún PTY arranca en
-  // una carpeta equivocada para luego ser reemplazado.
-  const [session] = await Promise.all([loadSession(), waitForTerminalFont()]);
+  const isQuick = (await windowLabel()) === "quick";
+  // Ajustes y sesión antes del primer render: sin parpadeo de tema y sin PTYs
+  // que arrancan en una carpeta equivocada para luego ser reemplazados.
+  const [session] = await Promise.all([
+    isQuick ? Promise.resolve(null) : loadSession(),
+    loadSettings(),
+    waitForTerminalFont(),
+  ]);
   if (session) useTerminalStore.getState().hydrate(session);
 
+  startSettingsSync({ isMainWindow: !isQuick });
   startBridge();
-  startAutosave();
-  startProjectTracking();
+  if (!isQuick) {
+    startAutosave();
+    startProjectTracking();
+  }
 
-  ReactDOM.createRoot(root).render(
-    <React.StrictMode>
-      <App />
-    </React.StrictMode>,
-  );
+  ReactDOM.createRoot(root).render(<React.StrictMode>{isQuick ? <QuickApp /> : <App />}</React.StrictMode>);
   if (IS_TAURI) {
     const { tabs } = useTerminalStore.getState();
-    void logInfo(`[webview] listo: ${tabs.length} pestaña(s)${session ? " restauradas" : ""}`).catch(() => {});
+    void logInfo(`[webview] listo${isQuick ? " (terminal rápida)" : ""}: ${tabs.length} pestaña(s)${session ? " restauradas" : ""}`).catch(() => {});
   }
 }
 

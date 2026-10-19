@@ -45,6 +45,7 @@ pub async fn pty_spawn(
     pty: State<'_, PtyManager>,
     mut options: SpawnOptions,
     on_data: Channel<InvokeResponseBody>,
+    shell_integration: Option<bool>,
 ) -> CmdResult<SessionId> {
     // Agents launched in this PTY report back through files in the state dir.
     options.env.retain(|(k, _)| k != agents::ENV_STATE_DIR);
@@ -52,6 +53,14 @@ pub async fn pty_spawn(
         agents::ENV_STATE_DIR.to_owned(),
         agents::state_dir().to_string_lossy().into_owned(),
     ));
+    #[cfg(unix)]
+    if shell_integration.unwrap_or(true) && options.program.is_none() {
+        options
+            .env
+            .extend(crate::shell_integration::env_for(&pty_core::user_shell()));
+    }
+    #[cfg(not(unix))]
+    let _ = shell_integration;
     let kind = if options.command.is_some() {
         "agent"
     } else {

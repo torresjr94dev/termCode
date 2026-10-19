@@ -22,7 +22,14 @@ export type ShortcutId =
   | "fontSmaller"
   | "fontReset"
   | "projectFiles"
-  | "projectChanges";
+  | "projectChanges"
+  | "prevCommand"
+  | "nextCommand"
+  | "zoomPane"
+  | "reopenClosed"
+  | "settings"
+  | "overview"
+  | "missionControl";
 
 interface Chord {
   /**
@@ -53,6 +60,13 @@ export const SHORTCUTS: Record<ShortcutId, Chord> = {
   fontReset: { key: "0" },
   projectFiles: { key: "e", shift: true },
   projectChanges: { key: "g", shift: true },
+  prevCommand: { key: "ArrowUp" },
+  nextCommand: { key: "ArrowDown" },
+  zoomPane: { key: "Enter", shift: true },
+  reopenClosed: { key: "t", shift: true },
+  settings: { key: "," },
+  overview: { key: "o", shift: true },
+  missionControl: { key: "a", shift: true },
 };
 
 export const IS_MAC =
@@ -63,6 +77,7 @@ const KEY_GLYPHS: Record<string, string> = {
   ArrowLeft: "←",
   ArrowUp: "↑",
   ArrowDown: "↓",
+  Enter: "↵",
 };
 
 function hasMod(e: KeyboardEvent): boolean {

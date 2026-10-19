@@ -1,12 +1,15 @@
 import React, { useRef, useState } from "react";
 import type { LayoutNode, SplitNode } from "../types/layout";
 import { TerminalPane } from "./TerminalPane";
+import { findPane } from "../lib/layout";
 import { useTerminalStore } from "../store/terminalStore";
 
 interface SplitViewProps {
   node: LayoutNode;
   activePaneId: string;
   isRoot?: boolean;
+  /** Si hay un panel maximizado, solo se pinta ese. */
+  zoomedPaneId?: string | null;
 }
 
 /**
@@ -14,7 +17,12 @@ interface SplitViewProps {
  * condicional: al convertir un panel en split, React veía más hooks que en el
  * render anterior y reventaba.
  */
-export const SplitView: React.FC<SplitViewProps> = ({ node, activePaneId, isRoot = true }) => {
+export const SplitView: React.FC<SplitViewProps> = ({ node, activePaneId, isRoot = true, zoomedPaneId }) => {
+  if (zoomedPaneId) {
+    const zoomed = findPane(node, zoomedPaneId);
+    // El resto de paneles se desmonta; sus terminales siguen vivos y vuelven intactos.
+    if (zoomed) return <TerminalPane pane={zoomed} isActive isSplit={false} isZoomed />;
+  }
   if (node.type === "pane") {
     return <TerminalPane pane={node} isActive={node.id === activePaneId} isSplit={!isRoot} />;
   }

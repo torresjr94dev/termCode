@@ -290,6 +290,13 @@ const FileView: React.FC<{
   const lines = useMemo(() => (preview && !preview.binary ? preview.text.split("\n") : []), [preview]);
   const shown = lines.slice(0, LINE_CAP);
   const toast = useUiStore((s) => s.showToast);
+  const target = viewer.line;
+
+  // ⌘-clic en `archivo:42`: la línea queda centrada y marcada.
+  useEffect(() => {
+    if (!target || !shown.length) return;
+    bodyRef.current?.querySelector(`[data-line="${target}"]`)?.scrollIntoView({ block: "center" });
+  }, [target, shown.length, bodyRef]);
 
   const copyPath = async () => {
     if (!preview) return;
@@ -303,7 +310,10 @@ const FileView: React.FC<{
 
   return (
     <>
-      <Header path={viewer.path} badge={preview ? `${(preview.size / 1024).toFixed(preview.size < 10240 ? 1 : 0)} KB` : "Archivo"}>
+      <Header
+        path={viewer.path}
+        badge={target ? `línea ${target}` : preview ? `${(preview.size / 1024).toFixed(preview.size < 10240 ? 1 : 0)} KB` : "Archivo"}
+      >
         {preview && (
           <>
             <IconButton icon={CornerDownLeft} label="Pegar la ruta en la terminal" size="sm" onClick={() => pastePath(preview.absolute)} />
@@ -326,7 +336,11 @@ const FileView: React.FC<{
         {shown.length > 0 && (
           <div className="w-max min-w-full py-2 pb-6">
             {shown.map((line, i) => (
-              <div key={i} className="flex min-w-full hover:bg-hover/50">
+              <div
+                key={i}
+                data-line={i + 1}
+                className={cn("flex min-w-full", i + 1 === target ? "bg-amber/15 shadow-[inset_2px_0_0_var(--color-amber)]" : "hover:bg-hover/50")}
+              >
                 <span className="w-14 shrink-0 select-none pr-3 text-right tabular-nums text-ink-3/70">{i + 1}</span>
                 <span className="whitespace-pre pr-6 text-ink">{line || " "}</span>
               </div>

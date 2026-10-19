@@ -8,8 +8,8 @@ import type {
   Tab,
   UsageSnapshot,
 } from "../types/layout";
-import { FONT_SIZE, terminalManager } from "../terminal/TerminalManager";
-import { collectPanes, findOwnerTab, findPane, removePane, replacePane, setSplitRatio } from "../lib/layout";
+import { terminalManager } from "../terminal/TerminalManager";
+import { collectPanes, equalize, findOwnerTab, findPane, removePane, replacePane, setSplitRatio } from "../lib/layout";
 
 let nextId = 1;
 export const genId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${nextId++}`;
@@ -32,8 +32,15 @@ export interface PersistedSession {
   tabs: Tab[];
   activeTabId: string;
   isSidebarOpen: boolean;
-  fontSize: number;
 }
+
+/** Lo necesario para reabrir algo cerrado (⌘⇧T): la shell ya murió, la carpeta no. */
+export interface ClosedEntry {
+  title: string;
+  cwds: string[];
+}
+
+const MAX_CLOSED = 12;
 
 const loadingProvider = {
   status: "loading",
@@ -76,8 +83,8 @@ interface TerminalState {
   isBroadcastEnabled: boolean;
   isUsageDrawerOpen: boolean;
   isSidebarOpen: boolean;
-  fontSize: number;
   usage: UsageSnapshot;
+  closed: ClosedEntry[];
   agents: AgentsInfo | null;
   agentStatus: Record<string, AgentStatus>;
   attention: Record<string, Attention>;
@@ -93,7 +100,12 @@ interface TerminalState {
   toggleBroadcast: () => void;
   toggleUsageDrawer: () => void;
   toggleSidebar: () => void;
-  setFontSize: (size: number) => void;
+  renameTab: (tabId: string, title: string) => void;
+  moveTab: (from: number, to: number) => void;
+  toggleZoom: (paneId?: string) => void;
+  equalizeSplits: () => void;
+  rememberClosed: (entry: ClosedEntry) => void;
+  popClosed: () => ClosedEntry | undefined;
   setUsage: (usage: UsageSnapshot) => void;
   setAgents: (agents: AgentsInfo) => void;
   setAgentStatus: (status: AgentStatus) => void;
@@ -109,7 +121,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   isBroadcastEnabled: false,
   isUsageDrawerOpen: false,
   isSidebarOpen: false,
-  fontSize: FONT_SIZE.default,
+  closed: [],
   usage: { claude: { ...loadingProvider, windows: [] }, codex: { ...loadingProvider, windows: [] } },
   agents: null,
   agentStatus: {},
@@ -187,8 +199,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     terminalManager.kill(paneId);
     const activePaneId =
       owner.activePaneId === paneId ? (collectPanes(root)[0]?.id ?? "") : owner.activePaneId;
+    const zoomedPaneId = owner.zoomedPaneId === paneId || root.type === "pane" ? null : owner.zoomedPaneId;
     set((state) => ({
-      tabs: state.tabs.map((t) => (t.id === owner.id ? { ...t, root, activePaneId } : t)),
+      tabs: state.tabs.map((t) => (t.id === owner.id ? { ...t, root, activePaneId, zoomedPaneId } : t)),
       agentStatus: omit(state.agentStatus, [paneId]),
       attention: omit(state.attention, [paneId]),
     }));
@@ -228,11 +241,42 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   toggleUsageDrawer: () => set((state) => ({ isUsageDrawerOpen: !state.isUsageDrawerOpen })),
   toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
 
-  setFontSize: (size) => {
-    const clamped = Math.min(Math.max(Math.round(size), FONT_SIZE.min), FONT_SIZE.max);
-    if (clamped === get().fontSize) return;
-    terminalManager.setFontSize(clamped);
-    set({ fontSize: clamped });
+  renameTab: (tabId, title) => {
+    const clean = title.trim().slice(0, 60);
+    set((state) => ({
+      tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, customTitle: clean || undefined } : t)),
+    }));
+  },
+
+  moveTab: (from, to) => {
+    const tabs = [...get().tabs];
+    if (from === to || from < 0 || to < 0 || from >= tabs.length || to >= tabs.length) return;
+    const [moved] = tabs.splice(from, 1);
+    tabs.splice(to, 0, moved);
+    set({ tabs });
+  },
+
+  toggleZoom: (paneId) => {
+    const { tabs, activeTabId } = get();
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (!tab || tab.root.type === "pane") return;
+    const target = paneId ?? tab.activePaneId;
+    const zoomedPaneId = tab.zoomedPaneId === target ? null : target;
+    set({ tabs: tabs.map((t) => (t.id === tab.id ? { ...t, zoomedPaneId, activePaneId: target } : t)) });
+    setTimeout(() => terminalManager.focus(target), 0);
+  },
+
+  equalizeSplits: () => {
+    const { tabs, activeTabId } = get();
+    set({ tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, root: equalize(t.root) } : t)) });
+  },
+
+  rememberClosed: (entry) => set((state) => ({ closed: [entry, ...state.closed].slice(0, MAX_CLOSED) })),
+
+  popClosed: () => {
+    const [entry, ...rest] = get().closed;
+    if (entry) set({ closed: rest });
+    return entry;
   },
 
   setUsage: (usage) => set({ usage }),
@@ -255,14 +299,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   hydrate: (session) => {
     if (!session.tabs.length) return;
-    terminalManager.setFontSize(session.fontSize);
     set({
       tabs: session.tabs,
       activeTabId: session.tabs.some((t) => t.id === session.activeTabId)
         ? session.activeTabId
         : session.tabs[0].id,
       isSidebarOpen: session.isSidebarOpen,
-      fontSize: session.fontSize,
     });
   },
 }));

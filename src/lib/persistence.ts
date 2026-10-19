@@ -1,7 +1,7 @@
 import { LazyStore } from "@tauri-apps/plugin-store";
 import { warn as logWarn } from "@tauri-apps/plugin-log";
 import { useTerminalStore, type PersistedSession } from "../store/terminalStore";
-import { terminalManager, FONT_SIZE } from "../terminal/TerminalManager";
+import { terminalManager } from "../terminal/TerminalManager";
 import type { LayoutNode, Tab } from "../types/layout";
 import { basename } from "./layout";
 import { IS_TAURI } from "./ipc";
@@ -54,10 +54,9 @@ export async function loadSession(timeoutMs = 800): Promise<PersistedSession | n
       new Promise<undefined>((resolve) => setTimeout(resolve, timeoutMs)),
     ]);
     if (!saved || saved.version !== 1 || !Array.isArray(saved.tabs)) return null;
-    const tabs = saved.tabs.filter(isTab).map((tab) => ({ ...tab, root: asShells(tab.root) }));
+    const tabs = saved.tabs.filter(isTab).map((tab) => ({ ...tab, root: asShells(tab.root), zoomedPaneId: null }));
     if (!tabs.length) return null;
-    const fontSize = Number.isFinite(saved.fontSize) ? saved.fontSize : FONT_SIZE.default;
-    return { version: 1, tabs, activeTabId: saved.activeTabId, isSidebarOpen: Boolean(saved.isSidebarOpen), fontSize };
+    return { version: 1, tabs, activeTabId: saved.activeTabId, isSidebarOpen: Boolean(saved.isSidebarOpen) };
   } catch (err) {
     console.warn("[termCode] no se pudo leer la sesión guardada:", err);
     return null;
@@ -75,14 +74,13 @@ async function withLiveCwd(node: LayoutNode): Promise<LayoutNode> {
 
 async function save() {
   if (!store) return;
-  const { tabs, activeTabId, isSidebarOpen, fontSize } = useTerminalStore.getState();
+  const { tabs, activeTabId, isSidebarOpen } = useTerminalStore.getState();
   try {
     const session: PersistedSession = {
       version: 1,
       tabs: await Promise.all(tabs.map(async (tab) => ({ ...tab, root: await withLiveCwd(tab.root) }))),
       activeTabId,
       isSidebarOpen,
-      fontSize,
     };
     await store.set(KEY, session);
     await store.save();
@@ -102,8 +100,7 @@ export function startAutosave(): () => void {
     if (
       s.tabs !== prev.tabs ||
       s.activeTabId !== prev.activeTabId ||
-      s.isSidebarOpen !== prev.isSidebarOpen ||
-      s.fontSize !== prev.fontSize
+      s.isSidebarOpen !== prev.isSidebarOpen
     ) {
       schedule();
     }

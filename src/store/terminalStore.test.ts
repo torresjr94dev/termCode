@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // El store solo necesita estas piezas del gestor de terminales (xterm no corre en Node).
 vi.mock("../terminal/TerminalManager", () => ({
   FONT_SIZE: { min: 9, max: 24, default: 13 },
-  terminalManager: { kill: vi.fn(), focus: vi.fn(), setFontSize: vi.fn() },
+  terminalManager: { kill: vi.fn(), focus: vi.fn() },
 }));
 
 const { useTerminalStore } = await import("./terminalStore");
@@ -15,9 +15,14 @@ const paneIds = (tabIndex: number) => collectPanes(s().tabs[tabIndex].root).map(
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Estado limpio: una sola pestaña.
-  const keep = s().tabs[0];
-  useTerminalStore.setState({ tabs: [keep], activeTabId: keep.id, attention: {}, agentStatus: {} });
+  // Estado limpio: una sola pestaña con un solo panel.
+  const fresh = {
+    id: "tab-test",
+    title: "Terminal",
+    root: { id: "pane-test", type: "pane" as const, terminalId: "term-test", title: "zsh" },
+    activePaneId: "pane-test",
+  };
+  useTerminalStore.setState({ tabs: [fresh], activeTabId: fresh.id, attention: {}, agentStatus: {}, closed: [] });
 });
 
 describe("closePane", () => {
@@ -76,12 +81,49 @@ describe("titles, attention and font", () => {
     expect(s().attention).toEqual({});
   });
 
-  it("clamps the font size", () => {
-    s().setFontSize(100);
-    expect(s().fontSize).toBe(24);
-    s().setFontSize(2);
-    expect(s().fontSize).toBe(9);
-    expect(terminalManager.setFontSize).toHaveBeenLastCalledWith(9);
+  it("renames, reorders and remembers closed tabs", () => {
+    s().createTab();
+    s().createTab();
+    const ids = s().tabs.map((t) => t.id);
+    s().renameTab(ids[0], "  backend  ");
+    expect(s().tabs[0].customTitle).toBe("backend");
+    s().renameTab(ids[0], "");
+    expect(s().tabs[0].customTitle).toBeUndefined();
+
+    s().moveTab(0, 2);
+    expect(s().tabs.map((t) => t.id)).toEqual([ids[1], ids[2], ids[0]]);
+    s().moveTab(0, 9); // fuera de rango: no hace nada
+    expect(s().tabs.map((t) => t.id)).toEqual([ids[1], ids[2], ids[0]]);
+
+    s().rememberClosed({ title: "a", cwds: ["/a"] });
+    s().rememberClosed({ title: "b", cwds: ["/b"] });
+    expect(s().popClosed()?.title).toBe("b");
+    expect(s().popClosed()?.title).toBe("a");
+    expect(s().popClosed()).toBeUndefined();
+  });
+
+  it("zooms a pane and drops the zoom when the split goes away", () => {
+    const first = s().tabs[0].activePaneId;
+    s().toggleZoom(); // un solo panel: no hay nada que maximizar
+    expect(s().tabs[0].zoomedPaneId).toBeUndefined();
+
+    s().splitPane(first, "horizontal");
+    const second = s().tabs[0].activePaneId;
+    s().toggleZoom(first);
+    expect(s().tabs[0].zoomedPaneId).toBe(first);
+    expect(s().tabs[0].activePaneId).toBe(first);
+    s().closePane(second);
+    expect(s().tabs[0].zoomedPaneId).toBeNull();
+  });
+
+  it("equalizes split ratios", () => {
+    s().splitPane(s().tabs[0].activePaneId, "horizontal");
+    const root = s().tabs[0].root;
+    if (root.type !== "split") throw new Error("esperaba un split");
+    s().updateSplitRatio(root.id, 0.8);
+    s().equalizeSplits();
+    const after = s().tabs[0].root;
+    expect(after.type === "split" && after.ratio).toBe(0.5);
   });
 
   it("splits inherit the spec (cwd, agent)", () => {

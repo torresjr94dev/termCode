@@ -1,10 +1,13 @@
 //! termCode desktop app: Tauri commands bridging the webview and `pty-core`.
 
 pub mod agents;
+mod editor;
 mod fs;
 mod git;
 mod proc;
 mod pty;
+mod quick;
+mod shell_integration;
 mod usage;
 
 use pty_core::PtyManager;
@@ -44,6 +47,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(PtyManager::default())
         .manage(UsageHub::default())
         .setup(|app| {
@@ -51,7 +55,18 @@ pub fn run() {
             if let Err(e) = agents::write_claude_settings() {
                 log::error!("agents: cannot write Claude settings: {e}");
             }
+            if let Err(e) = shell_integration::install() {
+                log::error!("shell integration: cannot install: {e}");
+            }
             agents::spawn_watcher(app.handle().clone());
+            // TEMP-QUICK-TEST
+            if std::env::var_os("TERMCODE_DEBUG_QUICK").is_some() {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    log::info!("debug: quick_toggle -> {:?}", quick::quick_toggle(handle));
+                });
+            }
             usage::spawn(app.handle().clone());
             Ok(())
         })
@@ -86,6 +101,10 @@ pub fn run() {
             git::ai::ai_pr_description,
             fs::fs_list,
             fs::fs_read,
+            editor::open_in_editor,
+            editor::fs_existing_files,
+            quick::quick_toggle,
+            quick::quick_hide,
         ])
         .build(tauri::generate_context!())
         .expect("error while building termCode");

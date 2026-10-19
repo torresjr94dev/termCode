@@ -3,16 +3,25 @@ import {
   requestPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification";
+import { invoke } from "@tauri-apps/api/core";
 import { useTerminalStore } from "../store/terminalStore";
+import { useUiStore } from "../store/uiStore";
+import { settingsNow } from "../store/settingsStore";
 import { terminalManager } from "../terminal/TerminalManager";
+import type { CommandRecord } from "../terminal/commands";
+import type { FileLinkTarget } from "../terminal/links";
 import { findOwnerTab, findPane } from "./layout";
 import { IS_TAURI, ipc } from "./ipc";
+import { formatDuration } from "./format";
+import { info as logInfo } from "@tauri-apps/plugin-log";
 
 const state = () => useTerminalStore.getState();
+/** Paneles que ya avisaron de su integración (una línea de log por panel). */
+const integrated = new Set<string>();
 
 let notificationsAllowed: boolean | null = null;
 
-async function notify(title: string, body: string) {
+export async function notify(title: string, body: string) {
   if (!IS_TAURI) return;
   try {
     if (notificationsAllowed === null) {
@@ -53,6 +62,46 @@ function raiseAttention(paneId: string, kind: string, message: string) {
   void notify(title, message || (kind === "bell" ? "Campana en el terminal" : ""));
 }
 
+/**
+ * Comando largo terminado mientras no mirabas: notificación del sistema con
+ * ✓/✗, y lámpara de atención en su pestaña.
+ */
+function onCommandFinished(paneId: string, record: CommandRecord) {
+  const settings = settingsNow();
+  const duration = (record.endedAt ?? Date.now()) - record.startedAt;
+  if (!settings.notifyLongCommands || duration < settings.longCommandSeconds * 1000) return;
+  if (isLookingAt(paneId)) return;
+  const ok = record.exitCode === 0;
+  const name = record.command.split("\n")[0].slice(0, 80) || "Comando";
+  state().setAttention(paneId, { kind: ok ? "done" : "failed", message: name, at: Date.now() });
+  if (!document.hasFocus()) {
+    void notify(
+      `${ok ? "✓" : "✗"} ${name}`,
+      ok ? `Terminó en ${formatDuration(duration)}` : `Falló (código ${record.exitCode ?? "?"}) tras ${formatDuration(duration)}`,
+    );
+  }
+}
+
+/** ⌘-clic en una ruta: tu editor en la línea exacta, o el visor de termCode. */
+async function openPath(target: FileLinkTarget) {
+  const settings = settingsNow();
+  const { openFileAbsolute } = await import("./project");
+  if (settings.openPathsIn === "viewer" && openFileAbsolute(target.absolute, target.line)) return;
+  try {
+    await invoke("open_in_editor", {
+      path: target.absolute,
+      line: target.line ?? null,
+      column: target.column ?? null,
+      editor: settings.editor,
+    });
+  } catch (err) {
+    // Sin editor disponible: el visor, si el archivo es del proyecto.
+    if (!openFileAbsolute(target.absolute, target.line)) {
+      useUiStore.getState().showToast(`No se pudo abrir ${target.absolute}: ${String(err)}`, "error");
+    }
+  }
+}
+
 /** La atención se considera vista cuando el panel está al frente y la ventana enfocada. */
 function clearSeenAttention() {
   const { tabs, activeTabId, attention } = state();
@@ -69,6 +118,19 @@ export function startBridge(): () => void {
       if (trimmed) state().updatePaneTitle(paneId, trimmed);
     },
     onAttention: raiseAttention,
+    onCommandFinished,
+    onCwd: (paneId, cwd) => {
+      if (!integrated.has(paneId)) {
+        integrated.add(paneId);
+        if (IS_TAURI) void logInfo(`[webview] integración con la shell activa (${paneId.slice(0, 12)}…, ${cwd})`).catch(() => {});
+      }
+      // La carpeta cambió (cd): el panel de proyecto se re-sincroniza ya, sin esperar al sondeo.
+      const { tabs, activeTabId } = state();
+      if (tabs.find((t) => t.id === activeTabId)?.activePaneId === paneId) {
+        void import("./project").then(({ syncNow }) => syncNow());
+      }
+    },
+    onOpenPath: (target) => void openPath(target),
   });
 
   const unsubscribeStore = useTerminalStore.subscribe((s, prev) => {

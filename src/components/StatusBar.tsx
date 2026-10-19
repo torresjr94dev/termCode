@@ -3,7 +3,9 @@ import { Radio } from "lucide-react";
 import { useTerminalStore } from "../store/terminalStore";
 import { terminalManager } from "../terminal/TerminalManager";
 import { actions } from "../lib/actions";
-import { collectPanes } from "../lib/layout";
+import { cn, collectPanes } from "../lib/layout";
+import { formatDuration } from "../lib/format";
+import { useNow } from "../lib/useNow";
 import { shortcutLabel } from "../lib/shortcuts";
 import { Lamp } from "./ui";
 
@@ -53,11 +55,44 @@ export const StatusBar: React.FC = () => {
       </div>
 
       <div className="flex shrink-0 items-center gap-3 tabular-nums">
+        {activePane && <CommandStatus paneId={activePane.id} />}
         {size && <span title="Columnas × filas">{size}</span>}
         <span>
           pestaña {tabIndex + 1}/{tabs.length}
         </span>
       </div>
     </footer>
+  );
+};
+
+const subscribeTracker = (paneId: string) => (listener: () => void) =>
+  terminalManager.getTracker(paneId)?.subscribe(listener) ?? (() => {});
+
+/** Último comando del panel activo (integración con la shell). */
+const CommandStatus: React.FC<{ paneId: string }> = ({ paneId }) => {
+  useSyncExternalStore(
+    React.useMemo(() => subscribeTracker(paneId), [paneId]),
+    () => terminalManager.getTracker(paneId)?.version ?? 0,
+  );
+  const record = terminalManager.getTracker(paneId)?.last();
+  const running = record && record.endedAt === null;
+  const now = useNow(running ? 1000 : 60_000);
+  if (!record) return null;
+
+  const name = record.command.split("\n")[0];
+  const short = name.length > 32 ? `${name.slice(0, 31)}…` : name;
+  // El reloj se refresca cada segundo: recién empezado un comando, "ahora" puede ser anterior al inicio.
+  const duration = formatDuration(Math.max(0, (record.endedAt ?? now) - record.startedAt));
+  const ok = record.exitCode === 0;
+  return (
+    <span
+      title={`${name} · ${running ? "corriendo" : `código ${record.exitCode ?? "?"}`} · ${duration}`}
+      className={cn("flex items-center gap-1.5", running ? "text-amber" : ok ? "text-ink-3" : "text-del")}
+    >
+      <span aria-hidden="true">{running ? "▪" : ok ? "✓" : "✗"}</span>
+      {!running && !ok && <span>{record.exitCode}</span>}
+      <span className="max-w-[220px] truncate text-ink-2">{short || "comando"}</span>
+      <span>{duration}</span>
+    </span>
   );
 };
