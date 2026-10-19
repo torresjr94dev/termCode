@@ -13,6 +13,9 @@ vi.mock("./git", async (importOriginal) => {
       lastCommit: vi.fn(),
       commit: vi.fn(async () => ({ sha: "abc1234", summary: "ok" })),
       status: vi.fn(),
+      stashList: vi.fn(async () => []),
+      ciStatus: vi.fn(async () => null),
+      prStatus: vi.fn(async () => null),
     },
   };
 });

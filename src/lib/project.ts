@@ -590,7 +590,12 @@ export async function refreshCi(force = false) {
   const now = Date.now();
   if (!force && now - ciCheckedAt < (previous?.state === "pending" ? CI_PENDING_MS : CI_IDLE_MS)) return;
   ciCheckedAt = now;
-  const ci = await gitApi.ciStatus(repo.root).catch(() => null);
+  let ci: Awaited<ReturnType<typeof gitApi.ciStatus>> = null;
+  try {
+    ci = await gitApi.ciStatus(repo.root);
+  } catch {
+    // Sin red o sin gh: el indicador simplemente no aparece.
+  }
   if (project().repo?.root !== repo.root) return;
   if (JSON.stringify(ci) === JSON.stringify(previous)) return;
   project().set({ ci });
@@ -691,7 +696,12 @@ async function stashThenSwitch(name: string, options: SwitchOptions) {
 export async function refreshStashes() {
   const root = project().repo?.root;
   if (!root) return;
-  const stashes = await gitApi.stashList(root).catch((): StashEntry[] => []);
+  let stashes: StashEntry[] = [];
+  try {
+    stashes = await gitApi.stashList(root);
+  } catch {
+    // Repo a medio borrar o git ocupado: se reintenta en el próximo cambio.
+  }
   if (project().repo?.root === root && JSON.stringify(stashes) !== JSON.stringify(project().stashes)) project().set({ stashes });
 }
 
