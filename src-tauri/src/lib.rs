@@ -59,14 +59,6 @@ pub fn run() {
                 log::error!("shell integration: cannot install: {e}");
             }
             agents::spawn_watcher(app.handle().clone());
-            // TEMP-QUICK-TEST
-            if std::env::var_os("TERMCODE_DEBUG_QUICK").is_some() {
-                let handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(3));
-                    log::info!("debug: quick_toggle -> {:?}", quick::quick_toggle(handle));
-                });
-            }
             usage::spawn(app.handle().clone());
             Ok(())
         })
