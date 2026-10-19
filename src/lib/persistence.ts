@@ -1,4 +1,5 @@
 import { LazyStore } from "@tauri-apps/plugin-store";
+import { warn as logWarn } from "@tauri-apps/plugin-log";
 import { useTerminalStore, type PersistedSession } from "../store/terminalStore";
 import { terminalManager, FONT_SIZE } from "../terminal/TerminalManager";
 import type { LayoutNode, Tab } from "../types/layout";
@@ -86,7 +87,7 @@ async function save() {
     await store.set(KEY, session);
     await store.save();
   } catch (err) {
-    console.warn("[termCode] no se pudo guardar la sesión:", err);
+    void logWarn(`[webview] no se pudo guardar la sesión: ${String(err)}`).catch(() => {});
   }
 }
 
@@ -108,7 +109,10 @@ export function startAutosave(): () => void {
     }
   });
   const interval = setInterval(() => void save(), SAVE_EVERY_MS);
+  // Primer guardado poco después de arrancar: los PTY ya tienen cwd real.
+  const initial = setTimeout(() => void save(), 3000);
   return () => {
+    clearTimeout(initial);
     unsubscribe();
     clearTimeout(timer);
     clearInterval(interval);

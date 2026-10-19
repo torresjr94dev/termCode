@@ -52,12 +52,20 @@ pub async fn pty_spawn(
         agents::ENV_STATE_DIR.to_owned(),
         agents::state_dir().to_string_lossy().into_owned(),
     ));
-    pty.spawn(options, |id| ChannelSink {
-        id,
-        channel: on_data,
-        app,
-    })
-    .map_err(|e| e.to_string())
+    let kind = if options.command.is_some() {
+        "agent"
+    } else {
+        "shell"
+    };
+    let id = pty
+        .spawn(options, |id| ChannelSink {
+            id,
+            channel: on_data,
+            app,
+        })
+        .map_err(|e| e.to_string())?;
+    log::info!("pty {id}: {kind} spawned");
+    Ok(id)
 }
 
 #[tauri::command]

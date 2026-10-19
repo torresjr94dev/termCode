@@ -207,6 +207,10 @@ fn spawn_claude_quota(app: AppHandle) {
 
             match claude::fetch(&client).await {
                 Ok(reading) => {
+                    log::info!(
+                        "usage: claude quota read via oauth ({} windows)",
+                        reading.windows.len()
+                    );
                     failures = 0;
                     wait = Duration::from_secs(5 * 60);
                     let at = now_ms();

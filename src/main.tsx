@@ -5,7 +5,7 @@ import { useTerminalStore } from "./store/terminalStore";
 import { startBridge } from "./lib/bridge";
 import { loadSession, startAutosave } from "./lib/persistence";
 import { IS_TAURI } from "./lib/ipc";
-import { error as logError } from "@tauri-apps/plugin-log";
+import { error as logError, info as logInfo } from "@tauri-apps/plugin-log";
 import "@fontsource-variable/jetbrains-mono/wght.css";
 import "@xterm/xterm/css/xterm.css";
 import "./index.css";
@@ -49,6 +49,10 @@ async function boot(root: HTMLElement) {
       <App />
     </React.StrictMode>,
   );
+  if (IS_TAURI) {
+    const { tabs } = useTerminalStore.getState();
+    void logInfo(`[webview] listo: ${tabs.length} pestaña(s)${session ? " restauradas" : ""}`).catch(() => {});
+  }
 }
 
 const rootElement = document.getElementById("root");
