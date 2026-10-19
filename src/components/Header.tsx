@@ -2,9 +2,10 @@ import React from "react";
 import { Asterisk, Hexagon, PanelLeft, Plus, Search, X } from "lucide-react";
 import { useTerminalStore } from "../store/terminalStore";
 import { actions } from "../lib/actions";
-import { cn, findPane, tabLabel } from "../lib/layout";
+import { cn, collectPanes, findPane, tabLabel } from "../lib/layout";
 import { IS_MAC, shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
-import { IconButton, Kbd, agentIcon } from "./ui";
+import type { ProviderUsage } from "../types/layout";
+import { AgentGlyph, IconButton, Kbd, Lamp } from "./ui";
 
 interface HeaderProps {
   onOpenPalette: () => void;
@@ -15,7 +16,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
   const activeTabId = useTerminalStore((s) => s.activeTabId);
   const isSidebarOpen = useTerminalStore((s) => s.isSidebarOpen);
   const setActiveTab = useTerminalStore((s) => s.setActiveTab);
-  const closeTab = useTerminalStore((s) => s.closeTab);
+  const attention = useTerminalStore((s) => s.attention);
 
   const canClose = tabs.length > 1;
 
@@ -42,8 +43,9 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
           {tabs.map((tab, index) => {
             const isActive = tab.id === activeTabId;
             const label = tabLabel(tab);
-            const AgentIcon = agentIcon(findPane(tab.root, tab.activePaneId)?.agentType);
+            const agentType = findPane(tab.root, tab.activePaneId)?.agentType;
             const hint = tabShortcutLabel(index);
+            const needsAttention = collectPanes(tab.root).some((p) => p.id in attention);
 
             return (
               <li
@@ -61,19 +63,23 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
                   title={hint ? `${label}  ${hint}` : label}
                   onClick={() => setActiveTab(tab.id)}
                   onAuxClick={(e) => {
-                    if (e.button === 1 && canClose) closeTab(tab.id);
+                    if (e.button === 1 && canClose) actions.closeTab(tab.id);
                   }}
                   className="flex h-full min-w-0 items-center gap-2 pl-3 pr-1 outline-offset-[-2px]"
                 >
-                  <span
-                    className={cn(
-                      "font-mono text-[11px] tabular-nums",
-                      isActive ? "text-amber" : "text-ink-3",
-                    )}
-                  >
-                    {index + 1}
-                  </span>
-                  <AgentIcon size={13} strokeWidth={1.75} aria-hidden="true" className="shrink-0 opacity-80" />
+                  {needsAttention ? (
+                    <Lamp state="attention" />
+                  ) : (
+                    <span
+                      className={cn(
+                        "font-mono text-[11px] tabular-nums",
+                        isActive ? "text-amber" : "text-ink-3",
+                      )}
+                    >
+                      {index + 1}
+                    </span>
+                  )}
+                  <AgentGlyph agentType={agentType} className="shrink-0 opacity-80" />
                   <span className="max-w-[180px] truncate font-mono text-[12px]">{label}</span>
                 </button>
 
@@ -81,7 +87,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
                   <button
                     type="button"
                     aria-label={`Cerrar pestaña ${label}`}
-                    onClick={() => closeTab(tab.id)}
+                    onClick={() => actions.closeTab(tab.id)}
                     className={cn(
                       "mr-1.5 grid size-5 place-items-center rounded text-ink-3 transition-opacity duration-150 hover:bg-press hover:text-ink focus-visible:opacity-100",
                       isActive ? "opacity-100" : "opacity-0 group-hover:opacity-100",
@@ -121,14 +127,25 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
   );
 };
 
+/** Lectura principal de un proveedor para el botón: la ventana de sesión. */
+function headline(provider: ProviderUsage): { text: string; critical: boolean; spoken: string } {
+  if (provider.authMode === "api-key") return { text: "API", critical: false, spoken: "API key" };
+  const session = provider.windows.find((w) => w.kind === "session") ?? provider.windows[0];
+  if (!session) {
+    const text = provider.status === "loading" ? "…" : "—";
+    return { text, critical: false, spoken: provider.status === "loading" ? "cargando" : "sin datos" };
+  }
+  const pct = Math.round(session.usedPercent);
+  return { text: `${pct}%`, critical: pct >= 85, spoken: `${pct}%` };
+}
+
 const UsageButton: React.FC = () => {
-  const claude = useTerminalStore((s) => s.aiUsage.claude.fiveHour.usedPercent);
-  const codex = useTerminalStore((s) => s.aiUsage.chatgpt.primary5h.usedPercent);
+  const usage = useTerminalStore((s) => s.usage);
   const isOpen = useTerminalStore((s) => s.isUsageDrawerOpen);
 
   const readings = [
-    { icon: Asterisk, name: "Claude", value: claude },
-    { icon: Hexagon, name: "Codex", value: codex },
+    { icon: Asterisk, name: "Claude", ...headline(usage.claude) },
+    { icon: Hexagon, name: "Codex", ...headline(usage.codex) },
   ];
 
   return (
@@ -137,7 +154,7 @@ const UsageButton: React.FC = () => {
       onClick={actions.toggleUsage}
       aria-expanded={isOpen}
       aria-haspopup="dialog"
-      aria-label={`Cuotas de IA: Claude ${claude}%, Codex ${codex}%`}
+      aria-label={`Cuotas de IA: ${readings.map((r) => `${r.name} ${r.spoken}`).join(", ")}`}
       title={`Cuotas de IA  ${shortcutLabel("toggleUsage")}`}
       className={cn(
         "flex h-7 items-center gap-3 rounded-md border px-2.5 font-mono text-[12px] tabular-nums transition-colors duration-150",
@@ -146,10 +163,10 @@ const UsageButton: React.FC = () => {
           : "border-line text-ink-2 hover:border-line-strong hover:bg-hover hover:text-ink",
       )}
     >
-      {readings.map(({ icon: Icon, name, value }) => (
+      {readings.map(({ icon: Icon, name, text, critical }) => (
         <span key={name} className="flex items-center gap-1.5">
           <Icon size={13} strokeWidth={1.75} aria-hidden="true" className="text-ink-3" />
-          <span className={value >= 85 ? "text-signal" : undefined}>{value}%</span>
+          <span className={critical ? "text-signal" : undefined}>{text}</span>
         </span>
       ))}
     </button>

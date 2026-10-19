@@ -1,18 +1,23 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect } from "react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Header } from "./components/Header";
 import { Sidebar } from "./components/Sidebar";
 import { SplitView } from "./components/SplitView";
 import { UsagePopover } from "./components/UsagePopover";
 import { CommandPalette } from "./components/CommandPalette";
 import { StatusBar } from "./components/StatusBar";
+import { ConfirmDialog, ToastHost } from "./components/Overlays";
 import { useTerminalStore } from "./store/terminalStore";
+import { useUiStore } from "./store/uiStore";
 import { terminalManager } from "./terminal/TerminalManager";
 import { actions } from "./lib/actions";
+import { IS_TAURI, shellQuote } from "./lib/ipc";
+import { collectPanes } from "./lib/layout";
 import { matchShortcut, matchTabIndex, type ShortcutId } from "./lib/shortcuts";
 
-const SHORTCUT_HANDLERS: Record<Exclude<ShortcutId, "palette">, () => void> = {
+const SHORTCUT_HANDLERS: Record<Exclude<ShortcutId, "palette">, () => unknown> = {
   newTab: actions.newTab,
-  closePane: actions.closePane,
+  closePane: () => actions.closePane(),
   splitRight: actions.splitRight,
   splitDown: actions.splitDown,
   nextPane: () => actions.focusPaneOffset(1),
@@ -20,6 +25,10 @@ const SHORTCUT_HANDLERS: Record<Exclude<ShortcutId, "palette">, () => void> = {
   toggleSidebar: actions.toggleSidebar,
   toggleUsage: actions.toggleUsage,
   toggleBroadcast: actions.toggleBroadcast,
+  find: actions.toggleFind,
+  fontBigger: actions.fontBigger,
+  fontSmaller: actions.fontSmaller,
+  fontReset: actions.fontReset,
 };
 
 function focusActivePane() {
@@ -28,19 +37,67 @@ function focusActivePane() {
   if (tab) terminalManager.focus(tab.activePaneId);
 }
 
+/** Panel bajo un punto de la ventana (coordenadas CSS). */
+function paneAt(x: number, y: number): string | null {
+  const el = document.elementFromPoint(x, y);
+  return el?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId ?? null;
+}
+
+/**
+ * Arrastrar archivos sobre un panel pega sus rutas escapadas (p. ej. una
+ * captura de pantalla directo a Claude Code).
+ */
+function useFileDrop() {
+  useEffect(() => {
+    if (!IS_TAURI) return;
+    const setDropPane = useUiStore.getState().setDropPane;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    getCurrentWebview()
+      .onDragDropEvent(({ payload }) => {
+        if (payload.type === "leave") {
+          setDropPane(null);
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        const paneId = paneAt(payload.position.x / scale, payload.position.y / scale);
+        if (payload.type === "drop") {
+          setDropPane(null);
+          if (!paneId || !payload.paths.length) return;
+          terminalManager.paste(paneId, `${payload.paths.map(shellQuote).join(" ")} `);
+          useTerminalStore.getState().setActivePane(paneId);
+        } else {
+          setDropPane(paneId);
+        }
+      })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch((err) => console.warn("[termCode] drag & drop no disponible:", err));
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+}
+
 export const App: React.FC = () => {
-  const [isPaletteOpen, setIsPaletteOpen] = useState(false);
-  const paletteOpenRef = useRef(isPaletteOpen);
-  paletteOpenRef.current = isPaletteOpen;
+  const isPaletteOpen = useUiStore((s) => s.isPaletteOpen);
+  const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
 
   const tabs = useTerminalStore((s) => s.tabs);
   const activeTabId = useTerminalStore((s) => s.activeTabId);
   const isBroadcastEnabled = useTerminalStore((s) => s.isBroadcastEnabled);
 
+  useFileDrop();
+
   const closePalette = useCallback(() => {
-    setIsPaletteOpen(false);
+    setPaletteOpen(false);
     focusActivePane();
-  }, []);
+  }, [setPaletteOpen]);
 
   const closeUsage = useCallback(() => {
     if (useTerminalStore.getState().isUsageDrawerOpen) actions.toggleUsage();
@@ -57,16 +114,17 @@ export const App: React.FC = () => {
       e.preventDefault();
       e.stopPropagation();
 
+      const ui = useUiStore.getState();
       if (shortcut === "palette") {
-        setIsPaletteOpen((open) => !open);
-        if (paletteOpenRef.current) focusActivePane();
+        ui.setPaletteOpen(!ui.isPaletteOpen);
+        if (ui.isPaletteOpen) focusActivePane();
         return;
       }
-      // Con la paleta abierta, el resto de atajos no debe actuar a ciegas.
-      if (paletteOpenRef.current) return;
+      // Con la paleta o un diálogo abiertos, el resto de atajos no debe actuar a ciegas.
+      if (ui.isPaletteOpen || ui.confirm) return;
 
       if (shortcut === "toggleUsage" && useTerminalStore.getState().isUsageDrawerOpen) closeUsage();
-      else if (shortcut) SHORTCUT_HANDLERS[shortcut]();
+      else if (shortcut) void SHORTCUT_HANDLERS[shortcut]();
       else if (tabIndex !== null) actions.goToTab(tabIndex);
     };
 
@@ -74,19 +132,23 @@ export const App: React.FC = () => {
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, [closeUsage]);
 
-  // Al cambiar de pestaña, el foco va al panel activo de la nueva pestaña.
+  // Al cambiar de pestaña: foco al panel activo y WebGL solo donde se ve.
   // (El ResizeObserver de cada panel se encarga del fit al volverse visible.)
   useEffect(() => {
-    const frame = requestAnimationFrame(focusActivePane);
+    const frame = requestAnimationFrame(() => {
+      const active = useTerminalStore.getState().tabs.find((t) => t.id === activeTabId);
+      terminalManager.syncRenderers(new Set(active ? collectPanes(active.root).map((p) => p.id) : []));
+      focusActivePane();
+    });
     return () => cancelAnimationFrame(frame);
-  }, [activeTabId]);
+  }, [activeTabId, tabs.length]);
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-canvas text-ink">
       <Sidebar />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <Header onOpenPalette={() => setIsPaletteOpen(true)} />
+        <Header onOpenPalette={() => setPaletteOpen(true)} />
 
         <main className="relative min-h-0 flex-1 bg-canvas">
           {tabs.map((tab) => (
@@ -96,7 +158,10 @@ export const App: React.FC = () => {
           ))}
           {/* Broadcast es peligroso: el marco rojo no se puede pasar por alto */}
           {isBroadcastEnabled && (
-            <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-20 shadow-[inset_0_0_0_1px_var(--color-signal)]" />
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 z-20 shadow-[inset_0_0_0_1px_var(--color-signal)]"
+            />
           )}
         </main>
 
@@ -105,6 +170,8 @@ export const App: React.FC = () => {
 
       <UsagePopover onClose={closeUsage} />
       <CommandPalette isOpen={isPaletteOpen} onClose={closePalette} />
+      <ConfirmDialog onSettled={focusActivePane} />
+      <ToastHost />
     </div>
   );
 };

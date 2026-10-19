@@ -58,15 +58,30 @@ export const SectionLabel: React.FC<{ children: React.ReactNode; aside?: React.R
   </div>
 );
 
-export const Lamp: React.FC<{ state: "on" | "idle" | "off" }> = ({ state }) => (
-  <span className="lamp" data-state={state} aria-hidden="true" />
+export type LampState = "on" | "idle" | "off" | "attention";
+
+export const Lamp: React.FC<{ state: LampState }> = ({ state }) => (
+  <span
+    className="lamp"
+    data-state={state}
+    role={state === "attention" ? "img" : undefined}
+    aria-label={state === "attention" ? "Requiere atención" : undefined}
+    aria-hidden={state === "attention" ? undefined : true}
+  />
 );
 
-export function agentIcon(agentType: PaneNode["agentType"]): LucideIcon {
-  if (agentType === "claude") return Asterisk;
-  if (agentType === "codex") return Hexagon;
-  return SquareTerminal;
+interface AgentGlyphProps {
+  agentType: PaneNode["agentType"];
+  className?: string;
 }
+
+/** Icono del tipo de panel. Componente estable (no se crea uno nuevo en cada render). */
+export const AgentGlyph: React.FC<AgentGlyphProps> = ({ agentType, className }) => {
+  const props = { size: 13, strokeWidth: 1.75, "aria-hidden": true, className } as const;
+  if (agentType === "claude") return <Asterisk {...props} />;
+  if (agentType === "codex") return <Hexagon {...props} />;
+  return <SquareTerminal {...props} />;
+};
 
 interface MeterProps {
   value: number;

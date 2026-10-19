@@ -1,0 +1,65 @@
+import { create } from "zustand";
+
+export interface ConfirmRequest {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+}
+
+export interface Toast {
+  id: number;
+  text: string;
+  tone: "info" | "error";
+}
+
+interface UiState {
+  isPaletteOpen: boolean;
+  confirm: ConfirmRequest | null;
+  toast: Toast | null;
+  /** Panel con la barra de búsqueda abierta. */
+  findPaneId: string | null;
+  /** Panel bajo el cursor mientras se arrastran archivos. */
+  dropPaneId: string | null;
+
+  setPaletteOpen: (open: boolean) => void;
+  askConfirm: (request: ConfirmRequest) => void;
+  resolveConfirm: (accepted: boolean) => void;
+  showToast: (text: string, tone?: Toast["tone"]) => void;
+  dismissToast: (id: number) => void;
+  setFindPane: (paneId: string | null) => void;
+  setDropPane: (paneId: string | null) => void;
+}
+
+let toastSeq = 0;
+const TOAST_MS = 4500;
+
+export const useUiStore = create<UiState>((set, get) => ({
+  isPaletteOpen: false,
+  confirm: null,
+  toast: null,
+  findPaneId: null,
+  dropPaneId: null,
+
+  setPaletteOpen: (open) => set({ isPaletteOpen: open }),
+  askConfirm: (request) => set({ confirm: request }),
+  resolveConfirm: (accepted) => {
+    const request = get().confirm;
+    set({ confirm: null });
+    if (accepted) request?.onConfirm();
+  },
+
+  showToast: (text, tone = "info") => {
+    const id = ++toastSeq;
+    set({ toast: { id, text, tone } });
+    setTimeout(() => get().dismissToast(id), TOAST_MS);
+  },
+  dismissToast: (id) => {
+    if (get().toast?.id === id) set({ toast: null });
+  },
+
+  setFindPane: (paneId) => set({ findPaneId: paneId }),
+  setDropPane: (paneId) => {
+    if (get().dropPaneId !== paneId) set({ dropPaneId: paneId });
+  },
+}));

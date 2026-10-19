@@ -1,81 +1,73 @@
 import { create } from "zustand";
-import { Tab, LayoutNode, PaneNode, SplitDirection, AIUsageState } from "../types/layout";
-import { terminalManager } from "../terminal/TerminalManager";
-import { findPane } from "../lib/layout";
+import type {
+  AgentKind,
+  AgentStatus,
+  AgentsInfo,
+  PaneNode,
+  SplitDirection,
+  Tab,
+  UsageSnapshot,
+} from "../types/layout";
+import { FONT_SIZE, terminalManager } from "../terminal/TerminalManager";
+import { collectPanes, findOwnerTab, findPane, removePane, replacePane, setSplitRatio } from "../lib/layout";
 
-let nextId = 2;
-const genId = (prefix = "pane") => `${prefix}-${Date.now()}-${nextId++}`;
+let nextId = 1;
+export const genId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${nextId++}`;
 
-function findAndReplaceNode(
-  root: LayoutNode,
-  targetId: string,
-  transform: (node: PaneNode) => LayoutNode
-): LayoutNode {
-  if (root.type === "pane") {
-    if (root.id === targetId) {
-      return transform(root);
-    }
-    return root;
-  }
+export interface PaneSpec {
+  title?: string;
+  cwd?: string;
+  command?: string;
+  agentType?: AgentKind | null;
+}
 
+export interface Attention {
+  kind: string;
+  message: string;
+  at: number;
+}
+
+export interface PersistedSession {
+  version: 1;
+  tabs: Tab[];
+  activeTabId: string;
+  isSidebarOpen: boolean;
+  fontSize: number;
+}
+
+const loadingProvider = {
+  status: "loading",
+  plan: null,
+  authMode: null,
+  source: null,
+  fetchedAt: null,
+  windows: [],
+  tokens24h: null,
+  message: null,
+} as const;
+
+function newPane(spec: PaneSpec = {}): PaneNode {
   return {
-    ...root,
-    first: findAndReplaceNode(root.first, targetId, transform),
-    second: findAndReplaceNode(root.second, targetId, transform),
+    id: genId("pane"),
+    type: "pane",
+    terminalId: genId("term"),
+    title: spec.title ?? "zsh",
+    cwd: spec.cwd,
+    command: spec.command,
+    agentType: spec.agentType ?? null,
   };
 }
 
-function removeNode(root: LayoutNode, targetId: string): LayoutNode | null {
-  if (root.type === "pane") {
-    return root.id === targetId ? null : root;
-  }
-
-  if (root.first.type === "pane" && root.first.id === targetId) {
-    return root.second;
-  }
-  if (root.second.type === "pane" && root.second.id === targetId) {
-    return root.first;
-  }
-
-  const newFirst = removeNode(root.first, targetId);
-  if (!newFirst) return root.second;
-
-  const newSecond = removeNode(root.second, targetId);
-  if (!newSecond) return root.first;
-
-  return {
-    ...root,
-    first: newFirst,
-    second: newSecond,
-  };
+function newTab(spec: PaneSpec = {}, title = "Terminal"): Tab {
+  const pane = newPane(spec);
+  return { id: genId("tab"), title, root: pane, activePaneId: pane.id };
 }
 
-function getAllPaneIds(root: LayoutNode): string[] {
-  if (root.type === "pane") return [root.id];
-  return [...getAllPaneIds(root.first), ...getAllPaneIds(root.second)];
-}
-
-function updateRatioInTree(root: LayoutNode, splitId: string, ratio: number): LayoutNode {
-  if (root.type === "pane") return root;
-  if (root.id === splitId) {
-    return { ...root, ratio: Math.min(Math.max(ratio, 0.15), 0.85) };
-  }
-  return {
-    ...root,
-    first: updateRatioInTree(root.first, splitId, ratio),
-    second: updateRatioInTree(root.second, splitId, ratio),
-  };
-}
-
-function updateTitleInTree(root: LayoutNode, paneId: string, title: string): LayoutNode {
-  if (root.type === "pane") {
-    return root.id === paneId ? { ...root, title } : root;
-  }
-  return {
-    ...root,
-    first: updateTitleInTree(root.first, paneId, title),
-    second: updateTitleInTree(root.second, paneId, title),
-  };
+function omit<T extends object>(record: Record<string, T>, keys: string[]): Record<string, T> {
+  if (!keys.some((k) => k in record)) return record;
+  const next = { ...record };
+  for (const key of keys) delete next[key];
+  return next;
 }
 
 interface TerminalState {
@@ -84,17 +76,16 @@ interface TerminalState {
   isBroadcastEnabled: boolean;
   isUsageDrawerOpen: boolean;
   isSidebarOpen: boolean;
-  aiUsage: AIUsageState;
+  fontSize: number;
+  usage: UsageSnapshot;
+  agents: AgentsInfo | null;
+  agentStatus: Record<string, AgentStatus>;
+  attention: Record<string, Attention>;
 
-  // Actions
-  createTab: (title?: string, opts?: { initialCommand?: string; agentType?: "claude" | "codex" }) => void;
+  createTab: (spec?: PaneSpec) => void;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
-  splitPane: (
-    targetPaneId: string,
-    direction: SplitDirection,
-    opts?: { title?: string; agentType?: "claude" | "codex"; initialCommand?: string }
-  ) => void;
+  splitPane: (targetPaneId: string, direction: SplitDirection, spec?: PaneSpec) => void;
   closePane: (paneId: string) => void;
   setActivePane: (paneId: string, opts?: { focus?: boolean }) => void;
   updateSplitRatio: (splitId: string, ratio: number) => void;
@@ -102,269 +93,176 @@ interface TerminalState {
   toggleBroadcast: () => void;
   toggleUsageDrawer: () => void;
   toggleSidebar: () => void;
-  updateAIUsage: (usage: Partial<AIUsageState>) => void;
+  setFontSize: (size: number) => void;
+  setUsage: (usage: UsageSnapshot) => void;
+  setAgents: (agents: AgentsInfo) => void;
+  setAgentStatus: (status: AgentStatus) => void;
+  setAttention: (paneId: string, attention: Attention | null) => void;
+  hydrate: (session: PersistedSession) => void;
 }
 
-const initialPaneId = "pane-1";
-const initialTerminalId = "term-1";
-const initialTabId = "tab-1";
+const firstTab = newTab();
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
-  tabs: [
-    {
-      id: initialTabId,
-      title: "Terminal 1",
-      root: {
-        id: initialPaneId,
-        type: "pane",
-        terminalId: initialTerminalId,
-        title: "zsh",
-      },
-      activePaneId: initialPaneId,
-    },
-  ],
-  activeTabId: initialTabId,
+  tabs: [firstTab],
+  activeTabId: firstTab.id,
   isBroadcastEnabled: false,
   isUsageDrawerOpen: false,
   isSidebarOpen: false,
+  fontSize: FONT_SIZE.default,
+  usage: { claude: { ...loadingProvider, windows: [] }, codex: { ...loadingProvider, windows: [] } },
+  agents: null,
+  agentStatus: {},
+  attention: {},
 
-  aiUsage: {
-    claude: {
-      planType: "Team",
-      fiveHour: {
-        usedPercent: 32,
-        resetsAt: "en 2h 45m",
-      },
-      sevenDay: {
-        usedPercent: 54,
-        resetsAt: "en 3 días",
-      },
-    },
-    chatgpt: {
-      planType: "Plus / Pro",
-      primary5h: {
-        usedPercent: 41,
-        resetsAt: "en 1h 20m",
-      },
-      secondaryWeekly: {
-        usedPercent: 68,
-        resetsAt: "en 4 días",
-      },
-    },
-  },
-
-  createTab: (title, opts) => {
-    const newTabId = genId("tab");
-    const newPaneId = genId("pane");
-    const newTermId = genId("term");
-
-    const newTab: Tab = {
-      id: newTabId,
-      title: title ?? `Terminal ${get().tabs.length + 1}`,
-      root: {
-        id: newPaneId,
-        type: "pane",
-        terminalId: newTermId,
-        title: opts?.agentType ? (opts.agentType === "claude" ? "Claude Code" : "Codex CLI") : "zsh",
-        initialCommand: opts?.initialCommand,
-        agentType: opts?.agentType,
-      },
-      activePaneId: newPaneId,
-    };
-
-    set((state) => ({
-      tabs: [...state.tabs, newTab],
-      activeTabId: newTabId,
-    }));
+  createTab: (spec) => {
+    const tab = newTab(spec);
+    set((state) => ({ tabs: [...state.tabs, tab], activeTabId: tab.id }));
   },
 
   closeTab: (tabId) => {
     const { tabs, activeTabId } = get();
-    if (tabs.length <= 1) return; // Keep at least one tab
+    const index = tabs.findIndex((t) => t.id === tabId);
+    if (index === -1) return;
 
-    const tabToClose = tabs.find((t) => t.id === tabId);
-    if (tabToClose) {
-      // Kill all terminals in this tab
-      const paneIds = getAllPaneIds(tabToClose.root);
-      paneIds.forEach((id) => terminalManager.kill(id));
+    const paneIds = collectPanes(tabs[index].root).map((p) => p.id);
+    paneIds.forEach((id) => terminalManager.kill(id));
+
+    if (tabs.length === 1) {
+      // Nunca quedarse sin pestañas: se reemplaza por una nueva.
+      const fresh = newTab();
+      set((state) => ({
+        tabs: [fresh],
+        activeTabId: fresh.id,
+        agentStatus: omit(state.agentStatus, paneIds),
+        attention: omit(state.attention, paneIds),
+      }));
+      return;
     }
 
-    const filtered = tabs.filter((t) => t.id !== tabId);
-    let newActiveId = activeTabId;
-    if (activeTabId === tabId) {
-      const idx = tabs.findIndex((t) => t.id === tabId);
-      newActiveId = filtered[Math.max(0, idx - 1)].id;
-    }
-
-    set({ tabs: filtered, activeTabId: newActiveId });
+    const remaining = tabs.filter((t) => t.id !== tabId);
+    const nextActive = activeTabId === tabId ? remaining[Math.max(0, index - 1)].id : activeTabId;
+    set((state) => ({
+      tabs: remaining,
+      activeTabId: nextActive,
+      agentStatus: omit(state.agentStatus, paneIds),
+      attention: omit(state.attention, paneIds),
+    }));
   },
 
   setActiveTab: (tabId) => {
+    if (get().activeTabId === tabId) return;
     set({ activeTabId: tabId });
   },
 
-  splitPane: (targetPaneId, direction, opts) => {
-    const { tabs, activeTabId } = get();
-    const currentTab = tabs.find((t) => t.id === activeTabId);
-    if (!currentTab) return;
-
-    const newPaneId = genId("pane");
-    const newTermId = genId("term");
-
-    const newPane: PaneNode = {
-      id: newPaneId,
-      type: "pane",
-      terminalId: newTermId,
-      title: opts?.title ?? (opts?.agentType === "claude" ? "Claude Code" : opts?.agentType === "codex" ? "Codex CLI" : "zsh"),
-      initialCommand: opts?.initialCommand,
-      agentType: opts?.agentType,
-    };
-
-    const newRoot = findAndReplaceNode(currentTab.root, targetPaneId, (oldNode) => ({
+  splitPane: (targetPaneId, direction, spec) => {
+    const owner = findOwnerTab(get().tabs, targetPaneId);
+    if (!owner) return;
+    const pane = newPane(spec);
+    const root = replacePane(owner.root, targetPaneId, (old) => ({
       id: genId("split"),
       type: "split",
       direction,
       ratio: 0.5,
-      first: oldNode,
-      second: newPane,
+      first: old,
+      second: pane,
     }));
-
-    set({
-      tabs: tabs.map((t) =>
-        t.id === activeTabId
-          ? {
-              ...t,
-              root: newRoot,
-              activePaneId: newPaneId,
-            }
-          : t
-      ),
-    });
-
-    // Auto-focus new pane after render
-    setTimeout(() => {
-      terminalManager.focus(newPaneId);
-    }, 60);
+    set((state) => ({
+      tabs: state.tabs.map((t) => (t.id === owner.id ? { ...t, root, activePaneId: pane.id } : t)),
+    }));
   },
 
+  /** Funciona para cualquier pestaña (antes solo miraba la activa). */
   closePane: (paneId) => {
     const { tabs, activeTabId } = get();
-    const currentTab = tabs.find((t) => t.id === activeTabId);
-    if (!currentTab) return;
+    const owner = findOwnerTab(tabs, paneId);
+    if (!owner) return;
 
-    terminalManager.kill(paneId);
-
-    const newRoot = removeNode(currentTab.root, paneId);
-    if (!newRoot) {
-      // If no panes left in this tab, close tab if others exist, or recreate fresh pane
-      if (tabs.length > 1) {
-        get().closeTab(activeTabId);
-      } else {
-        const freshPaneId = genId("pane");
-        const freshTermId = genId("term");
-        set({
-          tabs: [
-            {
-              ...currentTab,
-              root: {
-                id: freshPaneId,
-                type: "pane",
-                terminalId: freshTermId,
-                title: "zsh",
-              },
-              activePaneId: freshPaneId,
-            },
-          ],
-        });
-      }
+    const root = removePane(owner.root, paneId);
+    if (!root) {
+      get().closeTab(owner.id);
       return;
     }
 
-    const remainingPaneIds = getAllPaneIds(newRoot);
-    const newActivePaneId = remainingPaneIds[0] ?? "";
-
-    set({
-      tabs: tabs.map((t) =>
-        t.id === activeTabId
-          ? {
-              ...t,
-              root: newRoot,
-              activePaneId: newActivePaneId,
-            }
-          : t
-      ),
-    });
-
-    if (newActivePaneId) {
-      setTimeout(() => terminalManager.focus(newActivePaneId), 50);
+    terminalManager.kill(paneId);
+    const activePaneId =
+      owner.activePaneId === paneId ? (collectPanes(root)[0]?.id ?? "") : owner.activePaneId;
+    set((state) => ({
+      tabs: state.tabs.map((t) => (t.id === owner.id ? { ...t, root, activePaneId } : t)),
+      agentStatus: omit(state.agentStatus, [paneId]),
+      attention: omit(state.attention, [paneId]),
+    }));
+    if (owner.id === activeTabId && activePaneId) {
+      setTimeout(() => terminalManager.focus(activePaneId), 0);
     }
   },
 
   setActivePane: (paneId, opts) => {
     const { tabs, activeTabId } = get();
-    const currentTab = tabs.find((t) => t.id === activeTabId);
-    if (currentTab && currentTab.activePaneId !== paneId) {
-      set({
-        tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, activePaneId: paneId } : t)),
-      });
+    const current = tabs.find((t) => t.id === activeTabId);
+    if (current && findPane(current.root, paneId) && current.activePaneId !== paneId) {
+      set({ tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, activePaneId: paneId } : t)) });
     }
     if (opts?.focus !== false) terminalManager.focus(paneId);
   },
 
   updateSplitRatio: (splitId, ratio) => {
     const { tabs, activeTabId } = get();
-    const currentTab = tabs.find((t) => t.id === activeTabId);
-    if (!currentTab) return;
-
-    const newRoot = updateRatioInTree(currentTab.root, splitId, ratio);
-    set({
-      tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, root: newRoot } : t)),
-    });
+    const current = tabs.find((t) => t.id === activeTabId);
+    if (!current) return;
+    const root = setSplitRatio(current.root, splitId, ratio);
+    if (root === current.root) return;
+    set({ tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, root } : t)) });
   },
 
   updatePaneTitle: (paneId, title) => {
     const { tabs } = get();
     // El título llega por OSC desde cualquier pestaña, no solo la activa.
-    const owner = tabs.find((t) => findPane(t.root, paneId));
+    const owner = findOwnerTab(tabs, paneId);
     if (!owner || findPane(owner.root, paneId)?.title === title) return;
+    const root = replacePane(owner.root, paneId, (pane) => ({ ...pane, title }));
+    set({ tabs: tabs.map((t) => (t.id === owner.id ? { ...t, root } : t)) });
+  },
 
+  toggleBroadcast: () => set((state) => ({ isBroadcastEnabled: !state.isBroadcastEnabled })),
+  toggleUsageDrawer: () => set((state) => ({ isUsageDrawerOpen: !state.isUsageDrawerOpen })),
+  toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
+
+  setFontSize: (size) => {
+    const clamped = Math.min(Math.max(Math.round(size), FONT_SIZE.min), FONT_SIZE.max);
+    if (clamped === get().fontSize) return;
+    terminalManager.setFontSize(clamped);
+    set({ fontSize: clamped });
+  },
+
+  setUsage: (usage) => set({ usage }),
+  setAgents: (agents) => set({ agents }),
+
+  setAgentStatus: (status) => {
+    if (!findOwnerTab(get().tabs, status.paneId)) return;
+    set((state) => ({ agentStatus: { ...state.agentStatus, [status.paneId]: status } }));
+  },
+
+  setAttention: (paneId, attention) => {
+    const { attention: current, tabs } = get();
+    if (attention === null) {
+      if (paneId in current) set({ attention: omit(current, [paneId]) });
+      return;
+    }
+    if (!findOwnerTab(tabs, paneId)) return;
+    set({ attention: { ...current, [paneId]: attention } });
+  },
+
+  hydrate: (session) => {
+    if (!session.tabs.length) return;
+    terminalManager.setFontSize(session.fontSize);
     set({
-      tabs: tabs.map((t) =>
-        t.id === owner.id ? { ...t, root: updateTitleInTree(t.root, paneId, title) } : t
-      ),
+      tabs: session.tabs,
+      activeTabId: session.tabs.some((t) => t.id === session.activeTabId)
+        ? session.activeTabId
+        : session.tabs[0].id,
+      isSidebarOpen: session.isSidebarOpen,
+      fontSize: session.fontSize,
     });
   },
-
-  toggleBroadcast: () => {
-    set((state) => ({ isBroadcastEnabled: !state.isBroadcastEnabled }));
-  },
-
-  toggleUsageDrawer: () => {
-    set((state) => ({ isUsageDrawerOpen: !state.isUsageDrawerOpen }));
-  },
-
-  toggleSidebar: () => {
-    set((state) => ({ isSidebarOpen: !state.isSidebarOpen }));
-  },
-
-  updateAIUsage: (usage) => {
-    set((state) => ({
-      aiUsage: {
-        ...state.aiUsage,
-        ...usage,
-      },
-    }));
-  },
 }));
-
-// Register hooks to terminalManager for keyboard broadcast and pty-exit cleanup
-terminalManager.setStoreHooks({
-  isBroadcastEnabled: () => useTerminalStore.getState().isBroadcastEnabled,
-  onExit: (instanceId) => {
-    useTerminalStore.getState().closePane(instanceId);
-  },
-  onTitle: (instanceId, title) => {
-    const trimmed = title.trim();
-    if (trimmed) useTerminalStore.getState().updatePaneTitle(instanceId, trimmed);
-  },
-});

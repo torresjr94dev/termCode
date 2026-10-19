@@ -54,8 +54,7 @@
       },
       "dangerousDisableAssetCspModification": [
         "style-src"
-      ],
-      "freezePrototype": true
+      ]
     }
   },
   "bundle": {

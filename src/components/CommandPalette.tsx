@@ -5,13 +5,20 @@ import {
   Asterisk,
   Columns2,
   Gauge,
+  GitBranch,
   Hexagon,
   PanelLeft,
   Plus,
   Radio,
+  RefreshCw,
+  RotateCcw,
   Rows2,
+  Send,
   SquareTerminal,
+  TextSearch,
   X,
+  ZoomIn,
+  ZoomOut,
   type LucideIcon,
 } from "lucide-react";
 import { useTerminalStore } from "../store/terminalStore";
@@ -27,7 +34,7 @@ interface Command {
   hint?: string;
   icon: LucideIcon;
   shortcut?: string;
-  run: () => void;
+  run: () => unknown;
 }
 
 interface CommandPaletteProps {
@@ -56,6 +63,8 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const activeTabId = useTerminalStore((s) => s.activeTabId);
   const isBroadcastEnabled = useTerminalStore((s) => s.isBroadcastEnabled);
   const isSidebarOpen = useTerminalStore((s) => s.isSidebarOpen);
+  const fontSize = useTerminalStore((s) => s.fontSize);
+  const agents = useTerminalStore((s) => s.agents);
 
   const commands = useMemo<Command[]>(
     () => [
@@ -64,15 +73,28 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       { id: "split-down", group: "Sesión", title: "Dividir hacia abajo", icon: Rows2, shortcut: sc("splitDown"), run: actions.splitDown },
       { id: "next-pane", group: "Sesión", title: "Panel siguiente", icon: ArrowRight, shortcut: sc("nextPane"), run: () => actions.focusPaneOffset(1) },
       { id: "prev-pane", group: "Sesión", title: "Panel anterior", icon: ArrowLeft, shortcut: sc("prevPane"), run: () => actions.focusPaneOffset(-1) },
-      { id: "close-pane", group: "Sesión", title: "Cerrar panel", icon: X, shortcut: sc("closePane"), run: actions.closePane },
+      { id: "close-pane", group: "Sesión", title: "Cerrar panel", icon: X, shortcut: sc("closePane"), run: () => actions.closePane() },
+      { id: "find", group: "Sesión", title: "Buscar en el terminal", icon: TextSearch, shortcut: sc("find"), run: actions.toggleFind },
 
-      { id: "claude-split", group: "Agentes", title: `${AGENTS.claude.title} junto al panel`, hint: "dividir", icon: Asterisk, run: () => actions.openAgentInSplit("claude") },
-      { id: "claude-tab", group: "Agentes", title: `${AGENTS.claude.title} en pestaña nueva`, icon: Asterisk, run: () => actions.openAgentInTab("claude") },
-      { id: "codex-split", group: "Agentes", title: `${AGENTS.codex.title} junto al panel`, hint: "dividir", icon: Hexagon, run: () => actions.openAgentInSplit("codex") },
-      { id: "codex-tab", group: "Agentes", title: `${AGENTS.codex.title} en pestaña nueva`, icon: Hexagon, run: () => actions.openAgentInTab("codex") },
+      ...(["claude", "codex"] as const).flatMap<Command>((agent) => {
+        const icon = agent === "claude" ? Asterisk : Hexagon;
+        const missing = agents ? !agents[agent] : false;
+        const hint = missing ? "no instalado" : undefined;
+        const name = AGENTS[agent].title;
+        return [
+          { id: `${agent}-split`, group: "Agentes", title: `${name} junto al panel`, hint: hint ?? "dividir", icon, run: () => actions.openAgentInSplit(agent) },
+          { id: `${agent}-tab`, group: "Agentes", title: `${name} en pestaña nueva`, hint, icon, run: () => actions.openAgentInTab(agent) },
+          { id: `${agent}-worktree`, group: "Agentes", title: `${name} en un worktree nuevo`, hint: hint ?? "rama propia", icon: GitBranch, run: () => actions.openAgentInWorktree(agent) },
+        ];
+      }),
+      { id: "send-selection", group: "Agentes", title: "Enviar selección al agente", hint: "pega el texto seleccionado", icon: Send, run: actions.sendSelectionToAgent },
 
       { id: "sidebar", group: "Vista", title: isSidebarOpen ? "Ocultar sesiones" : "Mostrar sesiones", icon: PanelLeft, shortcut: sc("toggleSidebar"), run: actions.toggleSidebar },
       { id: "usage", group: "Vista", title: "Cuotas de IA", hint: "Claude · Codex", icon: Gauge, shortcut: sc("toggleUsage"), run: actions.toggleUsage },
+      { id: "usage-refresh", group: "Vista", title: "Actualizar cuotas", icon: RefreshCw, run: actions.refreshUsage },
+      { id: "font-bigger", group: "Vista", title: "Aumentar letra", hint: `${fontSize} px`, icon: ZoomIn, shortcut: sc("fontBigger"), run: actions.fontBigger },
+      { id: "font-smaller", group: "Vista", title: "Reducir letra", hint: `${fontSize} px`, icon: ZoomOut, shortcut: sc("fontSmaller"), run: actions.fontSmaller },
+      { id: "font-reset", group: "Vista", title: "Tamaño de letra original", icon: RotateCcw, shortcut: sc("fontReset"), run: actions.fontReset },
       {
         id: "broadcast",
         group: "Vista",
@@ -93,7 +115,7 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         run: () => actions.goToTab(index),
       })),
     ],
-    [tabs, activeTabId, isBroadcastEnabled, isSidebarOpen],
+    [tabs, activeTabId, isBroadcastEnabled, isSidebarOpen, fontSize, agents],
   );
 
   const filtered = useMemo(() => {

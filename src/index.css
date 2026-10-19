@@ -115,6 +115,13 @@
     background-color: var(--color-ink-3);
     box-shadow: none;
   }
+  /* Atención: ámbar con anillo; distinguible del activo sin depender del color */
+  .lamp[data-state="attention"] {
+    background-color: var(--color-amber);
+    box-shadow:
+      0 0 0 2px var(--color-canvas),
+      0 0 0 3.5px var(--color-amber);
+  }
 
   /* Divisor de splits: 1px visible, 9px de área de agarre */
   .divider {

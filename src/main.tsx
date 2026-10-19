@@ -1,6 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { useTerminalStore } from "./store/terminalStore";
+import { startBridge } from "./lib/bridge";
+import { loadSession, startAutosave } from "./lib/persistence";
+import { IS_TAURI } from "./lib/ipc";
+import { error as logError } from "@tauri-apps/plugin-log";
 import "@fontsource-variable/jetbrains-mono/wght.css";
 import "@xterm/xterm/css/xterm.css";
 import "./index.css";
@@ -16,17 +21,35 @@ async function waitForTerminalFont(timeoutMs = 1500): Promise<void> {
       new Promise((resolve) => setTimeout(resolve, timeoutMs)),
     ]);
   } catch (err) {
-    console.warn("[termCode] No se pudo precargar la fuente del terminal:", err);
+    console.warn("[termCode] no se pudo precargar la fuente del terminal:", err);
   }
 }
 
-const rootElement = document.getElementById("root");
-if (rootElement) {
-  void waitForTerminalFont().then(() => {
-    ReactDOM.createRoot(rootElement).render(
-      <React.StrictMode>
-        <App />
-      </React.StrictMode>,
-    );
-  });
+/** Errores del webview al archivo de log (si no, un fallo de UI en producción es invisible). */
+function forwardErrorsToLog() {
+  if (!IS_TAURI) return;
+  const report = (what: string) => void logError(`[webview] ${what}`).catch(() => {});
+  window.addEventListener("error", (e) => report(`${e.message} @ ${e.filename}:${e.lineno}`));
+  window.addEventListener("unhandledrejection", (e) => report(`promesa rechazada: ${String(e.reason)}`));
+  window.addEventListener("securitypolicyviolation", (e) => report(`CSP bloqueó ${e.blockedURI} (${e.violatedDirective})`));
 }
+
+async function boot(root: HTMLElement) {
+  forwardErrorsToLog();
+  // La sesión se restaura antes del primer render: así ningún PTY arranca en
+  // una carpeta equivocada para luego ser reemplazado.
+  const [session] = await Promise.all([loadSession(), waitForTerminalFont()]);
+  if (session) useTerminalStore.getState().hydrate(session);
+
+  startBridge();
+  startAutosave();
+
+  ReactDOM.createRoot(root).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>,
+  );
+}
+
+const rootElement = document.getElementById("root");
+if (rootElement) void boot(rootElement);

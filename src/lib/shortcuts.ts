@@ -16,13 +16,22 @@ export type ShortcutId =
   | "prevPane"
   | "toggleSidebar"
   | "toggleUsage"
-  | "toggleBroadcast";
+  | "toggleBroadcast"
+  | "find"
+  | "fontBigger"
+  | "fontSmaller"
+  | "fontReset";
 
 interface Chord {
-  /** `KeyboardEvent.key` en minúsculas (letras) o nombre de tecla (`ArrowRight`). */
-  key: string;
+  /**
+   * `KeyboardEvent.key` en minúsculas (letras) o nombre de tecla (`ArrowRight`).
+   * Varias teclas = cualquiera vale (p. ej. `+` y `=` según el layout).
+   */
+  key: string | readonly string[];
   shift?: boolean;
   alt?: boolean;
+  /** Ignora Shift: `+` exige Shift en teclado US pero no en el español. */
+  anyShift?: boolean;
 }
 
 export const SHORTCUTS: Record<ShortcutId, Chord> = {
@@ -36,6 +45,10 @@ export const SHORTCUTS: Record<ShortcutId, Chord> = {
   toggleSidebar: { key: "b" },
   toggleUsage: { key: "u" },
   toggleBroadcast: { key: "i", shift: true },
+  find: { key: "f" },
+  fontBigger: { key: ["+", "="], anyShift: true },
+  fontSmaller: { key: ["-", "_"], anyShift: true },
+  fontReset: { key: "0" },
 };
 
 export const IS_MAC =
@@ -55,8 +68,10 @@ function hasMod(e: KeyboardEvent): boolean {
 function chordMatches(e: KeyboardEvent, chord: Chord): boolean {
   const wantShift = IS_MAC ? Boolean(chord.shift) : true;
   const wantAlt = IS_MAC ? Boolean(chord.alt) : Boolean(chord.alt || chord.shift);
-  if (e.shiftKey !== wantShift || e.altKey !== wantAlt) return false;
-  return chord.key.length === 1 ? e.key.toLowerCase() === chord.key : e.key === chord.key;
+  if (e.altKey !== wantAlt) return false;
+  if (!chord.anyShift && e.shiftKey !== wantShift) return false;
+  const keys = typeof chord.key === "string" ? [chord.key] : chord.key;
+  return keys.some((key) => (key.length === 1 ? e.key.toLowerCase() === key : e.key === key));
 }
 
 export function matchShortcut(e: KeyboardEvent): ShortcutId | null {
@@ -75,7 +90,8 @@ export function matchTabIndex(e: KeyboardEvent): number | null {
 }
 
 function formatChord(chord: Chord): string {
-  const key = KEY_GLYPHS[chord.key] ?? chord.key.toUpperCase();
+  const primary = typeof chord.key === "string" ? chord.key : chord.key[0];
+  const key = KEY_GLYPHS[primary] ?? primary.toUpperCase();
   if (IS_MAC) {
     return `${chord.alt ? "⌥" : ""}${chord.shift ? "⇧" : ""}⌘${key}`;
   }
