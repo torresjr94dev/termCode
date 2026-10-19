@@ -1,0 +1,24 @@
+[package]
+name = "termcode"
+description = "termCode: a fast, agent-aware terminal"
+default-run = "termcode"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+# The `_lib` suffix avoids a name clash with the bin on Windows (cargo#8519).
+name = "termcode_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+pty-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true

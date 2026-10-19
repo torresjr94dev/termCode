@@ -1,0 +1,189 @@
+@import "tailwindcss";
+
+/*
+ * termCode — "Fósforo"
+ * Grafito cálido + un único acento ámbar (herencia de los monitores de fósforo P3).
+ * Se resetea la paleta por defecto de Tailwind: si un color no está aquí, no existe.
+ */
+@theme {
+  --color-*: initial;
+
+  /* Superficies (de más hundida a más elevada) */
+  --color-canvas: #0f0e0c;
+  --color-chrome: #161513;
+  --color-raised: #1d1b18;
+  --color-hover: #252320;
+  --color-press: #2e2b27;
+
+  /* Líneas */
+  --color-line: #2a2723;
+  --color-line-strong: #3b3732;
+
+  /* Tinta (todas ≥ 4.5:1 sobre chrome y raised) */
+  --color-ink: #ece6da;
+  --color-ink-2: #b5ad9f;
+  --color-ink-3: #948c80;
+
+  /* Acento único + señal de peligro */
+  --color-amber: #ffb224;
+  --color-on-amber: #1a1206;
+  --color-signal: #ff5d47;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --animate-pop-in: pop-in 140ms var(--ease-out-quint);
+  --animate-fade-in: fade-in 120ms ease-out;
+
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.985);
+    }
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.45;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+  }
+
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 1.5px solid var(--color-amber);
+    outline-offset: 1px;
+  }
+
+  ::selection {
+    background-color: rgb(255 178 36 / 0.28);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+}
+
+@layer components {
+  /* Cuadrado de estado: el motivo visual de la app (en vez del clásico punto) */
+  .lamp {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    flex-shrink: 0;
+    border-radius: 1px;
+    box-shadow: inset 0 0 0 1px var(--color-ink-3);
+  }
+  .lamp[data-state="on"] {
+    background-color: var(--color-amber);
+    box-shadow: 0 0 6px rgb(255 178 36 / 0.45);
+  }
+  .lamp[data-state="idle"] {
+    background-color: var(--color-ink-3);
+    box-shadow: none;
+  }
+
+  /* Divisor de splits: 1px visible, 9px de área de agarre */
+  .divider {
+    position: relative;
+    flex-shrink: 0;
+    background-color: var(--color-line);
+    transition: background-color 120ms ease-out;
+    touch-action: none;
+  }
+  .divider::before {
+    content: "";
+    position: absolute;
+  }
+  .divider[aria-orientation="vertical"] {
+    width: 1px;
+    cursor: col-resize;
+  }
+  .divider[aria-orientation="vertical"]::before {
+    inset: 0 -4px;
+  }
+  .divider[aria-orientation="horizontal"] {
+    height: 1px;
+    cursor: row-resize;
+  }
+  .divider[aria-orientation="horizontal"]::before {
+    inset: -4px 0;
+  }
+  .divider:hover,
+  .divider:focus-visible,
+  .divider[data-dragging] {
+    background-color: var(--color-amber);
+    outline: none;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* xterm.js */
+.xterm {
+  height: 100%;
+  padding: 8px 4px 4px 12px;
+}
+
+.xterm .xterm-viewport {
+  background-color: transparent !important;
+}
+
+.xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+.xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background-color: var(--color-line-strong);
+  border: 2px solid var(--color-canvas);
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
