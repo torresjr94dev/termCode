@@ -18,6 +18,7 @@ interface UiState {
   isSettingsOpen: boolean;
   isOverviewOpen: boolean;
   isMissionOpen: boolean;
+  isFinderOpen: boolean;
   /** ⌘ mantenido: se muestran los atajos sobre la interfaz. */
   showHints: boolean;
   confirm: ConfirmRequest | null;
@@ -31,6 +32,7 @@ interface UiState {
   setSettingsOpen: (open: boolean) => void;
   setOverviewOpen: (open: boolean) => void;
   setMissionOpen: (open: boolean) => void;
+  setFinderOpen: (open: boolean) => void;
   setShowHints: (show: boolean) => void;
   askConfirm: (request: ConfirmRequest) => void;
   resolveConfirm: (accepted: boolean) => void;
@@ -48,6 +50,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   isSettingsOpen: false,
   isOverviewOpen: false,
   isMissionOpen: false,
+  isFinderOpen: false,
   showHints: false,
   confirm: null,
   toast: null,
@@ -58,6 +61,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   setSettingsOpen: (open) => set({ isSettingsOpen: open }),
   setOverviewOpen: (open) => set({ isOverviewOpen: open }),
   setMissionOpen: (open) => set({ isMissionOpen: open }),
+  setFinderOpen: (open) => set({ isFinderOpen: open }),
   setShowHints: (show) => {
     if (get().showHints !== show) set({ showHints: show });
   },

@@ -24,7 +24,7 @@ const { commit, refreshStatus, setAmend } = await import("./project");
 
 const project = () => useProjectStore.getState();
 const repo = { root: "/repo", name: "repo", remoteUrl: null, webUrl: null, host: "other" as const, defaultBranch: "main" };
-const status = (head: string) => ({ branch: "main", head, upstream: null, ahead: 0, behind: 0, changes: [] });
+const status = (head: string) => ({ branch: "main", head, upstream: null, ahead: 0, behind: 0, changes: [], operation: null });
 const last = (publishedIn: string[] = []) => ({
   sha: "1111111111111111111111111111111111111111",
   short: "1111111",

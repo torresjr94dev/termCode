@@ -36,6 +36,12 @@ export const ipc = {
     return invoke<string>("git_worktree_create", { cwd, label });
   },
 
+  /** Abre un archivo en el editor configurado (lanza un error legible si no hay). */
+  async openInEditor(path: string, line: number | null, editor: string): Promise<void> {
+    if (!IS_TAURI) throw new Error("Solo disponible en la app de escritorio.");
+    await invoke("open_in_editor", { path, line, column: null, editor });
+  },
+
   onUsage: (handler: (snapshot: UsageSnapshot) => void) => on("usage-updated", handler),
   onAgentStatus: (handler: (status: AgentStatus) => void) => on("agent-status", handler),
   onAgentAttention: (handler: (attention: AgentAttention) => void) => on("agent-attention", handler),

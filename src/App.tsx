@@ -12,11 +12,12 @@ import { Viewer } from "./components/project/Viewer";
 import { PrDialog } from "./components/project/PrDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { MissionControl } from "./components/MissionControl";
+import { FileFinder } from "./components/FileFinder";
 import { useTerminalStore } from "./store/terminalStore";
 import { useUiStore } from "./store/uiStore";
 import { terminalManager } from "./terminal/TerminalManager";
 import { actions } from "./lib/actions";
-import { openProject } from "./lib/project";
+import { openBranchPicker, openProject } from "./lib/project";
 import { IS_TAURI, shellQuote } from "./lib/ipc";
 import { collectPanes } from "./lib/layout";
 import { matchShortcut, matchTabIndex, type ShortcutId } from "./lib/shortcuts";
@@ -44,6 +45,8 @@ const SHORTCUT_HANDLERS: Record<Exclude<ShortcutId, "palette">, () => unknown> =
   settings: actions.openSettings,
   overview: () => useUiStore.getState().setOverviewOpen(!useUiStore.getState().isOverviewOpen),
   missionControl: () => useUiStore.getState().setMissionOpen(!useUiStore.getState().isMissionOpen),
+  fileFinder: () => useUiStore.getState().setFinderOpen(!useUiStore.getState().isFinderOpen),
+  switchBranch: openBranchPicker,
 };
 
 function focusActivePane() {
@@ -137,6 +140,7 @@ export const App: React.FC = () => {
       }
       // Con la paleta o un diálogo abiertos, el resto de atajos no debe actuar a ciegas.
       if (ui.isPaletteOpen || ui.confirm || ui.isSettingsOpen) return;
+      if (ui.isFinderOpen && shortcut !== "fileFinder") return;
       if (ui.isMissionOpen && shortcut !== "missionControl") return;
 
       if (shortcut === "toggleUsage" && useTerminalStore.getState().isUsageDrawerOpen) closeUsage();
@@ -194,6 +198,7 @@ export const App: React.FC = () => {
       <PrDialog />
       <SettingsDialog onClosed={focusActivePane} />
       <MissionControl onClosed={focusActivePane} />
+      <FileFinder onClosed={focusActivePane} />
       <ConfirmDialog onSettled={focusActivePane} />
       <ToastHost />
     </div>

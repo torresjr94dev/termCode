@@ -29,7 +29,9 @@ export type ShortcutId =
   | "reopenClosed"
   | "settings"
   | "overview"
-  | "missionControl";
+  | "missionControl"
+  | "fileFinder"
+  | "switchBranch";
 
 interface Chord {
   /**
@@ -67,6 +69,8 @@ export const SHORTCUTS: Record<ShortcutId, Chord> = {
   settings: { key: "," },
   overview: { key: "o", shift: true },
   missionControl: { key: "a", shift: true },
+  fileFinder: { key: "p" },
+  switchBranch: { key: "b", shift: true },
 };
 
 export const IS_MAC =

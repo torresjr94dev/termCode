@@ -1,5 +1,16 @@
 import { create } from "zustand";
-import type { CommitDetail, CommitInfo, FilePreview, FsEntry, GitStatus, LastCommit, PrInfo, RepoMeta } from "../lib/git";
+import type {
+  CiStatus,
+  CommitDetail,
+  CommitInfo,
+  FilePreview,
+  FsEntry,
+  GitStatus,
+  LastCommit,
+  PrInfo,
+  RepoMeta,
+  StashEntry,
+} from "../lib/git";
 
 export type ProjectTab = "files" | "changes" | "history";
 
@@ -29,11 +40,13 @@ export type Viewer =
       truncated?: boolean;
       error?: string;
     }
-  | { kind: "file"; path: string; line?: number; preview?: FilePreview; error?: string };
+  | { kind: "file"; path: string; line?: number; preview?: FilePreview; error?: string }
+  /** Archivo con marcas de conflicto, resuelto bloque a bloque. */
+  | { kind: "conflict"; path: string; text?: string; error?: string };
 
 export type TreeNode = FsEntry[] | "loading" | { error: string };
 
-export type Busy = "commit" | "ai" | "push" | "pull" | "stage" | "pr" | "pr-ai" | null;
+export type Busy = "commit" | "ai" | "push" | "pull" | "stage" | "pr" | "pr-ai" | "branch" | "stash" | "resolve" | null;
 
 interface ProjectState {
   isOpen: boolean;
@@ -44,6 +57,9 @@ interface ProjectState {
   repo: RepoMeta | null;
   status: GitStatus | null;
   pr: PrInfo | null;
+  /** Workflows del commit actual (GitHub + gh). */
+  ci: CiStatus | null;
+  stashes: StashEntry[];
 
   log: CommitInfo[];
   /** HEAD con el que se cargó `log` (si cambia, el historial está viejo). */
@@ -64,6 +80,7 @@ interface ProjectState {
   busy: Busy;
   viewer: Viewer | null;
   isPrDialogOpen: boolean;
+  isBranchPickerOpen: boolean;
 
   set: (patch: Partial<ProjectState>) => void;
 }
@@ -71,6 +88,8 @@ interface ProjectState {
 export const initialRepoState = {
   status: null,
   pr: null,
+  ci: null,
+  stashes: [],
   log: [],
   logHead: null,
   logDone: false,
@@ -93,6 +112,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
   draftBeforeAmend: "",
   busy: null,
   isPrDialogOpen: false,
+  isBranchPickerOpen: false,
   set: (patch) => set(patch),
 }));
 

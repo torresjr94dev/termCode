@@ -105,6 +105,87 @@
   --color-del: #b0361c;
 }
 
+/* Sintaxis del visor: tonos cálidos (sin cian); los comentarios usan ink-3 (contraste ≥ 4.5:1). */
+:root {
+  --syn-keyword: #e3a35a;
+  --syn-string: #b9c27c;
+  --syn-number: #ec8f6e;
+  --syn-title: #f2d7a6;
+  --syn-type: #d4a5cf;
+  --syn-attr: #d8b98a;
+  --syn-meta: #bfa07c;
+}
+:root[data-theme="fosforo-verde"] {
+  --syn-keyword: #86dca5;
+  --syn-string: #c9cf8a;
+  --syn-number: #eba37f;
+  --syn-title: #e6f0dc;
+  --syn-type: #b9d48f;
+  --syn-attr: #a9cfa0;
+  --syn-meta: #9cb897;
+}
+:root[data-theme="papel"] {
+  --syn-keyword: #8c4b00;
+  --syn-string: #47651a;
+  --syn-number: #a8361c;
+  --syn-title: #2b2418;
+  --syn-type: #6e3b8c;
+  --syn-attr: #7a5420;
+  --syn-meta: #6a5b46;
+}
+
+.tok-keyword,
+.tok-selector-tag,
+.tok-name {
+  color: var(--syn-keyword);
+}
+.tok-string,
+.tok-regexp,
+.tok-link,
+.tok-char {
+  color: var(--syn-string);
+}
+.tok-number,
+.tok-literal,
+.tok-symbol,
+.tok-bullet {
+  color: var(--syn-number);
+}
+.tok-title,
+.tok-section,
+.tok-selector-class,
+.tok-selector-id {
+  color: var(--syn-title);
+}
+.tok-type,
+.tok-built_in,
+.tok-class {
+  color: var(--syn-type);
+}
+.tok-attr,
+.tok-attribute,
+.tok-property,
+.tok-selector-attr,
+.tok-selector-pseudo {
+  color: var(--syn-attr);
+}
+.tok-meta,
+.tok-tag,
+.tok-doctag {
+  color: var(--syn-meta);
+}
+.tok-comment,
+.tok-quote {
+  color: var(--color-ink-3);
+  font-style: italic;
+}
+.tok-strong {
+  font-weight: 600;
+}
+.tok-emphasis {
+  font-style: italic;
+}
+
 @layer base {
   html,
   body,

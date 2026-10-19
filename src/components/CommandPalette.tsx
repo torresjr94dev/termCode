@@ -12,6 +12,8 @@ import {
   Undo2,
   LayoutGrid,
   Eye,
+  Archive,
+  FileSearch,
   GitCommitHorizontal,
   GitPullRequestArrow,
   History,
@@ -37,7 +39,7 @@ import {
 } from "lucide-react";
 import { useTerminalStore } from "../store/terminalStore";
 import { actions, AGENTS } from "../lib/actions";
-import { commit, generateCommitMessage, openProject, pull, push, reviewAgent } from "../lib/project";
+import { commit, generateCommitMessage, openBranchPicker, openProject, pull, push, reviewAgent, stashPush } from "../lib/project";
 import { useUiStore } from "../store/uiStore";
 import { collectPanes as panesOf } from "../lib/layout";
 import { useProjectStore } from "../store/projectStore";
@@ -112,8 +114,12 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       { id: "review-agent", group: "Agentes", title: "Revisar cambios del agente", hint: "desde tu último mensaje", icon: Eye, run: () => void reviewNearestAgent() },
       { id: "send-selection", group: "Agentes", title: "Enviar selección al agente", hint: "pega el texto seleccionado", icon: Send, run: actions.sendSelectionToAgent },
 
+      { id: "find-file", group: "Proyecto", title: "Buscar archivo…", icon: FileSearch, shortcut: sc("fileFinder"), run: () => useUiStore.getState().setFinderOpen(true) },
+
       ...(repo
         ? ([
+            { id: "git-switch", group: "Git", title: "Cambiar de rama…", hint: "o crear una", icon: GitBranch, shortcut: sc("switchBranch"), run: openBranchPicker },
+            { id: "git-stash", group: "Git", title: "Guardar cambios en el stash", hint: "archivos nuevos incluidos", icon: Archive, run: () => void stashPush() },
             { id: "git-changes", group: "Git", title: "Ver cambios", hint: repo.name, icon: GitBranch, shortcut: sc("projectChanges"), run: () => openProject("changes") },
             { id: "git-history", group: "Git", title: "Ver historial", icon: History, run: () => openProject("history") },
             { id: "git-ai-message", group: "Git", title: "Mensaje de commit con IA", hint: "cambios preparados", icon: Sparkles, run: () => { openProject("changes"); void generateCommitMessage(); } },

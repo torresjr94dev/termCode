@@ -4,8 +4,9 @@ import { useProjectStore, initialRepoState, sameSource, type DiffSource, type Pr
 import { useTerminalStore } from "../store/terminalStore";
 import { useUiStore } from "../store/uiStore";
 import { terminalManager } from "../terminal/TerminalManager";
-import { gitApi, isStaged, isUnstaged, type GitChange } from "./git";
-import { IS_TAURI, shellQuote } from "./ipc";
+import { gitApi, isStaged, isUnstaged, type GitChange, type StashEntry } from "./git";
+import { IS_TAURI, ipc, shellQuote } from "./ipc";
+import { settingsNow } from "../store/settingsStore";
 
 const project = () => useProjectStore.getState();
 const toast = (text: string, tone: "info" | "error" = "info") => useUiStore.getState().showToast(text, tone);
@@ -46,7 +47,11 @@ async function syncContext() {
       const sameRepo = repo?.root === project().repo?.root;
       if (!sameRepo) exitAmend();
       project().set({ cwd, repo, ...(sameRepo ? {} : initialRepoState) });
-      if (!sameRepo && repo) void refreshPr();
+      if (!sameRepo && repo) {
+        void refreshPr();
+        void refreshCi(true);
+        void refreshStashes();
+      }
       // Otra raíz (otro repo, o sin repo y otra carpeta): el árbol empieza de cero.
       if (projectRoot() !== previousRoot) {
         project().set({ tree: {}, expanded: {} });
@@ -56,6 +61,7 @@ async function syncContext() {
       }
     }
     await refreshStatus();
+    void refreshCi();
   } finally {
     syncing = false;
   }
@@ -78,7 +84,12 @@ export async function refreshStatus() {
     }
     const current = project().status;
     // Sin cambios no hay re-render: el panel se refresca cada pocos segundos.
-    if (JSON.stringify(current) !== JSON.stringify(status)) project().set({ status });
+    if (JSON.stringify(current) !== JSON.stringify(status)) {
+      project().set({ status });
+      // Commit, checkout o stash desde la terminal: lo que depende de HEAD se pone al día.
+      if (current && current.head !== status.head) void refreshCi(true);
+      if (current) void refreshStashes();
+    }
   } catch (err) {
     // El repo pudo desaparecer (rama borrada, carpeta movida): se re-descubre.
     void logWarn(`[webview] git status falló: ${errorText(err)}`).catch(() => {});
@@ -134,6 +145,7 @@ export function openProject(tab: ProjectTab) {
   project().set({ isOpen: true, tab });
   if (tab === "history" && project().logHead !== (project().status?.head ?? null)) void loadLog(true);
   if (tab === "files") void loadDir("");
+  if (tab === "changes") void refreshStashes();
   void syncContext();
 }
 
@@ -201,6 +213,17 @@ export function pastePath(absolute: string) {
 export function absolutePath(rel: string): string | null {
   const root = projectRoot();
   return root ? `${root.replace(/\/$/, "")}/${rel}` : null;
+}
+
+/** Abre un archivo del proyecto en el editor de los ajustes. */
+export async function openInEditor(rel: string, line?: number) {
+  const absolute = absolutePath(rel);
+  if (!absolute) return;
+  try {
+    await ipc.openInEditor(absolute, line ?? null, settingsNow().editor);
+  } catch (err) {
+    toast(`No se pudo abrir el editor: ${errorText(err)}`, "error");
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -464,6 +487,8 @@ export async function push() {
   if (ok !== undefined) {
     toast("Rama publicada.");
     void refreshPr();
+    // Los workflows tardan unos segundos en registrarse tras el push.
+    setTimeout(() => void refreshCi(true), 6000);
   }
 }
 
@@ -544,4 +569,266 @@ export function openExternal(url: string) {
   if (!/^https?:\/\//i.test(url)) return;
   if (IS_TAURI) openUrl(url).catch((err) => toast(errorText(err), "error"));
   else window.open(url, "_blank", "noopener,noreferrer");
+}
+
+/* ------------------------------------------------------------------ */
+/* CI del commit actual                                                */
+/* ------------------------------------------------------------------ */
+
+let ciCheckedAt = 0;
+const CI_PENDING_MS = 20_000;
+const CI_IDLE_MS = 120_000;
+
+/** Consulta el CI de HEAD (limitado: cada 20 s si corre algo, cada 2 min si no). */
+export async function refreshCi(force = false) {
+  const repo = project().repo;
+  if (!repo || repo.host !== "github") {
+    if (project().ci) project().set({ ci: null });
+    return;
+  }
+  const previous = project().ci;
+  const now = Date.now();
+  if (!force && now - ciCheckedAt < (previous?.state === "pending" ? CI_PENDING_MS : CI_IDLE_MS)) return;
+  ciCheckedAt = now;
+  const ci = await gitApi.ciStatus(repo.root).catch(() => null);
+  if (project().repo?.root !== repo.root) return;
+  if (JSON.stringify(ci) === JSON.stringify(previous)) return;
+  project().set({ ci });
+  // Terminó el CI del mismo commit: se avisa (la ventana puede estar detrás del editor).
+  if (previous?.state === "pending" && ci && ci.sha === previous.sha && ci.state !== "pending") {
+    const branch = project().status?.branch ?? "HEAD";
+    const failed = ci.runs.filter((r) => r.conclusion && !["success", "skipped", "neutral"].includes(r.conclusion));
+    const title = ci.state === "success" ? `CI en verde · ${branch}` : `CI falló · ${branch}`;
+    const body = ci.state === "success" ? `${ci.runs.length} workflow(s) pasaron.` : failed.map((r) => r.name).join(", ");
+    toast(`${title}: ${body}`, ci.state === "success" ? "info" : "error");
+    void import("./bridge").then(({ notify }) => notify(title, body));
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Ramas                                                               */
+/* ------------------------------------------------------------------ */
+
+/** HEAD se movió (checkout, merge…): historial, PR, CI, stash y árbol se recargan. */
+function afterHeadMove() {
+  exitAmend();
+  const { viewer, tree, isOpen, tab } = project();
+  if (viewer && viewer.kind !== "file") project().set({ viewer: null });
+  project().set({ logHead: null, openCommit: null });
+  if (isOpen && tab === "history") void loadLog(true);
+  for (const [dir, node] of Object.entries(tree)) if (Array.isArray(node)) void loadDir(dir);
+  void refreshPr();
+  void refreshCi(true);
+  void refreshStashes();
+}
+
+/** ⌘⇧B: panel de Cambios abierto y el selector de ramas desplegado. */
+export function openBranchPicker() {
+  const { repo, isOpen, tab, isBranchPickerOpen } = project();
+  if (!repo) {
+    toast("El panel activo no está dentro de un repositorio git.");
+    return;
+  }
+  if (isBranchPickerOpen) {
+    project().set({ isBranchPickerOpen: false });
+    return;
+  }
+  if (!isOpen || tab !== "changes") openProject("changes");
+  project().set({ isBranchPickerOpen: true });
+}
+
+interface SwitchOptions {
+  create?: boolean;
+  /** `origin/x` → rama local `x` que la sigue. */
+  remote?: boolean;
+}
+
+export async function switchBranch(name: string, options: SwitchOptions = {}): Promise<boolean> {
+  const root = project().repo?.root;
+  if (!root || project().busy) return false;
+  project().set({ busy: "branch" });
+  try {
+    await gitApi.switchBranch(root, name, Boolean(options.create), Boolean(options.remote));
+    const local = options.remote ? name.replace(/^[^/]+\//, "") : name;
+    toast(options.create ? `Rama ${name} creada desde ${project().status?.branch ?? "HEAD"}.` : `Ahora estás en ${local}.`);
+    afterHeadMove();
+    return true;
+  } catch (err) {
+    const text = errorText(err);
+    if (text.includes("stash")) {
+      useUiStore.getState().askConfirm({
+        title: `¿Guardar tus cambios en el stash y cambiar a ${name}?`,
+        body: "Tus cambios sin commitear (incluidos archivos nuevos) se guardan en el stash. Los recuperas desde Cambios → Stash.",
+        confirmLabel: "Guardar y cambiar",
+        onConfirm: () => void stashThenSwitch(name, options),
+      });
+    } else {
+      toast(text, "error");
+    }
+    return false;
+  } finally {
+    project().set({ busy: null });
+    void refreshStatus();
+  }
+}
+
+async function stashThenSwitch(name: string, options: SwitchOptions) {
+  const root = project().repo?.root;
+  if (!root) return;
+  try {
+    await gitApi.stashPush(root, `termCode: antes de cambiar a ${name}`, true);
+  } catch (err) {
+    toast(errorText(err), "error");
+    return;
+  }
+  await switchBranch(name, options);
+}
+
+/* ------------------------------------------------------------------ */
+/* Stash                                                               */
+/* ------------------------------------------------------------------ */
+
+export async function refreshStashes() {
+  const root = project().repo?.root;
+  if (!root) return;
+  const stashes = await gitApi.stashList(root).catch((): StashEntry[] => []);
+  if (project().repo?.root === root && JSON.stringify(stashes) !== JSON.stringify(project().stashes)) project().set({ stashes });
+}
+
+export function stashPush() {
+  return withBusy("stash", async () => {
+    const root = project().repo?.root;
+    if (!root) return;
+    await gitApi.stashPush(root, "", true);
+    toast("Cambios guardados en el stash (archivos nuevos incluidos).");
+    void refreshStashes();
+  });
+}
+
+export function stashApply(entry: StashEntry, pop: boolean) {
+  return withBusy("stash", async () => {
+    const root = project().repo?.root;
+    if (!root) return;
+    try {
+      await gitApi.stashAction(root, pop ? "pop" : "apply", entry.index);
+      toast(pop ? "Stash aplicado y retirado." : "Stash aplicado (se conserva).");
+    } finally {
+      void refreshStashes();
+    }
+  });
+}
+
+export function stashDrop(entry: StashEntry) {
+  useUiStore.getState().askConfirm({
+    title: "¿Borrar esta entrada del stash?",
+    body: `«${entry.message}». Lo que contiene se pierde.`,
+    confirmLabel: "Borrar",
+    onConfirm: () =>
+      void withBusy("stash", async () => {
+        const root = project().repo?.root;
+        if (!root) return;
+        await gitApi.stashAction(root, "drop", entry.index);
+        void refreshStashes();
+      }),
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Conflictos y operaciones a medias                                   */
+/* ------------------------------------------------------------------ */
+
+const OPERATION_LABEL: Record<string, string> = {
+  merge: "el merge",
+  rebase: "el rebase",
+  "cherry-pick": "el cherry-pick",
+  revert: "el revert",
+};
+
+export const operationLabel = (op: string) => OPERATION_LABEL[op] ?? op;
+
+export function finishOperation(abort: boolean) {
+  const { repo, status } = project();
+  const op = status?.operation;
+  if (!repo || !op) return;
+  const run = () =>
+    void withBusy("resolve", async () => {
+      await gitApi.finishOperation(repo.root, abort);
+      toast(abort ? `Se canceló ${operationLabel(op)}.` : `Terminó ${operationLabel(op)}.`);
+      afterHeadMove();
+    });
+  if (!abort) {
+    run();
+    return;
+  }
+  useUiStore.getState().askConfirm({
+    title: `¿Cancelar ${operationLabel(op)}?`,
+    body: "El repositorio vuelve a como estaba antes de empezar; lo que resolviste se pierde.",
+    confirmLabel: "Cancelar operación",
+    onConfirm: run,
+  });
+}
+
+export async function openConflict(path: string) {
+  const root = project().repo?.root;
+  if (!root) return;
+  project().set({ viewer: { kind: "conflict", path } });
+  const stillOpen = () => {
+    const viewer = project().viewer;
+    return viewer?.kind === "conflict" && viewer.path === path;
+  };
+  try {
+    const preview = await gitApi.read(root, path);
+    if (!stillOpen()) return;
+    if (preview.binary || preview.truncated) {
+      project().set({
+        viewer: {
+          kind: "conflict",
+          path,
+          error: preview.binary
+            ? "Archivo binario: elige una versión en la terminal (git checkout --ours / --theirs) y luego git add."
+            : "El archivo es muy grande para el visor: resuélvelo en tu editor.",
+        },
+      });
+      return;
+    }
+    project().set({ viewer: { kind: "conflict", path, text: preview.text } });
+  } catch (err) {
+    if (stillOpen()) project().set({ viewer: { kind: "conflict", path, error: errorText(err) } });
+  }
+}
+
+/** Guarda el resultado, marca el archivo como resuelto y pasa al siguiente conflicto. */
+export async function saveConflict(path: string, content: string) {
+  const root = project().repo?.root;
+  if (!root) return;
+  const ok = await withBusy("resolve", async () => {
+    await gitApi.resolveConflict(root, path, content);
+    return true;
+  });
+  if (!ok) return;
+  await refreshStatus();
+  const next = project().status?.changes.find((c) => c.conflicted);
+  if (next) {
+    toast(`${path} resuelto. Siguiente: ${next.path}`);
+    void openConflict(next.path);
+    return;
+  }
+  closeViewer();
+  const op = project().status?.operation;
+  toast(op ? `Sin conflictos pendientes: ya puedes terminar ${operationLabel(op)} en Cambios.` : `${path} resuelto.`);
+}
+
+/* ------------------------------------------------------------------ */
+/* Buscador de archivos (⌘P)                                           */
+/* ------------------------------------------------------------------ */
+
+let filesCache: { root: string; at: number; files: string[] } | null = null;
+
+export async function projectFiles(): Promise<string[]> {
+  const root = projectRoot();
+  if (!root) return [];
+  if (filesCache?.root === root && Date.now() - filesCache.at < 30_000) return filesCache.files;
+  const files = await gitApi.files(root);
+  filesCache = { root, at: Date.now(), files };
+  return files;
 }

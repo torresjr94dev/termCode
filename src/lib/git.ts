@@ -31,6 +31,40 @@ export interface GitStatus {
   ahead: number;
   behind: number;
   changes: GitChange[];
+  /** Operación a medias: merge · rebase · cherry-pick · revert. */
+  operation: string | null;
+}
+
+export interface GitBranch {
+  /** `feature/x`, o `origin/feature/x` si es remota. */
+  name: string;
+  current: boolean;
+  remote: boolean;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  /** Segundos Unix del último commit. */
+  updatedAt: number;
+  subject: string;
+}
+
+export interface StashEntry {
+  index: number;
+  message: string;
+  createdAt: number;
+}
+
+export interface CiRun {
+  name: string;
+  status: string;
+  conclusion: string;
+  url: string;
+}
+
+export interface CiStatus {
+  state: "pending" | "success" | "failure";
+  sha: string;
+  runs: CiRun[];
 }
 
 export interface DiffText {
@@ -136,6 +170,18 @@ export const gitApi = {
   worktreeCreateFor: (cwd: string, label: string) => call<string>("git_worktree_create", { cwd, label }),
   worktreeApply: (source: string, target: string) => call<number>("git_worktree_apply", { source, target }),
   worktreeRemove: (root: string, path: string) => call<void>("git_worktree_remove", { root, path }),
+  branches: (root: string) => call<GitBranch[]>("git_branches", { root }),
+  switchBranch: (root: string, name: string, create: boolean, remote: boolean) =>
+    call<void>("git_switch", { root, name, create, remote }),
+  stashList: (root: string) => call<StashEntry[]>("git_stash_list", { root }),
+  stashPush: (root: string, message: string, includeUntracked: boolean) =>
+    call<void>("git_stash_push", { root, message, includeUntracked }),
+  stashAction: (root: string, action: "apply" | "pop" | "drop", index: number) =>
+    call<void>("git_stash_action", { root, action, index }),
+  finishOperation: (root: string, abort: boolean) => call<void>("git_operation_finish", { root, abort }),
+  resolveConflict: (root: string, path: string, content: string) => call<void>("git_resolve_conflict", { root, path, content }),
+  ciStatus: (root: string) => call<CiStatus | null>("ci_status", { root }),
+  files: (root: string) => call<string[]>("fs_files", { root }),
   list: (root: string, path: string) => call<FsEntry[]>("fs_list", { root, path }),
   read: (root: string, path: string) => call<FilePreview>("fs_read", { root, path }),
 };

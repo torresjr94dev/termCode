@@ -7,6 +7,8 @@
 //! has a timeout.
 
 pub mod ai;
+pub mod branches;
+pub mod ci;
 pub mod pr;
 mod remote;
 pub mod review;
@@ -184,6 +186,8 @@ pub struct Status {
     pub ahead: u32,
     pub behind: u32,
     pub changes: Vec<Change>,
+    /// merge · rebase · cherry-pick · revert waiting to be finished.
+    pub operation: Option<String>,
 }
 
 fn parse_status(raw: &str) -> Status {
@@ -274,7 +278,10 @@ pub async fn git_status(root: String) -> Result<Status, String> {
                 "--untracked-files=all",
             ],
         )
-        .map(|raw| parse_status(&raw))
+        .map(|raw| Status {
+            operation: branches::operation(&root).map(str::to_owned),
+            ..parse_status(&raw)
+        })
     })
     .await
 }

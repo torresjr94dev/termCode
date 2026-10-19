@@ -119,6 +119,79 @@ pub async fn fs_list(root: String, path: String) -> Result<Vec<Entry>, String> {
         .map_err(|e| e.to_string())?
 }
 
+const MAX_FILES: usize = 50_000;
+/// Carpetas que nunca interesan en el buscador cuando no hay git que las ignore.
+const SKIP_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".next",
+    ".venv",
+    "__pycache__",
+];
+
+/// Every file of the project for the ⌘P finder, relative and `/`-separated.
+/// In a repo: tracked + untracked not ignored (git already knows); elsewhere a
+/// bounded walk that skips hidden and heavy folders.
+fn files(root: &str) -> Result<Vec<String>, String> {
+    let (canonical_root, _) = resolve(root, "")?;
+    if canonical_root.join(".git").exists() {
+        let out = git::git(
+            &canonical_root,
+            &[
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "--deduplicate",
+            ],
+        )?;
+        return Ok(out
+            .split('\0')
+            .filter(|p| !p.is_empty())
+            .take(MAX_FILES)
+            .map(str::to_owned)
+            .collect());
+    }
+    let mut out = Vec::new();
+    let mut stack = vec![canonical_root.clone()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                // Symlinked folders are not followed: they may point anywhere.
+                if !name.starts_with('.') && !SKIP_DIRS.contains(&name.as_ref()) {
+                    stack.push(entry.path());
+                }
+            } else if kind.is_file()
+                && let Ok(rel) = entry.path().strip_prefix(&canonical_root)
+            {
+                out.push(rel.to_string_lossy().replace('\\', "/"));
+                if out.len() >= MAX_FILES {
+                    return Ok(out);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn fs_files(root: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || files(&root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Preview {
@@ -199,6 +272,23 @@ mod tests {
         let root = dir.to_string_lossy().into_owned();
         assert_eq!(read(&root, "A.md").unwrap().text, "# hola\n");
         assert!(read(&root, "bin.dat").unwrap().binary);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn lists_project_files_respecting_gitignore() {
+        let dir = fixture("lists_project_files");
+        let root = dir.to_string_lossy().into_owned();
+        let mut all = files(&root).unwrap();
+        all.sort();
+        assert_eq!(all, vec![".gitignore", "A.md", "src/b.ts"]);
+        // Sin git: recorrido acotado que salta carpetas pesadas.
+        std::fs::remove_dir_all(dir.join(".git")).unwrap();
+        std::fs::create_dir_all(dir.join("node_modules/x")).unwrap();
+        std::fs::write(dir.join("node_modules/x/i.js"), "").unwrap();
+        let mut all = files(&root).unwrap();
+        all.sort();
+        assert_eq!(all, vec![".gitignore", "A.md", "bin.dat", "src/b.ts"]);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
