@@ -67,6 +67,8 @@ interface TerminalInstance {
   fitAddon: FitAddon;
   searchAddon: SearchAddon;
   container: HTMLElement | null;
+  /** El PTY ya se pidió (evita un segundo spawn si React monta el panel dos veces). */
+  spawnRequested: boolean;
   /** Bytes ya procesados por xterm y aún no confirmados al backend. */
   pendingAck: number;
   ackScheduled: boolean;
@@ -156,6 +158,7 @@ class TerminalManager {
       fitAddon,
       searchAddon,
       container: null,
+      spawnRequested: false,
       pendingAck: 0,
       ackScheduled: false,
     };
@@ -220,7 +223,10 @@ class TerminalManager {
       instance.term.focus();
     });
 
-    if (instance.backendSessionId === null) void this.spawn(instance, spec);
+    if (!instance.spawnRequested) {
+      instance.spawnRequested = true;
+      void this.spawn(instance, spec);
+    }
   }
 
   private async spawn(instance: TerminalInstance, spec: SpawnSpec) {
@@ -381,6 +387,11 @@ class TerminalManager {
   public getSize(id: string | undefined): string {
     const term = id ? this.instances.get(id)?.term : undefined;
     return term ? `${term.cols}×${term.rows}` : "";
+  }
+
+  /** El PTY del panel ya arrancó (tiene sesión en el backend). */
+  public isSpawned(id: string): boolean {
+    return (this.instances.get(id)?.backendSessionId ?? null) !== null;
   }
 
   public async info(id: string): Promise<ProcessInfo | null> {

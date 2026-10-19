@@ -1,7 +1,14 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
+  ArrowDown,
   ArrowLeft,
   ArrowRight,
+  ArrowUp,
+  FolderTree,
+  GitCommitHorizontal,
+  GitPullRequestArrow,
+  History,
+  Sparkles,
   Asterisk,
   Columns2,
   Gauge,
@@ -23,6 +30,8 @@ import {
 } from "lucide-react";
 import { useTerminalStore } from "../store/terminalStore";
 import { actions, AGENTS } from "../lib/actions";
+import { commit, generateCommitMessage, openProject, pull, push } from "../lib/project";
+import { useProjectStore } from "../store/projectStore";
 import { cn, tabLabel } from "../lib/layout";
 import { shortcutLabel, tabShortcutLabel, type ShortcutId } from "../lib/shortcuts";
 import { Kbd } from "./ui";
@@ -65,6 +74,7 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const isSidebarOpen = useTerminalStore((s) => s.isSidebarOpen);
   const fontSize = useTerminalStore((s) => s.fontSize);
   const agents = useTerminalStore((s) => s.agents);
+  const repo = useProjectStore((s) => s.repo);
 
   const commands = useMemo<Command[]>(
     () => [
@@ -88,6 +98,19 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         ];
       }),
       { id: "send-selection", group: "Agentes", title: "Enviar selección al agente", hint: "pega el texto seleccionado", icon: Send, run: actions.sendSelectionToAgent },
+
+      ...(repo
+        ? ([
+            { id: "git-changes", group: "Git", title: "Ver cambios", hint: repo.name, icon: GitBranch, shortcut: sc("projectChanges"), run: () => openProject("changes") },
+            { id: "git-history", group: "Git", title: "Ver historial", icon: History, run: () => openProject("history") },
+            { id: "git-ai-message", group: "Git", title: "Mensaje de commit con IA", hint: "cambios preparados", icon: Sparkles, run: () => { openProject("changes"); void generateCommitMessage(); } },
+            { id: "git-commit", group: "Git", title: "Hacer commit", icon: GitCommitHorizontal, run: () => { openProject("changes"); void commit(); } },
+            { id: "git-push", group: "Git", title: "Push", icon: ArrowUp, run: () => void push() },
+            { id: "git-pull", group: "Git", title: "Pull", hint: "--ff-only", icon: ArrowDown, run: () => void pull() },
+            { id: "git-pr", group: "Git", title: "Crear pull request", icon: GitPullRequestArrow, run: () => useProjectStore.getState().set({ isPrDialogOpen: true }) },
+          ] satisfies Command[])
+        : []),
+      { id: "files", group: "Proyecto", title: "Explorar archivos", icon: FolderTree, shortcut: sc("projectFiles"), run: () => openProject("files") },
 
       { id: "sidebar", group: "Vista", title: isSidebarOpen ? "Ocultar sesiones" : "Mostrar sesiones", icon: PanelLeft, shortcut: sc("toggleSidebar"), run: actions.toggleSidebar },
       { id: "usage", group: "Vista", title: "Cuotas de IA", hint: "Claude · Codex", icon: Gauge, shortcut: sc("toggleUsage"), run: actions.toggleUsage },
@@ -115,7 +138,7 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         run: () => actions.goToTab(index),
       })),
     ],
-    [tabs, activeTabId, isBroadcastEnabled, isSidebarOpen, fontSize, agents],
+    [tabs, activeTabId, isBroadcastEnabled, isSidebarOpen, fontSize, agents, repo],
   );
 
   const filtered = useMemo(() => {

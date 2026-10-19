@@ -3,6 +3,7 @@ import { ArrowRight, Asterisk, Hexagon, RefreshCw, X, type LucideIcon } from "lu
 import { useTerminalStore } from "../store/terminalStore";
 import { actions, AGENTS, type AgentKind } from "../lib/actions";
 import { formatAgo, formatTokens, formatUntil, toEpochMs } from "../lib/format";
+import { useNow } from "../lib/useNow";
 import { cn } from "../lib/layout";
 import type { ProviderUsage } from "../types/layout";
 import { IconButton, Meter } from "./ui";
@@ -16,16 +17,6 @@ export const UsagePopover: React.FC<UsagePopoverProps> = ({ onClose }) => {
   if (!isOpen) return null;
   return <UsagePanel onClose={onClose} />;
 };
-
-/** Re-render periódico para que "en 2 h 45 min" y "hace 3 min" no se congelen. */
-function useNow(intervalMs: number): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return now;
-}
 
 const SOURCE_LABEL: Record<NonNullable<ProviderUsage["source"]>, string> = {
   statusline: "sesión de Claude Code",

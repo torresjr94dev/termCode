@@ -77,6 +77,7 @@ export interface AgentAttention {
 export interface AgentsInfo {
   claude: string | null;
   codex: string | null;
+  gh: string | null;
   claudeSettingsPath: string | null;
 }
 

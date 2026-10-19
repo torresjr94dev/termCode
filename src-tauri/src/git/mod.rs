@@ -147,7 +147,14 @@ fn repo_meta(cwd: &Path) -> Option<RepoMeta> {
 /// `null` when `cwd` is not inside a git working tree.
 #[tauri::command]
 pub async fn git_repo(cwd: String) -> Result<Option<RepoMeta>, String> {
-    blocking(move || Ok(repo_meta(Path::new(&cwd)))).await
+    blocking(move || {
+        let meta = repo_meta(Path::new(&cwd));
+        if let Some(m) = &meta {
+            log::info!("git: repo {} ({:?})", m.name, m.host);
+        }
+        Ok(meta)
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------

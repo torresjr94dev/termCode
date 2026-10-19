@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { useTerminalStore } from "./store/terminalStore";
 import { startBridge } from "./lib/bridge";
+import { startProjectTracking } from "./lib/project";
 import { loadSession, startAutosave } from "./lib/persistence";
 import { IS_TAURI } from "./lib/ipc";
 import { error as logError, info as logInfo } from "@tauri-apps/plugin-log";
@@ -43,6 +44,7 @@ async function boot(root: HTMLElement) {
 
   startBridge();
   startAutosave();
+  startProjectTracking();
 
   ReactDOM.createRoot(root).render(
     <React.StrictMode>

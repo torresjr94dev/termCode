@@ -7,10 +7,14 @@ import { UsagePopover } from "./components/UsagePopover";
 import { CommandPalette } from "./components/CommandPalette";
 import { StatusBar } from "./components/StatusBar";
 import { ConfirmDialog, ToastHost } from "./components/Overlays";
+import { ProjectPanel } from "./components/project/ProjectPanel";
+import { Viewer } from "./components/project/Viewer";
+import { PrDialog } from "./components/project/PrDialog";
 import { useTerminalStore } from "./store/terminalStore";
 import { useUiStore } from "./store/uiStore";
 import { terminalManager } from "./terminal/TerminalManager";
 import { actions } from "./lib/actions";
+import { openProject } from "./lib/project";
 import { IS_TAURI, shellQuote } from "./lib/ipc";
 import { collectPanes } from "./lib/layout";
 import { matchShortcut, matchTabIndex, type ShortcutId } from "./lib/shortcuts";
@@ -29,6 +33,8 @@ const SHORTCUT_HANDLERS: Record<Exclude<ShortcutId, "palette">, () => unknown> =
   fontBigger: actions.fontBigger,
   fontSmaller: actions.fontSmaller,
   fontReset: actions.fontReset,
+  projectFiles: () => openProject("files"),
+  projectChanges: () => openProject("changes"),
 };
 
 function focusActivePane() {
@@ -150,26 +156,32 @@ export const App: React.FC = () => {
       <div className="flex min-w-0 flex-1 flex-col">
         <Header onOpenPalette={() => setPaletteOpen(true)} />
 
-        <main className="relative min-h-0 flex-1 bg-canvas">
-          {tabs.map((tab) => (
-            <div key={tab.id} hidden={tab.id !== activeTabId} className="absolute inset-0">
-              <SplitView node={tab.root} activePaneId={tab.activePaneId} />
-            </div>
-          ))}
-          {/* Broadcast es peligroso: el marco rojo no se puede pasar por alto */}
-          {isBroadcastEnabled && (
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 z-20 shadow-[inset_0_0_0_1px_var(--color-signal)]"
-            />
-          )}
-        </main>
+        <div className="flex min-h-0 flex-1">
+          <main className="relative min-w-0 flex-1 bg-canvas">
+            {tabs.map((tab) => (
+              <div key={tab.id} hidden={tab.id !== activeTabId} className="absolute inset-0">
+                <SplitView node={tab.root} activePaneId={tab.activePaneId} />
+              </div>
+            ))}
+            {/* Broadcast es peligroso: el marco rojo no se puede pasar por alto */}
+            {isBroadcastEnabled && (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 z-20 shadow-[inset_0_0_0_1px_var(--color-signal)]"
+              />
+            )}
+            {/* Diffs y vistas previas se abren sobre las terminales; el panel queda a mano */}
+            <Viewer />
+          </main>
+          <ProjectPanel />
+        </div>
 
         <StatusBar />
       </div>
 
       <UsagePopover onClose={closeUsage} />
       <CommandPalette isOpen={isPaletteOpen} onClose={closePalette} />
+      <PrDialog />
       <ConfirmDialog onSettled={focusActivePane} />
       <ToastHost />
     </div>

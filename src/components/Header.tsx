@@ -1,6 +1,8 @@
 import React from "react";
-import { Asterisk, Hexagon, PanelLeft, Plus, Search, X } from "lucide-react";
+import { Asterisk, GitBranch, Hexagon, PanelLeft, Plus, Search, X } from "lucide-react";
 import { useTerminalStore } from "../store/terminalStore";
+import { useProjectStore } from "../store/projectStore";
+import { openProject } from "../lib/project";
 import { actions } from "../lib/actions";
 import { cn, collectPanes, findPane, tabLabel } from "../lib/layout";
 import { IS_MAC, shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
@@ -111,6 +113,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
       <div data-tauri-drag-region className="min-w-4 flex-1" />
 
       <div className="flex items-center gap-1.5">
+        <BranchButton />
         <UsageButton />
         <button
           type="button"
@@ -169,6 +172,39 @@ const UsageButton: React.FC = () => {
           <span className={critical ? "text-signal" : undefined}>{text}</span>
         </span>
       ))}
+    </button>
+  );
+};
+
+/** Rama del repo donde está el panel activo; abre la vista de cambios. */
+const BranchButton: React.FC = () => {
+  const repo = useProjectStore((s) => s.repo);
+  const status = useProjectStore((s) => s.status);
+  const isOpen = useProjectStore((s) => s.isOpen && s.tab === "changes");
+  if (!repo || !status) return null;
+
+  const branch = status.branch ?? (status.head ? `@${status.head.slice(0, 7)}` : "sin commits");
+  const changes = status.changes.length;
+  const sync = [status.ahead ? `↑${status.ahead}` : "", status.behind ? `↓${status.behind}` : ""].filter(Boolean).join(" ");
+
+  return (
+    <button
+      type="button"
+      onClick={() => openProject("changes")}
+      aria-pressed={isOpen}
+      aria-label={`Rama ${branch}${changes ? `, ${changes} cambios` : ""}`}
+      title={`${repo.name} · ${branch}  ${shortcutLabel("projectChanges")}`}
+      className={cn(
+        "flex h-7 max-w-[220px] items-center gap-1.5 rounded-md border px-2.5 font-mono text-[12px] transition-colors duration-150",
+        isOpen
+          ? "border-line-strong bg-press text-ink"
+          : "border-line text-ink-2 hover:border-line-strong hover:bg-hover hover:text-ink",
+      )}
+    >
+      <GitBranch size={13} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-ink-3" />
+      <span className="truncate">{branch}</span>
+      {changes > 0 && <span className="shrink-0 tabular-nums text-amber">●{changes}</span>}
+      {sync && <span className="shrink-0 tabular-nums text-ink-3">{sync}</span>}
     </button>
   );
 };

@@ -20,7 +20,9 @@ export type ShortcutId =
   | "find"
   | "fontBigger"
   | "fontSmaller"
-  | "fontReset";
+  | "fontReset"
+  | "projectFiles"
+  | "projectChanges";
 
 interface Chord {
   /**
@@ -49,6 +51,8 @@ export const SHORTCUTS: Record<ShortcutId, Chord> = {
   fontBigger: { key: ["+", "="], anyShift: true },
   fontSmaller: { key: ["-", "_"], anyShift: true },
   fontReset: { key: "0" },
+  projectFiles: { key: "e", shift: true },
+  projectChanges: { key: "g", shift: true },
 };
 
 export const IS_MAC =

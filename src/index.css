@@ -29,6 +29,10 @@
   --color-on-amber: #1a1206;
   --color-signal: #ff5d47;
 
+  /* Diffs (mismos tonos que el ANSI verde/rojo del terminal) */
+  --color-add: #a3b865;
+  --color-del: #e5604a;
+
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
