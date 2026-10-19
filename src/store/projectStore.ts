@@ -3,10 +3,21 @@ import type { CommitDetail, CommitInfo, FilePreview, FsEntry, GitStatus, LastCom
 
 export type ProjectTab = "files" | "changes" | "history";
 
-/** Qué diff mostrar. */
+/** Qué diff mostrar. `root` permite ver diffs de otro árbol (p. ej. el worktree de un agente). */
 export type DiffSource =
-  | { kind: "staged" | "worktree" | "untracked"; path: string; origPath: string | null }
-  | { kind: "commit"; sha: string; short: string; base: string; path: string; origPath: string | null };
+  | { kind: "staged" | "worktree" | "untracked"; path: string; origPath: string | null; root?: string }
+  | { kind: "commit"; sha: string; short: string; base: string; path: string; origPath: string | null; root?: string }
+  | {
+      kind: "review";
+      /** Foto del repo antes del agente. */
+      base: string;
+      path: string;
+      origPath: string | null;
+      /** El archivo no existía en la foto. */
+      created: boolean;
+      root: string;
+      label: string;
+    };
 
 export type Viewer =
   | {
@@ -87,6 +98,8 @@ export const useProjectStore = create<ProjectState>((set) => ({
 
 /** Dos orígenes de diff apuntan al mismo archivo/versión. */
 export function sameSource(a: DiffSource, b: DiffSource): boolean {
-  if (a.kind !== b.kind || a.path !== b.path) return false;
-  return a.kind !== "commit" || (b.kind === "commit" && a.sha === b.sha);
+  if (a.kind !== b.kind || a.path !== b.path || a.root !== b.root) return false;
+  if (a.kind === "commit") return b.kind === "commit" && a.sha === b.sha;
+  if (a.kind === "review") return b.kind === "review" && a.base === b.base;
+  return true;
 }

@@ -213,14 +213,16 @@ export function sourceForChange(change: GitChange, side: "staged" | "unstaged"):
 }
 
 export async function openDiff(source: DiffSource, siblings: DiffSource[] = [source]) {
-  const root = project().repo?.root;
+  const root = source.root ?? project().repo?.root;
   if (!root) return;
   project().set({ viewer: { kind: "diff", source, siblings } });
   try {
     const result =
       source.kind === "commit"
         ? await gitApi.commitDiff(root, source.base, source.sha, source.path, source.origPath)
-        : await gitApi.diff(root, source.path, source.origPath, source.kind);
+        : source.kind === "review"
+          ? await gitApi.reviewDiff(root, source.base, source.path, source.origPath, source.created)
+          : await gitApi.diff(root, source.path, source.origPath, source.kind);
     const viewer = project().viewer;
     if (viewer?.kind === "diff" && viewer.source === source) {
       project().set({ viewer: { ...viewer, text: result.text, truncated: result.truncated } });
@@ -228,6 +230,96 @@ export async function openDiff(source: DiffSource, siblings: DiffSource[] = [sou
   } catch (err) {
     const viewer = project().viewer;
     if (viewer?.kind === "diff" && viewer.source === source) project().set({ viewer: { ...viewer, error: errorText(err) } });
+  }
+}
+
+export type HunkAction = "stage" | "unstage" | "discard" | "revert";
+
+/** Qué se puede hacer con un fragmento según de dónde viene el diff. */
+export function hunkActions(source: DiffSource): HunkAction[] {
+  switch (source.kind) {
+    case "worktree":
+      return ["stage", "discard"];
+    case "staged":
+      return ["unstage"];
+    case "review":
+      return source.created ? [] : ["revert"];
+    default:
+      return [];
+  }
+}
+
+/** Aplica un fragmento (parche) y recarga el diff para no mostrar un estado viejo. */
+export async function applyHunk(action: HunkAction, patch: string) {
+  const viewer = project().viewer;
+  if (viewer?.kind !== "diff") return;
+  const root = viewer.source.root ?? project().repo?.root;
+  if (!root) return;
+  const [reverse, cached] = {
+    stage: [false, true],
+    unstage: [true, true],
+    discard: [true, false],
+    revert: [true, false],
+  }[action];
+  try {
+    await gitApi.applyPatch(root, patch, reverse, cached);
+    void refreshStatus();
+    await openDiff(viewer.source, viewer.siblings);
+  } catch (err) {
+    toast(errorText(err), "error");
+  }
+}
+
+/** Descartar/revertir pierde trabajo: confirmación antes. */
+export function confirmHunk(action: HunkAction, patch: string) {
+  if (action === "stage" || action === "unstage") {
+    void applyHunk(action, patch);
+    return;
+  }
+  useUiStore.getState().askConfirm({
+    title: action === "revert" ? "¿Revertir este cambio del agente?" : "¿Descartar este fragmento?",
+    body: "El archivo vuelve a como estaba en ese tramo. No se puede deshacer.",
+    confirmLabel: action === "revert" ? "Revertir" : "Descartar",
+    onConfirm: () => void applyHunk(action, patch),
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Revisión de lo que hizo un agente                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Abre el diff de todo lo que cambió desde la foto que tomó el hook al
+ * recibir el prompt (`turn`) o al empezar la sesión (`session`).
+ */
+export async function reviewAgent(paneId: string, scope: "turn" | "session" = "turn"): Promise<boolean> {
+  const baseline = await gitApi.agentBaseline(paneId).catch(() => null);
+  const snap = baseline?.[scope];
+  if (!snap) {
+    toast("Ese agente aún no tiene una foto del repo: aparece al enviarle el primer mensaje (solo sesiones lanzadas desde termCode).");
+    return false;
+  }
+  try {
+    const files = await gitApi.reviewFiles(snap.root, snap.sha, snap.untracked);
+    if (!files.length) {
+      toast(scope === "turn" ? "El agente no cambió nada desde tu último mensaje." : "El agente no cambió nada en esta sesión.");
+      return false;
+    }
+    const label = scope === "turn" ? "desde tu último mensaje" : "en toda la sesión";
+    const sources: DiffSource[] = files.map((f) => ({
+      kind: "review",
+      base: snap.sha,
+      path: f.path,
+      origPath: f.origPath,
+      created: f.status === "A" && !f.origPath,
+      root: snap.root,
+      label,
+    }));
+    await openDiff(sources[0], sources);
+    return true;
+  } catch (err) {
+    toast(errorText(err), "error");
+    return false;
   }
 }
 

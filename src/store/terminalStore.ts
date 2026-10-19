@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  AgentActivity,
   AgentKind,
   AgentStatus,
   AgentsInfo,
@@ -87,6 +88,7 @@ interface TerminalState {
   closed: ClosedEntry[];
   agents: AgentsInfo | null;
   agentStatus: Record<string, AgentStatus>;
+  agentActivity: Record<string, AgentActivity>;
   attention: Record<string, Attention>;
 
   createTab: (spec?: PaneSpec) => void;
@@ -109,6 +111,7 @@ interface TerminalState {
   setUsage: (usage: UsageSnapshot) => void;
   setAgents: (agents: AgentsInfo) => void;
   setAgentStatus: (status: AgentStatus) => void;
+  setAgentActivity: (activity: AgentActivity) => void;
   setAttention: (paneId: string, attention: Attention | null) => void;
   hydrate: (session: PersistedSession) => void;
 }
@@ -125,6 +128,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   usage: { claude: { ...loadingProvider, windows: [] }, codex: { ...loadingProvider, windows: [] } },
   agents: null,
   agentStatus: {},
+  agentActivity: {},
   attention: {},
 
   createTab: (spec) => {
@@ -147,6 +151,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         tabs: [fresh],
         activeTabId: fresh.id,
         agentStatus: omit(state.agentStatus, paneIds),
+        agentActivity: omit(state.agentActivity, paneIds),
         attention: omit(state.attention, paneIds),
       }));
       return;
@@ -158,6 +163,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       tabs: remaining,
       activeTabId: nextActive,
       agentStatus: omit(state.agentStatus, paneIds),
+      agentActivity: omit(state.agentActivity, paneIds),
       attention: omit(state.attention, paneIds),
     }));
   },
@@ -203,6 +209,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set((state) => ({
       tabs: state.tabs.map((t) => (t.id === owner.id ? { ...t, root, activePaneId, zoomedPaneId } : t)),
       agentStatus: omit(state.agentStatus, [paneId]),
+      agentActivity: omit(state.agentActivity, [paneId]),
       attention: omit(state.attention, [paneId]),
     }));
     if (owner.id === activeTabId && activePaneId) {
@@ -285,6 +292,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   setAgentStatus: (status) => {
     if (!findOwnerTab(get().tabs, status.paneId)) return;
     set((state) => ({ agentStatus: { ...state.agentStatus, [status.paneId]: status } }));
+  },
+
+  setAgentActivity: (activity) => {
+    if (!findOwnerTab(get().tabs, activity.paneId)) return;
+    set((state) => ({ agentActivity: { ...state.agentActivity, [activity.paneId]: activity } }));
   },
 
   setAttention: (paneId, attention) => {

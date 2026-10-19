@@ -12,6 +12,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 struct ChannelSink {
     id: SessionId,
+    /// Panel de termCode dueño de la sesión (para el MCP de lectura).
+    pane: Option<String>,
     channel: Channel<InvokeResponseBody>,
     app: AppHandle,
 }
@@ -24,10 +26,16 @@ struct ExitPayload {
 
 impl OutputSink for ChannelSink {
     fn data(&mut self, bytes: Vec<u8>) -> bool {
+        if let Some(pane) = &self.pane {
+            crate::mcp::record(pane, &bytes);
+        }
         self.channel.send(InvokeResponseBody::Raw(bytes)).is_ok()
     }
 
     fn exit(&mut self, code: Option<u32>) {
+        if let Some(pane) = &self.pane {
+            crate::mcp::forget(pane);
+        }
         let _ = self.app.emit("pty-exit", ExitPayload { id: self.id, code });
         self.app.state::<PtyManager>().remove(self.id);
     }
@@ -66,11 +74,22 @@ pub async fn pty_spawn(
     } else {
         "shell"
     };
+    let pane = options
+        .env
+        .iter()
+        .find(|(k, _)| k == agents::ENV_PANE)
+        .map(|(_, v)| v.clone());
     let id = pty
-        .spawn(options, |id| ChannelSink {
-            id,
-            channel: on_data,
-            app,
+        .spawn(options, |id| {
+            if let Some(pane) = &pane {
+                crate::mcp::register(pane, id);
+            }
+            ChannelSink {
+                id,
+                pane: pane.clone(),
+                channel: on_data,
+                app,
+            }
         })
         .map_err(|e| e.to_string())?;
     log::info!("pty {id}: {kind} spawned");

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { IS_TAURI } from "./ipc";
+import type { AgentBaseline, AgentWorktree } from "../types/layout";
 
 export type GitHost = "github" | "gitlab" | "bitbucket" | "azure" | "other";
 
@@ -124,6 +125,17 @@ export const gitApi = {
     call<{ url: string; created: boolean }>("pr_create", { root, title, body, base, draft }),
   aiCommitMessage: (root: string) => call<string>("ai_commit_message", { root }),
   aiPrDescription: (root: string, base: string) => call<{ title: string; body: string }>("ai_pr_description", { root, base }),
+  applyPatch: (root: string, patch: string, reverse: boolean, cached: boolean) =>
+    call<void>("git_apply_patch", { root, patch, reverse, cached }),
+  reviewFiles: (root: string, base: string, baselineUntracked: string[]) =>
+    call<CommitFile[]>("review_files", { root, base, baselineUntracked }),
+  reviewDiff: (root: string, base: string, path: string, origPath: string | null, created: boolean) =>
+    call<DiffText>("review_diff", { root, base, path, origPath, created }),
+  agentBaseline: (paneId: string) => call<AgentBaseline | null>("agent_baseline", { paneId }),
+  worktreeList: (root: string) => call<AgentWorktree[]>("git_worktree_list", { root }),
+  worktreeCreateFor: (cwd: string, label: string) => call<string>("git_worktree_create", { cwd, label }),
+  worktreeApply: (source: string, target: string) => call<number>("git_worktree_apply", { source, target }),
+  worktreeRemove: (root: string, path: string) => call<void>("git_worktree_remove", { root, path }),
   list: (root: string, path: string) => call<FsEntry[]>("fs_list", { root, path }),
   read: (root: string, path: string) => call<FilePreview>("fs_read", { root, path }),
 };

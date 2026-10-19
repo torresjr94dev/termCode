@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AgentAttention, AgentStatus, AgentsInfo, UsageSnapshot } from "../types/layout";
+import type { AgentActivity, AgentAttention, AgentStatus, AgentsInfo, UsageSnapshot } from "../types/layout";
 
 /** `false` en un navegador normal (p. ej. el harness de pruebas): todo se vuelve no-op. */
 export const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -39,6 +39,8 @@ export const ipc = {
   onUsage: (handler: (snapshot: UsageSnapshot) => void) => on("usage-updated", handler),
   onAgentStatus: (handler: (status: AgentStatus) => void) => on("agent-status", handler),
   onAgentAttention: (handler: (attention: AgentAttention) => void) => on("agent-attention", handler),
+  onAgentActivity: (handler: (activity: AgentActivity) => void) => on("agent-activity", handler),
+  paneSetTitle: (paneId: string, title: string) => call<void>("pane_set_title", { paneId, title }),
 };
 
 /** Comillas POSIX: rutas con espacios o comillas llegan intactas a la shell. */

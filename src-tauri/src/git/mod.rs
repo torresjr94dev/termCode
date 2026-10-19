@@ -9,6 +9,7 @@
 pub mod ai;
 pub mod pr;
 mod remote;
+pub mod review;
 pub mod worktree;
 
 use crate::proc::{self, Output};

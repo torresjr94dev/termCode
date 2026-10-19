@@ -25,6 +25,8 @@ export interface Settings {
   quickHideOnBlur: boolean;
   /** Avisar antes de lanzar un agente con la sesión de 5 h casi agotada. */
   quotaGuard: boolean;
+  /** Los agentes pueden leer la salida de otros paneles (MCP de solo lectura). */
+  agentsReadPanes: boolean;
   screenReader: boolean;
   onboardingDone: boolean;
 }
@@ -50,6 +52,7 @@ export const DEFAULT_SETTINGS: Settings = {
   quickShortcut: "Alt+Space",
   quickHideOnBlur: true,
   quotaGuard: true,
+  agentsReadPanes: true,
   screenReader: false,
   onboardingDone: false,
 };
@@ -91,6 +94,7 @@ export function sanitize(input: unknown): Settings {
     quickShortcut: pick("quickShortcut", (v) => typeof v === "string" && /^[\w+]{3,40}$/.test(v)),
     quickHideOnBlur: pick("quickHideOnBlur", isBool),
     quotaGuard: pick("quotaGuard", isBool),
+    agentsReadPanes: pick("agentsReadPanes", isBool),
     screenReader: pick("screenReader", isBool),
     onboardingDone: pick("onboardingDone", isBool),
   };

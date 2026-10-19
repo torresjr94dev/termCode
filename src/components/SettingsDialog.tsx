@@ -232,6 +232,12 @@ const SettingsPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
               checked={settings.quotaGuard}
               onChange={set("quotaGuard")}
             />
+            <Toggle
+              label="Claude puede leer otros paneles"
+              hint="Herramientas MCP de solo lectura: list_panes y read_pane. Aplica a agentes nuevos"
+              checked={settings.agentsReadPanes}
+              onChange={set("agentsReadPanes")}
+            />
           </Section>
 
           <Section title="Accesibilidad">

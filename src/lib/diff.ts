@@ -5,6 +5,8 @@ export type RowKind = "context" | "add" | "del" | "hunk" | "meta";
 export interface DiffRow {
   kind: RowKind;
   text: string;
+  /** En filas `hunk`: índice del fragmento en `ParsedDiff.hunks`. */
+  hunk?: number;
   oldNo?: number;
   newNo?: number;
   /** Tramo que realmente cambió dentro de la línea [inicio, fin) — solo en pares del/add. */
@@ -16,6 +18,17 @@ export interface ParsedDiff {
   additions: number;
   deletions: number;
   binary: boolean;
+  /** Cabecera del archivo (diff --git, ---, +++…): base de los parches por fragmento. */
+  header: string;
+  /** Texto crudo de cada fragmento, desde su línea @@. */
+  hunks: string[];
+}
+
+/** Parche aplicable con `git apply` que contiene solo un fragmento. */
+export function hunkPatch(diff: ParsedDiff, index: number): string | null {
+  const hunk = diff.hunks[index];
+  if (!hunk || !diff.header) return null;
+  return `${diff.header}${hunk.endsWith("\n") ? hunk : `${hunk}\n`}`;
 }
 
 const HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/;
@@ -114,16 +127,25 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
   let oldNo = 0;
   let newNo = 0;
   let inHunk = false;
+  let header = "";
+  let seenHunk = false;
+  const hunks: string[] = [];
 
-  for (const line of text.split("\n")) {
+  const lines = text.split("\n");
+  if (lines[lines.length - 1] === "") lines.pop();
+  for (const line of lines) {
     const hunk = HUNK.exec(line);
     if (hunk) {
       oldNo = Number(hunk[1]);
       newNo = Number(hunk[2]);
       inHunk = true;
-      rows.push({ kind: "hunk", text: hunk[3].trim() || line });
+      seenHunk = true;
+      hunks.push(`${line}\n`);
+      rows.push({ kind: "hunk", text: hunk[3].trim() || line, hunk: hunks.length - 1 });
       continue;
     }
+    if (!seenHunk) header += `${line}\n`;
+    else if (inHunk && hunks.length) hunks[hunks.length - 1] += `${line}\n`;
     if (line.startsWith("diff --git ")) inHunk = false;
     if (!inHunk) {
       if (line.startsWith("Binary files ") || line.startsWith("GIT binary patch")) binary = true;
@@ -144,7 +166,7 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
   }
 
   markPairs(rows);
-  return { rows, additions, deletions, binary };
+  return { rows, additions, deletions, binary, header, hunks };
 }
 
 export interface SplitRow {

@@ -3,8 +3,8 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ChevronDown, ChevronUp, Columns2, Copy, CornerDownLeft, FileText, FolderOpen, Rows3, X } from "lucide-react";
 import { useProjectStore, sameSource, type DiffSource, type Viewer as ViewerState } from "../../store/projectStore";
 import { useUiStore } from "../../store/uiStore";
-import { closeViewer, pastePath, stepDiff } from "../../lib/project";
-import { parseUnifiedDiff, toSplitRows, type DiffRow } from "../../lib/diff";
+import { closeViewer, confirmHunk, hunkActions, pastePath, stepDiff, type HunkAction } from "../../lib/project";
+import { hunkPatch, parseUnifiedDiff, toSplitRows, type DiffRow } from "../../lib/diff";
 import { IS_TAURI } from "../../lib/ipc";
 import { cn } from "../../lib/layout";
 import { IconButton, Kbd } from "../ui";
@@ -34,6 +34,40 @@ const SOURCE_LABEL: Record<DiffSource["kind"], string> = {
   worktree: "Sin preparar",
   untracked: "Archivo nuevo",
   commit: "Commit",
+  review: "Cambios del agente",
+};
+
+const HUNK_LABEL: Record<HunkAction, string> = {
+  stage: "Preparar",
+  unstage: "Quitar del índice",
+  discard: "Descartar",
+  revert: "Revertir",
+};
+
+type OnHunk = ((index: number, action: HunkAction) => void) | null;
+
+/** Botones de un fragmento (a la derecha de su cabecera @@). */
+const HunkButtons: React.FC<{ index?: number; actions: HunkAction[]; onHunk: OnHunk }> = ({ index, actions, onHunk }) => {
+  if (index === undefined || !onHunk || !actions.length) return null;
+  return (
+    <span className="sticky right-2 ml-auto flex shrink-0 gap-1 pl-4 font-sans not-italic">
+      {actions.map((action) => (
+        <button
+          key={action}
+          type="button"
+          onClick={() => onHunk(index, action)}
+          className={cn(
+            "rounded border px-1.5 text-[11px] leading-5 transition-colors duration-150",
+            action === "discard" || action === "revert"
+              ? "border-line text-ink-3 hover:border-del/60 hover:text-del"
+              : "border-line text-ink-2 hover:border-amber/60 hover:text-amber",
+          )}
+        >
+          {HUNK_LABEL[action]}
+        </button>
+      ))}
+    </span>
+  );
 };
 
 /** Hoja sobre el área de terminales: diff de un archivo o vista previa. Esc cierra. */
@@ -111,7 +145,20 @@ const DiffView: React.FC<{
   const [showAll, setShowAll] = useState(false);
   const parsed = useMemo(() => (viewer.text === undefined ? null : parseUnifiedDiff(viewer.text)), [viewer.text]);
   const index = viewer.siblings.findIndex((s) => sameSource(s, viewer.source));
-  const badge = viewer.source.kind === "commit" ? `Commit ${viewer.source.short}` : SOURCE_LABEL[viewer.source.kind];
+  const badge =
+    viewer.source.kind === "commit"
+      ? `Commit ${viewer.source.short}`
+      : viewer.source.kind === "review"
+        ? `Agente · ${viewer.source.label}`
+        : SOURCE_LABEL[viewer.source.kind];
+  const actions = hunkActions(viewer.source);
+  const onHunk: OnHunk =
+    parsed && actions.length
+      ? (index, action) => {
+          const patch = hunkPatch(parsed, index);
+          if (patch) confirmHunk(action, patch);
+        }
+      : null;
 
   const switchMode = (next: Mode) => {
     setMode(next);
@@ -175,7 +222,13 @@ const DiffView: React.FC<{
         {!viewer.error && !parsed && <Notice>Calculando diff…</Notice>}
         {parsed?.binary && <Notice>Archivo binario: no hay diff de texto que mostrar.</Notice>}
         {parsed && !parsed.binary && !parsed.rows.length && <Notice>Sin diferencias de contenido (¿solo permisos?).</Notice>}
-        {parsed && rows.length > 0 && (mode === "unified" ? <UnifiedRows rows={rows} /> : <SplitRows rows={rows} />)}
+        {parsed &&
+          rows.length > 0 &&
+          (mode === "unified" ? (
+            <UnifiedRows rows={rows} actions={actions} onHunk={onHunk} />
+          ) : (
+            <SplitRows rows={rows} actions={actions} onHunk={onHunk} />
+          ))}
         {(hidden > 0 || viewer.truncated) && (
           <div className="flex items-center gap-3 px-4 py-4 font-sans text-[12px] text-ink-3">
             {hidden > 0 && (
@@ -223,12 +276,13 @@ const Code: React.FC<{ row: DiffRow }> = ({ row }) => {
 
 const SIGN: Partial<Record<DiffRow["kind"], string>> = { add: "+", del: "−" };
 
-const UnifiedRows: React.FC<{ rows: DiffRow[] }> = ({ rows }) => (
+const UnifiedRows: React.FC<{ rows: DiffRow[]; actions: HunkAction[]; onHunk: OnHunk }> = ({ rows, actions, onHunk }) => (
   <div className="w-max min-w-full pb-6">
     {rows.map((row, i) =>
       row.kind === "hunk" || row.kind === "meta" ? (
-        <div key={i} className={cn("flex min-w-full px-4 py-0.5", ROW_BG[row.kind], row.kind === "hunk" && "mt-2 first:mt-0")}>
+        <div key={i} className={cn("flex min-w-full items-center px-4 py-0.5", ROW_BG[row.kind], row.kind === "hunk" && "mt-2 first:mt-0")}>
           <span className="whitespace-pre text-[11.5px]">{row.kind === "hunk" ? `@@ ${row.text}` : row.text}</span>
+          {row.kind === "hunk" && <HunkButtons index={row.hunk} actions={actions} onHunk={onHunk} />}
         </div>
       ) : (
         <div key={i} className={cn("flex min-w-full", ROW_BG[row.kind])}>
@@ -255,14 +309,18 @@ const SplitCell: React.FC<{ row?: DiffRow; side: "left" | "right" }> = ({ row, s
   );
 };
 
-const SplitRows: React.FC<{ rows: DiffRow[] }> = ({ rows }) => {
+const SplitRows: React.FC<{ rows: DiffRow[]; actions: HunkAction[]; onHunk: OnHunk }> = ({ rows, actions, onHunk }) => {
   const split = useMemo(() => toSplitRows(rows), [rows]);
   return (
     <div className="min-w-full pb-6">
       {split.map((r, i) =>
         r.full ? (
-          <div key={i} className={cn("px-4 py-0.5 whitespace-pre text-[11.5px]", ROW_BG[r.full.kind], r.full.kind === "hunk" && "mt-2 first:mt-0")}>
+          <div
+            key={i}
+            className={cn("flex items-center px-4 py-0.5 whitespace-pre text-[11.5px]", ROW_BG[r.full.kind], r.full.kind === "hunk" && "mt-2 first:mt-0")}
+          >
             {r.full.kind === "hunk" ? `@@ ${r.full.text}` : r.full.text}
+            {r.full.kind === "hunk" && <HunkButtons index={r.full.hunk} actions={actions} onHunk={onHunk} />}
           </div>
         ) : (
           <div key={i} className="flex">

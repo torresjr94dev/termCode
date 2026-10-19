@@ -49,11 +49,16 @@ function agentAvailable(agent: AgentKind): boolean {
   return true;
 }
 
-function agentSpec(agent: AgentKind, cwd?: string, title?: string): PaneSpec {
-  const settings = agent === "claude" ? state().agents?.claudeSettingsPath : null;
-  // Claude recibe nuestro statusLine + hooks solo en las sesiones lanzadas desde termCode.
-  const command = settings ? `${AGENTS.claude.command} --settings ${shellQuote(settings)}` : AGENTS[agent].command;
-  return { title: title ?? AGENTS[agent].title, agentType: agent, command, cwd };
+export function agentSpec(agent: AgentKind, cwd?: string, title?: string, prompt?: string): PaneSpec {
+  const parts = [AGENTS[agent].command];
+  if (agent === "claude") {
+    const { claudeSettingsPath, mcpConfigPath } = state().agents ?? {};
+    // Claude recibe statusLine + hooks (y el MCP de lectura) solo en sesiones lanzadas desde termCode.
+    if (claudeSettingsPath) parts.push("--settings", shellQuote(claudeSettingsPath));
+    if (mcpConfigPath && settingsNow().agentsReadPanes) parts.push("--mcp-config", shellQuote(mcpConfigPath));
+  }
+  if (prompt?.trim()) parts.push("--", shellQuote(prompt.trim()));
+  return { title: title ?? AGENTS[agent].title, agentType: agent, command: parts.join(" "), cwd };
 }
 
 async function split(direction: SplitDirection, spec: PaneSpec = {}) {

@@ -10,6 +10,8 @@ import {
   Settings2,
   StretchHorizontal,
   Undo2,
+  LayoutGrid,
+  Eye,
   GitCommitHorizontal,
   GitPullRequestArrow,
   History,
@@ -35,7 +37,9 @@ import {
 } from "lucide-react";
 import { useTerminalStore } from "../store/terminalStore";
 import { actions, AGENTS } from "../lib/actions";
-import { commit, generateCommitMessage, openProject, pull, push } from "../lib/project";
+import { commit, generateCommitMessage, openProject, pull, push, reviewAgent } from "../lib/project";
+import { useUiStore } from "../store/uiStore";
+import { collectPanes as panesOf } from "../lib/layout";
 import { useProjectStore } from "../store/projectStore";
 import { useSettingsStore } from "../store/settingsStore";
 import { cn, tabLabel } from "../lib/layout";
@@ -104,6 +108,8 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           { id: `${agent}-worktree`, group: "Agentes", title: `${name} en un worktree nuevo`, hint: hint ?? "rama propia", icon: GitBranch, run: () => actions.openAgentInWorktree(agent) },
         ];
       }),
+      { id: "mission", group: "Agentes", title: "Mission Control de agentes", icon: LayoutGrid, shortcut: sc("missionControl"), run: () => useUiStore.getState().setMissionOpen(true) },
+      { id: "review-agent", group: "Agentes", title: "Revisar cambios del agente", hint: "desde tu último mensaje", icon: Eye, run: () => void reviewNearestAgent() },
       { id: "send-selection", group: "Agentes", title: "Enviar selección al agente", hint: "pega el texto seleccionado", icon: Send, run: actions.sendSelectionToAgent },
 
       ...(repo
@@ -324,3 +330,16 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     </div>
   );
 };
+
+/** Revisa el agente del panel activo o, si no es un agente, el primero de la pestaña. */
+async function reviewNearestAgent() {
+  const { tabs, activeTabId } = useTerminalStore.getState();
+  const tab = tabs.find((t) => t.id === activeTabId);
+  const panes = tab ? panesOf(tab.root) : [];
+  const agent = panes.find((p) => p.id === tab?.activePaneId && p.agentType) ?? panes.find((p) => p.agentType);
+  if (!agent) {
+    useUiStore.getState().showToast("No hay un agente en esta pestaña.");
+    return;
+  }
+  await reviewAgent(agent.id, "turn");
+}

@@ -83,6 +83,8 @@ pub fn run_cli() -> Option<i32> {
     match args.next().as_deref() {
         Some("--claude-statusline") => Some(statusline_cli()),
         Some("--claude-hook") => Some(hook_cli(&args.next().unwrap_or_default())),
+        #[cfg(unix)]
+        Some("--mcp") => Some(crate::mcp::stdio_server()),
         _ => None,
     }
 }
@@ -112,24 +114,135 @@ fn statusline_cli() -> i32 {
     0
 }
 
+fn truncate(text: &str, max: usize) -> String {
+    let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one_line.chars().count() <= max {
+        one_line
+    } else {
+        format!("{}…", one_line.chars().take(max - 1).collect::<String>())
+    }
+}
+
+/// "Bash: npm test", "Edit: schema.ts"… lo que el agente está haciendo ahora.
+pub fn describe_tool(tool: &str, input: &Value) -> String {
+    let field = |k: &str| input.get(k).and_then(Value::as_str).unwrap_or_default();
+    let file = |k: &str| {
+        let path = field(k);
+        path.rsplit('/').next().unwrap_or(path).to_owned()
+    };
+    let detail = match tool {
+        "Bash" => truncate(field("command"), 90),
+        "Edit" | "MultiEdit" | "Write" | "Read" | "NotebookEdit" => file("file_path"),
+        "Grep" | "Glob" => truncate(field("pattern"), 60),
+        "WebFetch" => truncate(field("url"), 70),
+        "WebSearch" => truncate(field("query"), 70),
+        "Task" | "Agent" => truncate(field("description"), 70),
+        _ => String::new(),
+    };
+    if detail.is_empty() {
+        tool.to_owned()
+    } else {
+        format!("{tool}: {detail}")
+    }
+}
+
+/// Foto del repo antes de que el agente toque nada: `git stash create` no
+/// modifica el índice, las ramas ni los archivos; si no hay cambios, HEAD.
+fn capture_baseline(cwd: &Path) -> Option<Value> {
+    let root = crate::git::git(cwd, &["rev-parse", "--show-toplevel"]).ok()?;
+    let root = PathBuf::from(root.trim());
+    let stash = crate::git::git(&root, &["stash", "create"]).unwrap_or_default();
+    let sha = match stash.trim() {
+        "" => crate::git::git(&root, &["rev-parse", "HEAD"])
+            .ok()?
+            .trim()
+            .to_owned(),
+        s => s.to_owned(),
+    };
+    let untracked: Vec<String> =
+        crate::git::git(&root, &["ls-files", "--others", "--exclude-standard", "-z"])
+            .unwrap_or_default()
+            .split('\0')
+            .filter(|p| !p.is_empty())
+            .take(5000)
+            .map(str::to_owned)
+            .collect();
+    Some(json!({ "root": root, "sha": sha, "untracked": untracked, "at": now_ms() }))
+}
+
 fn hook_cli(event: &str) -> i32 {
     // A hook must never get in Claude's way: always exit 0 and print nothing.
-    let kind = match event {
-        "Notification" => "needs-input",
-        "Stop" => "done",
-        _ => return 0,
-    };
     let input = read_stdin_json().unwrap_or(Value::Null);
-    if let Some(pane) = pane_from_env() {
-        let message: String = input
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .chars()
-            .take(300)
-            .collect();
-        let record = json!({ "at": now_ms(), "kind": kind, "message": message });
-        let _ = write_atomic(&agents_dir().join(format!("event-{pane}.json")), &record);
+    let Some(pane) = pane_from_env() else {
+        return 0;
+    };
+    let dir = agents_dir();
+    let activity = |state: &str, detail: String| {
+        let record = json!({ "at": now_ms(), "state": state, "detail": detail });
+        let _ = write_atomic(&dir.join(format!("activity-{pane}.json")), &record);
+    };
+
+    match event {
+        "UserPromptSubmit" => {
+            let prompt = input
+                .get("prompt")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            activity("working", truncate(prompt, 140));
+            let cwd = input
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(PathBuf::from)
+                .or_else(|| std::env::current_dir().ok());
+            if let Some(turn) = cwd.as_deref().and_then(capture_baseline) {
+                let path = dir.join(format!("baseline-{pane}.json"));
+                let previous: Value = fs::read(&path)
+                    .ok()
+                    .and_then(|b| serde_json::from_slice(&b).ok())
+                    .unwrap_or(Value::Null);
+                // La base de la sesión es la primera foto; la del turno, la más reciente.
+                let session = match previous.get("session") {
+                    Some(s) if s.get("root") == turn.get("root") => s.clone(),
+                    _ => turn.clone(),
+                };
+                let _ = write_atomic(&path, &json!({ "session": session, "turn": turn }));
+            }
+        }
+        "PreToolUse" => {
+            let tool = input
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .unwrap_or("herramienta");
+            activity(
+                "working",
+                describe_tool(tool, input.get("tool_input").unwrap_or(&Value::Null)),
+            );
+        }
+        "Notification" | "Stop" => {
+            let kind = if event == "Notification" {
+                "needs-input"
+            } else {
+                "done"
+            };
+            let message: String = input
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .chars()
+                .take(300)
+                .collect();
+            activity(
+                if kind == "done" {
+                    "idle"
+                } else {
+                    "needs-input"
+                },
+                message.clone(),
+            );
+            let record = json!({ "at": now_ms(), "kind": kind, "message": message });
+            let _ = write_atomic(&dir.join(format!("event-{pane}.json")), &record);
+        }
+        _ => {}
     }
     0
 }
@@ -142,10 +255,22 @@ pub fn write_claude_settings() -> std::io::Result<PathBuf> {
     let hook = |event: &str| json!([{ "hooks": [{ "type": "command", "command": format!("{exe} --claude-hook {event}") }] }]);
     let settings = json!({
         "statusLine": { "type": "command", "command": format!("{exe} --claude-statusline"), "padding": 0 },
-        "hooks": { "Notification": hook("Notification"), "Stop": hook("Stop") },
+        "hooks": {
+            "UserPromptSubmit": hook("UserPromptSubmit"),
+            "PreToolUse": hook("PreToolUse"),
+            "Notification": hook("Notification"),
+            "Stop": hook("Stop"),
+        },
+        // Las herramientas de solo lectura del MCP de termCode no piden permiso cada vez.
+        "permissions": { "allow": ["mcp__termcode__list_panes", "mcp__termcode__read_pane"] },
     });
     let path = state_dir().join("claude-settings.json");
     write_atomic(&path, &settings)?;
+
+    let mcp = json!({
+        "mcpServers": { "termcode": { "command": std::env::current_exe()?, "args": ["--mcp"] } }
+    });
+    write_atomic(&state_dir().join("mcp.json"), &mcp)?;
     Ok(path)
 }
 
@@ -293,6 +418,23 @@ fn scan(app: &AppHandle, seen: &mut HashMap<PathBuf, SystemTime>) {
                 app.state::<UsageHub>()
                     .record_claude_statusline(app, windows, at);
             }
+        } else if let Some(pane) = stem.strip_prefix("activity-").filter(|p| valid_pane_id(p)) {
+            let field = |k: &str| {
+                value
+                    .get(k)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            let _ = app.emit(
+                "agent-activity",
+                json!({
+                    "paneId": pane,
+                    "state": field("state"),
+                    "detail": field("detail"),
+                    "at": value.get("at").and_then(Value::as_u64).unwrap_or_else(now_ms),
+                }),
+            );
         } else if let Some(pane) = stem.strip_prefix("event-").filter(|p| valid_pane_id(p)) {
             let field = |k: &str| {
                 value
@@ -311,6 +453,16 @@ fn scan(app: &AppHandle, seen: &mut HashMap<PathBuf, SystemTime>) {
             );
         }
     }
+}
+
+/// Fotos del repo guardadas por los hooks para un panel de agente.
+#[tauri::command]
+pub fn agent_baseline(pane_id: String) -> Option<Value> {
+    if !valid_pane_id(&pane_id) {
+        return None;
+    }
+    let bytes = fs::read(agents_dir().join(format!("baseline-{pane_id}.json"))).ok()?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -470,6 +622,65 @@ mod tests {
             }
         });
         assert_eq!(context_percent(&status), Some(25.0));
+    }
+
+    #[test]
+    fn describes_tool_calls() {
+        assert_eq!(
+            describe_tool("Bash", &json!({ "command": "npm   test\n--watch" })),
+            "Bash: npm test --watch"
+        );
+        assert_eq!(
+            describe_tool("Edit", &json!({ "file_path": "/repo/src/db/schema.ts" })),
+            "Edit: schema.ts"
+        );
+        assert_eq!(describe_tool("TodoWrite", &json!({})), "TodoWrite");
+        let long = "x".repeat(200);
+        assert!(
+            describe_tool("Bash", &json!({ "command": long }))
+                .chars()
+                .count()
+                <= 96
+        );
+    }
+
+    #[test]
+    fn baseline_snapshots_without_touching_the_repo() {
+        let dir = std::env::temp_dir().join(format!("termcode-baseline-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let g = |args: &[&str]| crate::git::git(&dir, args).unwrap();
+        g(&["init", "-q", "-b", "main"]);
+        g(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "init",
+        ]);
+        let head = g(&["rev-parse", "HEAD"]).trim().to_owned();
+
+        // Árbol limpio: la base es HEAD.
+        let clean = capture_baseline(&dir).unwrap();
+        assert_eq!(clean["sha"], head);
+
+        // Con cambios: un objeto de stash, sin crear una entrada en la lista de stashes.
+        fs::write(dir.join("a.txt"), "hola\n").unwrap();
+        g(&["add", "a.txt"]);
+        fs::write(dir.join("nuevo.txt"), "x").unwrap();
+        let dirty = capture_baseline(&dir).unwrap();
+        assert_ne!(dirty["sha"], head);
+        assert_eq!(dirty["untracked"], json!(["nuevo.txt"]));
+        assert_eq!(g(&["stash", "list"]), "", "stash create no deja rastro");
+        assert!(
+            g(&["status", "--porcelain"]).contains("A  a.txt"),
+            "el índice sigue igual"
+        );
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

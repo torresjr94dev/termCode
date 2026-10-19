@@ -10,7 +10,7 @@ import { settingsNow } from "../store/settingsStore";
 import { terminalManager } from "../terminal/TerminalManager";
 import type { CommandRecord } from "../terminal/commands";
 import type { FileLinkTarget } from "../terminal/links";
-import { findOwnerTab, findPane } from "./layout";
+import { collectPanes, findOwnerTab, findPane } from "./layout";
 import { IS_TAURI, ipc } from "./ipc";
 import { formatDuration } from "./format";
 import { info as logInfo } from "@tauri-apps/plugin-log";
@@ -133,15 +133,32 @@ export function startBridge(): () => void {
     onOpenPath: (target) => void openPath(target),
   });
 
+  // Títulos visibles → registro del MCP (para que el agente reconozca "el panel del servidor").
+  const sentTitles = new Map<string, string>();
+  const pushTitles = () => {
+    for (const tab of state().tabs) {
+      for (const pane of collectPanes(tab.root)) {
+        const title = tab.customTitle && tab.activePaneId === pane.id ? `${tab.customTitle} · ${pane.title}` : pane.title;
+        if (sentTitles.get(pane.id) !== title) {
+          sentTitles.set(pane.id, title);
+          void ipc.paneSetTitle(pane.id, title);
+        }
+      }
+    }
+  };
   const unsubscribeStore = useTerminalStore.subscribe((s, prev) => {
     if (s.activeTabId !== prev.activeTabId || s.tabs !== prev.tabs) clearSeenAttention();
+    if (s.tabs !== prev.tabs) pushTitles();
   });
+  // El registro del backend existe cuando el PTY arranca: reintento corto al inicio.
+  [1500, 4000].forEach((ms) => setTimeout(() => (sentTitles.clear(), pushTitles()), ms));
   window.addEventListener("focus", clearSeenAttention);
 
   const unlisteners = [
     ipc.onUsage((usage) => state().setUsage(usage)),
     ipc.onAgentStatus((status) => state().setAgentStatus(status)),
     ipc.onAgentAttention(({ paneId, kind, message }) => raiseAttention(paneId, kind, message)),
+    ipc.onAgentActivity((activity) => state().setAgentActivity(activity)),
   ];
 
   void ipc.usageGet().then((usage) => usage && state().setUsage(usage));

@@ -11,6 +11,7 @@ import { ProjectPanel } from "./components/project/ProjectPanel";
 import { Viewer } from "./components/project/Viewer";
 import { PrDialog } from "./components/project/PrDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { MissionControl } from "./components/MissionControl";
 import { useTerminalStore } from "./store/terminalStore";
 import { useUiStore } from "./store/uiStore";
 import { terminalManager } from "./terminal/TerminalManager";
@@ -136,6 +137,7 @@ export const App: React.FC = () => {
       }
       // Con la paleta o un diálogo abiertos, el resto de atajos no debe actuar a ciegas.
       if (ui.isPaletteOpen || ui.confirm || ui.isSettingsOpen) return;
+      if (ui.isMissionOpen && shortcut !== "missionControl") return;
 
       if (shortcut === "toggleUsage" && useTerminalStore.getState().isUsageDrawerOpen) closeUsage();
       else if (shortcut) void SHORTCUT_HANDLERS[shortcut]();
@@ -191,6 +193,7 @@ export const App: React.FC = () => {
       <CommandPalette isOpen={isPaletteOpen} onClose={closePalette} />
       <PrDialog />
       <SettingsDialog onClosed={focusActivePane} />
+      <MissionControl onClosed={focusActivePane} />
       <ConfirmDialog onSettled={focusActivePane} />
       <ToastHost />
     </div>

@@ -4,6 +4,7 @@ pub mod agents;
 mod editor;
 mod fs;
 mod git;
+mod mcp;
 mod proc;
 mod pty;
 mod quick;
@@ -59,6 +60,8 @@ pub fn run() {
                 log::error!("shell integration: cannot install: {e}");
             }
             agents::spawn_watcher(app.handle().clone());
+            #[cfg(unix)]
+            mcp::spawn_socket(app.handle().clone());
             usage::spawn(app.handle().clone());
             Ok(())
         })
@@ -74,6 +77,12 @@ pub fn run() {
             usage::usage_refresh,
             agents::agents_info,
             git::worktree::git_worktree_create,
+            git::worktree::git_worktree_list,
+            git::worktree::git_worktree_apply,
+            git::worktree::git_worktree_remove,
+            git::review::git_apply_patch,
+            git::review::review_files,
+            git::review::review_diff,
             git::git_repo,
             git::git_status,
             git::git_diff,
@@ -97,6 +106,8 @@ pub fn run() {
             editor::fs_existing_files,
             quick::quick_toggle,
             quick::quick_hide,
+            mcp::pane_set_title,
+            agents::agent_baseline,
         ])
         .build(tauri::generate_context!())
         .expect("error while building termCode");

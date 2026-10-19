@@ -78,6 +78,37 @@ export interface AgentAttention {
   message: string;
 }
 
+export interface AgentActivity {
+  paneId: string;
+  /** working · needs-input · idle */
+  state: string;
+  detail: string;
+  at: number;
+}
+
+export interface AgentWorktree {
+  path: string;
+  branch: string;
+  /** Commit del que partió el agente. */
+  base: string;
+  commits: number;
+  changed: number;
+  insertions: number;
+  deletions: number;
+}
+
+export interface BaselineSnapshot {
+  root: string;
+  sha: string;
+  untracked: string[];
+  at: number;
+}
+
+export interface AgentBaseline {
+  session: BaselineSnapshot;
+  turn: BaselineSnapshot;
+}
+
 export interface AgentsInfo {
   claude: string | null;
   codex: string | null;

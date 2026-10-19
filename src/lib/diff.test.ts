@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { changedSpan, parseUnifiedDiff, toSplitRows } from "./diff";
+import { changedSpan, hunkPatch, parseUnifiedDiff, toSplitRows } from "./diff";
 
 const SAMPLE = [
   "diff --git a/src/a.ts b/src/a.ts",
@@ -23,7 +23,7 @@ describe("parseUnifiedDiff", () => {
     expect(parsed.additions).toBe(2);
     expect(parsed.deletions).toBe(1);
     expect(parsed.rows.some((r) => r.text.startsWith("index "))).toBe(false);
-    expect(parsed.rows[0]).toEqual({ kind: "hunk", text: "export function saludo() {" });
+    expect(parsed.rows[0]).toEqual({ kind: "hunk", text: "export function saludo() {", hunk: 0 });
   });
 
   it("numbers old and new lines", () => {
@@ -49,6 +49,33 @@ describe("parseUnifiedDiff", () => {
   it("keeps rename metadata visible", () => {
     const d = parseUnifiedDiff("diff --git a/a b/b\nsimilarity index 100%\nrename from a\nrename to b\n");
     expect(d.rows.map((r) => r.text)).toEqual(["rename from a", "rename to b"]);
+  });
+});
+
+describe("hunk patches", () => {
+  it("rebuilds an applicable patch per hunk", () => {
+    const text = [
+      "diff --git a/x.txt b/x.txt",
+      "index 1..2 100644",
+      "--- a/x.txt",
+      "+++ b/x.txt",
+      "@@ -1,2 +1,2 @@",
+      "-uno",
+      "+UNO",
+      " dos",
+      "@@ -9,2 +9,2 @@",
+      " nueve",
+      "-diez",
+      "+DIEZ",
+      "\\ No newline at end of file",
+      "",
+    ].join("\n");
+    const d = parseUnifiedDiff(text);
+    expect(d.hunks).toHaveLength(2);
+    expect(d.rows.filter((r) => r.kind === "hunk").map((r) => r.hunk)).toEqual([0, 1]);
+    expect(hunkPatch(d, 0)).toBe("diff --git a/x.txt b/x.txt\nindex 1..2 100644\n--- a/x.txt\n+++ b/x.txt\n@@ -1,2 +1,2 @@\n-uno\n+UNO\n dos\n");
+    expect(hunkPatch(d, 1)?.endsWith("+DIEZ\n\\ No newline at end of file\n")).toBe(true);
+    expect(hunkPatch(d, 5)).toBeNull();
   });
 });
 
