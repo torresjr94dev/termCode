@@ -43,6 +43,7 @@ async function syncContext() {
       const previousRoot = projectRoot();
       const repo = await gitApi.repo(cwd).catch(() => null);
       const sameRepo = repo?.root === project().repo?.root;
+      if (!sameRepo) exitAmend();
       project().set({ cwd, repo, ...(sameRepo ? {} : initialRepoState) });
       if (!sameRepo && repo) void refreshPr();
       // Otra raíz (otro repo, o sin repo y otra carpeta): el árbol empieza de cero.
@@ -64,6 +65,11 @@ export async function refreshStatus() {
   if (!root) return;
   try {
     const status = await gitApi.status(root);
+    const { amend, amendBase } = project();
+    if (amend && amendBase && status.head && !amendBase.sha.startsWith(status.head)) {
+      exitAmend();
+      toast("El último commit cambió (¿commit o checkout en la terminal?): amend desactivado.");
+    }
     const current = project().status;
     // Sin cambios no hay re-render: el panel se refresca cada pocos segundos.
     if (JSON.stringify(current) !== JSON.stringify(status)) project().set({ status });
@@ -280,6 +286,31 @@ export function discard(changes: GitChange[]) {
   });
 }
 
+/** Sale de amend devolviendo el borrador que había antes. */
+function exitAmend() {
+  if (!project().amend) return;
+  project().set({ amend: false, amendBase: null, draft: project().draftBeforeAmend, draftBeforeAmend: "" });
+}
+
+/**
+ * Activar amend carga el mensaje del último commit para editarlo (lo que
+ * hubiera escrito se guarda y vuelve al desactivarlo).
+ */
+export async function setAmend(on: boolean) {
+  const { repo, amend } = project();
+  if (!repo || on === amend) return;
+  if (!on) {
+    exitAmend();
+    return;
+  }
+  try {
+    const last = await gitApi.lastCommit(repo.root);
+    project().set({ amend: true, amendBase: last, draftBeforeAmend: project().draft, draft: last.message });
+  } catch (err) {
+    toast(errorText(err), "error");
+  }
+}
+
 export async function generateCommitMessage() {
   const root = project().repo?.root;
   if (!root) return;
@@ -287,19 +318,37 @@ export async function generateCommitMessage() {
   if (message) project().set({ draft: message });
 }
 
+async function runCommit(root: string, message: string, amend: boolean) {
+  const result = await withBusy("commit", () => gitApi.commit(root, message, amend));
+  if (result) {
+    project().set({ draft: "", amend: false, amendBase: null, draftBeforeAmend: "", logHead: null });
+    toast(`${amend ? "Commit enmendado" : "Commit"} ${result.sha}: ${result.summary}`);
+    if (project().tab === "history") void loadLog(true);
+  }
+}
+
 export async function commit() {
-  const { repo, draft, amend, status } = project();
+  const { repo, draft, amend, amendBase, status } = project();
   if (!repo) return;
   if (!amend && !status?.changes.some(isStaged)) {
     toast("No hay cambios preparados: prepara archivos antes de hacer commit.", "error");
     return;
   }
-  const result = await withBusy("commit", () => gitApi.commit(repo.root, draft, amend));
-  if (result) {
-    project().set({ draft: "", amend: false, logHead: null });
-    toast(`Commit ${result.sha}: ${result.summary}`);
-    if (project().tab === "history") void loadLog(true);
+  const published = amend ? (amendBase?.publishedIn ?? []) : [];
+  if (!published.length) {
+    await runCommit(repo.root, draft, amend);
+    return;
   }
+  // Reescribir algo que otros pueden tener: solo con confirmación explícita.
+  useUiStore.getState().askConfirm({
+    title: `¿Enmendar un commit ya publicado?`,
+    body:
+      `${amendBase?.short} ya está en ${published.join(", ")}. Enmendarlo reescribe historial compartido: ` +
+      "el push normal será rechazado y tendrás que forzarlo (git push --force-with-lease). " +
+      "Si alguien ya trabajó sobre ese commit, le romperás la rama.",
+    confirmLabel: "Enmendar igualmente",
+    onConfirm: () => void runCommit(repo.root, draft, true),
+  });
 }
 
 export async function push() {

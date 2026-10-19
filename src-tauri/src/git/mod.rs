@@ -473,8 +473,70 @@ pub(crate) fn push(root: &Path) -> Result<String, String> {
     if out.success() {
         Ok(out.stderr_str()) // git reports progress on stderr
     } else {
-        Err(error_message(&out))
+        Err(explain_push_error(&error_message(&out)))
     }
+}
+
+/// git's rejection text says *what* happened; this adds *what to do*.
+fn explain_push_error(raw: &str) -> String {
+    let hint = if raw.contains("fetch first") {
+        Some("El remoto tiene commits que no tienes: haz Pull primero.")
+    } else if raw.contains("non-fast-forward") || raw.contains("[rejected]") {
+        Some(
+            "Tu rama y la del remoto divergieron (p. ej. enmendaste o rebaseaste un commit ya publicado). \
+             Si es intencional, fuerza desde la terminal: git push --force-with-lease",
+        )
+    } else {
+        None
+    };
+    match hint {
+        Some(hint) => format!("{hint}\n\n{raw}"),
+        None => raw.to_owned(),
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LastCommit {
+    pub sha: String,
+    pub short: String,
+    pub message: String,
+    /// Remote branches that already contain it: non-empty = published.
+    pub published_in: Vec<String>,
+}
+
+fn last_commit(root: &Path) -> Result<LastCommit, String> {
+    let raw = git(root, &["log", "-1", "--format=%H%x1f%h%x1f%B"])
+        .map_err(|_| "Todavía no hay commits que enmendar.".to_owned())?;
+    let mut fields = raw.splitn(3, '\u{1f}');
+    let sha = fields.next().unwrap_or_default().trim().to_owned();
+    let short = fields.next().unwrap_or_default().trim().to_owned();
+    let message = fields.next().unwrap_or_default().trim().to_owned();
+    if sha.is_empty() {
+        return Err("Todavía no hay commits que enmendar.".into());
+    }
+    let published_in = git(
+        root,
+        &["branch", "-r", "--contains", "HEAD", "--format=%(refname)"],
+    )
+    .unwrap_or_default()
+    .lines()
+    .map(str::trim)
+    .filter(|r| !r.is_empty() && !r.ends_with("/HEAD"))
+    .map(|r| r.trim_start_matches("refs/remotes/").to_owned())
+    .collect();
+    Ok(LastCommit {
+        sha,
+        short,
+        message,
+        published_in,
+    })
+}
+
+/// The commit an amend would replace, and whether others may already have it.
+#[tauri::command]
+pub async fn git_last_commit(root: String) -> Result<LastCommit, String> {
+    blocking(move || last_commit(&checked_root(&root)?)).await
 }
 
 #[tauri::command]
@@ -759,6 +821,75 @@ mod tests {
         assert!(checked_paths(&["".into()]).is_err());
         assert!(!valid_rev("HEAD; rm -rf"));
         assert!(valid_rev("2fcfd1c"));
+    }
+
+    #[test]
+    fn last_commit_knows_whether_it_is_published() {
+        let base = std::env::temp_dir().join(format!("termcode-amend-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (origin, work) = (base.join("origin.git"), base.join("work"));
+        std::fs::create_dir_all(&origin).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        git(&origin, &["init", "-q", "--bare", "-b", "main"]).unwrap();
+        git(&work, &["init", "-q", "-b", "main"]).unwrap();
+        git(&work, &["config", "user.name", "t"]).unwrap();
+        git(&work, &["config", "user.email", "t@t"]).unwrap();
+        git(
+            &work,
+            &["remote", "add", "origin", &origin.to_string_lossy()],
+        )
+        .unwrap();
+
+        assert!(last_commit(&work).is_err(), "no commits yet");
+
+        git(
+            &work,
+            &[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "Primero\n\nCon cuerpo",
+            ],
+        )
+        .unwrap();
+        let local = last_commit(&work).unwrap();
+        assert_eq!(local.message, "Primero\n\nCon cuerpo");
+        assert!(local.published_in.is_empty());
+
+        push(&work).unwrap();
+        assert_eq!(
+            last_commit(&work).unwrap().published_in,
+            vec!["origin/main"]
+        );
+
+        git(&work, &["commit", "-q", "--allow-empty", "-m", "Segundo"]).unwrap();
+        assert!(
+            last_commit(&work).unwrap().published_in.is_empty(),
+            "new commit is local"
+        );
+
+        // Rewriting a published commit makes the next push diverge.
+        git(&work, &["reset", "-q", "--hard", "HEAD~1"]).unwrap();
+        git(
+            &work,
+            &[
+                "commit",
+                "-q",
+                "--amend",
+                "--allow-empty",
+                "-m",
+                "Primero (enmendado)",
+            ],
+        )
+        .unwrap();
+        let err = push(&work).unwrap_err();
+        assert!(
+            err.starts_with("Tu rama y la del remoto divergieron"),
+            "{err}"
+        );
+
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     /// End-to-end against a throwaway repository.

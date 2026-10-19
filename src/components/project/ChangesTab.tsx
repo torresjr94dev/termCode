@@ -18,6 +18,7 @@ import {
   commit,
   discard,
   generateCommitMessage,
+  setAmend,
   openDiff,
   openExternal,
   pull,
@@ -187,8 +188,11 @@ const RowAction: React.FC<{ icon: typeof Plus; label: string; onClick: () => voi
 const CommitBox: React.FC<{ stagedCount: number }> = ({ stagedCount }) => {
   const draft = useProjectStore((s) => s.draft);
   const amend = useProjectStore((s) => s.amend);
+  const amendBase = useProjectStore((s) => s.amendBase);
+  const hasCommits = useProjectStore((s) => Boolean(s.status?.head));
   const busy = useProjectStore((s) => s.busy);
   const set = useProjectStore((s) => s.set);
+  const published = amendBase?.publishedIn ?? [];
 
   const canCommit = Boolean(draft.trim()) && (stagedCount > 0 || amend) && !busy;
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -220,9 +224,27 @@ const CommitBox: React.FC<{ stagedCount: number }> = ({ stagedCount }) => {
         }}
         rows={3}
         spellCheck={false}
-        placeholder={stagedCount ? "Mensaje de commit" : "Prepara archivos (+) para hacer commit"}
+        placeholder={
+          amend ? "Mensaje del commit enmendado" : stagedCount ? "Mensaje de commit" : "Prepara archivos (+) para hacer commit"
+        }
         className="w-full select-text resize-none rounded-md border border-line bg-canvas px-2.5 py-2 font-mono text-[12px] leading-relaxed text-ink outline-none transition-colors duration-150 placeholder:font-sans placeholder:text-ink-3 focus:border-line-strong"
       />
+      {amend && amendBase && (
+        <p
+          role={published.length ? "alert" : undefined}
+          className={cn("mt-2 text-[11.5px] leading-relaxed", published.length ? "text-signal" : "text-ink-3")}
+        >
+          {published.length ? (
+            <>
+              {amendBase.short} ya está en {published[0]}
+              {published.length > 1 ? ` y ${published.length - 1} más` : ""}: enmendarlo reescribe historial publicado y el
+              push necesitará <code className="whitespace-nowrap font-mono">--force-with-lease</code>.
+            </>
+          ) : (
+            `Reemplaza ${amendBase.short} (aún no publicado). Los archivos preparados se suman a ese commit.`
+          )}
+        </p>
+      )}
       <div className="mt-2 flex items-center gap-2">
         <TextButton
           onClick={() => void generateCommitMessage()}
@@ -232,20 +254,35 @@ const CommitBox: React.FC<{ stagedCount: number }> = ({ stagedCount }) => {
           <Sparkles size={13} strokeWidth={1.75} aria-hidden="true" className={busy === "ai" ? "animate-pulse text-amber" : ""} />
           {busy === "ai" ? "Escribiendo…" : "Mensaje con IA"}
         </TextButton>
-        <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-ink-3 hover:text-ink-2">
+        <label
+          title="Reemplazar el último commit en vez de crear uno nuevo"
+          className={cn(
+            "flex items-center gap-1.5 text-[12px]",
+            hasCommits ? "cursor-pointer text-ink-3 hover:text-ink-2" : "cursor-not-allowed text-ink-3/50",
+          )}
+        >
           <input
             type="checkbox"
             checked={amend}
-            onChange={(e) => set({ amend: e.target.checked })}
+            disabled={!hasCommits || Boolean(busy)}
+            onChange={(e) => void setAmend(e.target.checked)}
             className="size-3.5 accent-[var(--color-amber)]"
           />
           Amend
         </label>
         <span className="flex-1" />
-        <TextButton tone="primary" onClick={() => void commit()} disabled={!canCommit}>
-          {busy === "commit" ? "Haciendo commit…" : (
+        <TextButton
+          tone="primary"
+          onClick={() => void commit()}
+          disabled={!canCommit}
+          className={amend && published.length ? "bg-signal" : undefined}
+        >
+          {busy === "commit" ? (
+            "Guardando…"
+          ) : (
             <>
-              <Check size={13} strokeWidth={2} aria-hidden="true" /> Commit <Kbd className="text-on-amber/70">{shortcut}</Kbd>
+              <Check size={13} strokeWidth={2} aria-hidden="true" /> {amend ? "Enmendar" : "Commit"}{" "}
+              <Kbd className="text-on-amber/70">{shortcut}</Kbd>
             </>
           )}
         </TextButton>

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { CommitDetail, CommitInfo, FilePreview, FsEntry, GitStatus, PrInfo, RepoMeta } from "../lib/git";
+import type { CommitDetail, CommitInfo, FilePreview, FsEntry, GitStatus, LastCommit, PrInfo, RepoMeta } from "../lib/git";
 
 export type ProjectTab = "files" | "changes" | "history";
 
@@ -46,6 +46,10 @@ interface ProjectState {
 
   draft: string;
   amend: boolean;
+  /** Commit que reemplazaría el amend (cargado al activarlo). */
+  amendBase: LastCommit | null;
+  /** Lo que había escrito antes de activar amend: vuelve al desactivarlo. */
+  draftBeforeAmend: string;
   busy: Busy;
   viewer: Viewer | null;
   isPrDialogOpen: boolean;
@@ -74,6 +78,8 @@ export const useProjectStore = create<ProjectState>((set) => ({
   ...initialRepoState,
   draft: "",
   amend: false,
+  amendBase: null,
+  draftBeforeAmend: "",
   busy: null,
   isPrDialogOpen: false,
   set: (patch) => set(patch),

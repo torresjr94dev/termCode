@@ -60,6 +60,14 @@ export interface CommitDetail {
   files: CommitFile[];
 }
 
+export interface LastCommit {
+  sha: string;
+  short: string;
+  message: string;
+  /** Ramas remotas que ya lo contienen: no vacío = publicado. */
+  publishedIn: string[];
+}
+
 export interface PrInfo {
   number: number;
   url: string;
@@ -104,6 +112,7 @@ export const gitApi = {
   discard: (root: string, tracked: string[], untracked: string[]) => call<void>("git_discard", { root, tracked, untracked }),
   commit: (root: string, message: string, amend: boolean) =>
     call<{ sha: string; summary: string }>("git_commit", { root, message, amend }),
+  lastCommit: (root: string) => call<LastCommit>("git_last_commit", { root }),
   push: (root: string) => call<string>("git_push", { root }),
   pull: (root: string) => call<string>("git_pull", { root }),
   log: (root: string, skip: number, limit: number) => call<CommitInfo[]>("git_log", { root, skip, limit }),
