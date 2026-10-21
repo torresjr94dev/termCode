@@ -402,9 +402,19 @@ class TerminalManager {
           const screen = () => term.element?.querySelector<HTMLElement>(".xterm-screen");
           const view: WelcomeView = {
             width: () => screen()?.clientWidth ?? 0,
+            // Se observa el mismo nodo cuyo ancho se lee. `term.onResize` no basta: con el
+            // render en pausa (el panel dejó de verse un instante, p. ej. al dividir), xterm
+            // aplaza el cambio de `.xterm-screen` a una tarea en reposo, y la tarjeta leía el
+            // ancho viejo sin que nada volviera a avisarle.
             onResize: (listener) => {
-              const sub = term.onResize(() => requestAnimationFrame(listener));
-              return () => sub.dispose();
+              const node = screen();
+              if (!node) {
+                const sub = term.onResize(() => requestAnimationFrame(listener));
+                return () => sub.dispose();
+              }
+              const observer = new ResizeObserver(() => listener());
+              observer.observe(node);
+              return () => observer.disconnect();
             },
           };
           let unmount: (() => void) | null = null;
