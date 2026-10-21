@@ -1,6 +1,7 @@
 name: Release
 
-# git tag v0.2.0 && git push --tags → borrador de release con el .dmg universal.
+# git tag v0.2.0 && git push --tags → borrador de release con el .dmg universal
+# y los instaladores de Windows (NSIS .exe y .msi).
 on:
   push:
     tags: ["v*"]
@@ -60,3 +61,47 @@ jobs:
           releaseName: termCode ${{ github.ref_name }}
           releaseDraft: true
           args: --target universal-apple-darwin ${{ steps.updater.outputs.args }}
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: pnpm install --frozen-lockfile
+      - name: Configurar el updater
+        id: updater
+        shell: bash
+        env:
+          PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Firma Authenticode: los certificados nuevos viven en un HSM (regla del
+          # CA/B Forum de 2023), no en un .pfx que quepa en un secreto. Hasta
+          # configurar un firmador (p. ej. Azure Trusted Signing con
+          # bundle.windows.signCommand), el instalador sale sin firmar.
+          echo "::warning::El instalador de Windows sale sin firma Authenticode: SmartScreen avisará al instalarlo."
+          if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBKEY" ]; then
+            echo "::warning::Sin TAURI_SIGNING_PRIVATE_KEY o TAURI_UPDATER_PUBKEY: esta release no se actualizará sola."
+            exit 0
+          fi
+          conf="$(cygpath -m "$RUNNER_TEMP")/updater.conf.json"
+          jq -n --arg pubkey "$PUBKEY" --arg url "https://github.com/$REPO/releases/latest/download/latest.json" \
+            '{bundle: {createUpdaterArtifacts: true}, plugins: {updater: {pubkey: $pubkey, endpoints: [$url]}}}' > "$conf"
+          echo "args=--config $conf" >> "$GITHUB_OUTPUT"
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: termCode ${{ github.ref_name }}
+          releaseDraft: true
+          args: ${{ steps.updater.outputs.args }}

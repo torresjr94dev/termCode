@@ -125,7 +125,7 @@ const TreeRow: React.FC<{ entry: FsEntry; depth: number; marks: ReturnType<typeo
             )}
           />
           <span className={cn("min-w-0 truncate font-mono text-[12px]", entry.isDir && "font-medium")}>{entry.name}</span>
-          {dirChanged && <span aria-label="Contiene cambios" className="size-1.5 shrink-0 rounded-[1px] bg-amber/70" />}
+          {dirChanged && <span aria-label="Contiene cambios" className="size-1.5 shrink-0 rounded-[1px] bg-accent/70" />}
           <span className="flex-1" />
           {letter && <StatusLetter letter={letter} className="mr-1" />}
         </button>
@@ -138,7 +138,7 @@ const TreeRow: React.FC<{ entry: FsEntry; depth: number; marks: ReturnType<typeo
               const abs = absolutePath(entry.path);
               if (abs) pastePath(abs);
             }}
-            className="absolute right-1.5 grid size-6 place-items-center rounded text-ink-3 opacity-0 transition-opacity duration-150 hover:bg-press hover:text-amber focus-visible:opacity-100 group-hover:opacity-100"
+            className="absolute right-1.5 grid size-6 place-items-center rounded text-ink-3 opacity-0 transition-opacity duration-150 hover:bg-press hover:text-accent focus-visible:opacity-100 group-hover:opacity-100"
           >
             <CornerDownLeft size={12} strokeWidth={1.75} aria-hidden="true" />
           </button>

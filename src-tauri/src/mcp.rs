@@ -2,25 +2,28 @@
 //! error in the dev-server pane") through two read-only tools.
 //!
 //! * The app keeps the last 256 KB of output of every pane (ANSI stripped on
-//!   read) and answers on a Unix socket (`<state>/mcp.sock`, mode 0600).
+//!   read) and answers on the local channel (`local_ipc`: a 0600 Unix socket,
+//!   or an owner-only named pipe on Windows).
 //! * `termcode --mcp` is the stdio MCP server Claude Code spawns (via the
-//!   `--mcp-config` termCode passes); it forwards each tool call to the socket.
+//!   `--mcp-config` termCode passes); it forwards each tool call to the app.
 //!
 //! Nothing can be written to a pane through here.
 
-use crate::agents::{ENV_PANE, state_dir};
+use crate::agents::ENV_PANE;
+use crate::local_ipc::{self, Peer};
 use parking_lot::Mutex;
 use pty_core::{PtyManager, SessionId};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
-use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::io::{BufRead, Write};
 use std::sync::LazyLock;
 use tauri::{AppHandle, Manager};
 
 const BUFFER_BYTES: usize = 256 * 1024;
 const MAX_LINES: usize = 500;
 const PROTOCOL_VERSION: &str = "2025-06-18";
+/// Las herramientas de lectura contestan al momento.
+const QUICK: std::time::Duration = std::time::Duration::from_secs(5);
 
 struct PaneOutput {
     session: SessionId,
@@ -117,12 +120,8 @@ fn last_lines(text: &str, n: usize) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// App side: Unix socket
+// App side: local channel
 // ---------------------------------------------------------------------------
-
-fn socket_path() -> PathBuf {
-    state_dir().join("mcp.sock")
-}
 
 fn answer(app: &AppHandle, request: &Value) -> Value {
     let pty = app.state::<PtyManager>();
@@ -188,60 +187,25 @@ fn contiguous(bytes: &VecDeque<u8>) -> Vec<u8> {
     [a, b].concat()
 }
 
-#[cfg(unix)]
+/// Atiende al MCP de lectura y a la bandeja de aprobaciones por el canal local.
 pub fn spawn_socket(app: AppHandle) {
-    use std::os::unix::fs::PermissionsExt;
-    use std::os::unix::net::UnixListener;
-
-    let path = socket_path();
-    let _ = std::fs::remove_file(&path); // de una ejecución anterior
-    let listener = match UnixListener::bind(&path) {
-        Ok(l) => l,
-        Err(e) => {
-            log::warn!("mcp: no se pudo abrir {}: {e}", path.display());
-            return;
+    local_ipc::serve(move |request: Value, peer: &dyn Peer| {
+        // Un permiso espera tu decisión; lo demás se contesta al momento.
+        if request.get("op").and_then(Value::as_str) == Some("permission") {
+            crate::approvals::serve(&app, &request, peer)
+        } else {
+            answer(&app, &request)
         }
-    };
-    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    std::thread::Builder::new()
-        .name("mcp-socket".into())
-        .spawn(move || {
-            for stream in listener.incoming().flatten() {
-                let app = app.clone();
-                std::thread::spawn(move || {
-                    let mut reader = BufReader::new(&stream);
-                    let mut line = String::new();
-                    if reader.read_line(&mut line).is_err() {
-                        return;
-                    }
-                    let request: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
-                    let response = answer(&app, &request);
-                    let mut writer = &stream;
-                    let _ = writeln!(writer, "{response}");
-                });
-            }
-        })
-        .ok();
+    });
 }
 
 // ---------------------------------------------------------------------------
 // CLI side: `termcode --mcp` (stdio MCP server spawned by the agent)
 // ---------------------------------------------------------------------------
 
-#[cfg(unix)]
-fn ask_app(request: &Value) -> Result<Value, String> {
-    use std::io::Read;
-    use std::os::unix::net::UnixStream;
-    let mut stream = UnixStream::connect(socket_path())
-        .map_err(|_| "termCode no está abierto (no hay a quién preguntar).".to_owned())?;
-    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
-    writeln!(stream, "{request}").map_err(|e| e.to_string())?;
-    let mut out = String::new();
-    stream
-        .take(4 * 1024 * 1024)
-        .read_to_string(&mut out)
-        .map_err(|e| e.to_string())?;
-    serde_json::from_str(out.trim()).map_err(|e| e.to_string())
+/// Del lado del auxiliar (`termcode --mcp`, hooks): una petición a la app.
+pub(crate) fn ask_app(request: &Value, timeout: std::time::Duration) -> Result<Value, String> {
+    local_ipc::request(request, timeout)
 }
 
 fn tools() -> Value {
@@ -268,11 +232,10 @@ fn tools() -> Value {
     ])
 }
 
-#[cfg(unix)]
 fn call_tool(name: &str, args: &Value) -> (String, bool) {
     let own = std::env::var(ENV_PANE).ok();
     let result = match name {
-        "list_panes" => ask_app(&json!({ "op": "list" })).map(|v| {
+        "list_panes" => ask_app(&json!({ "op": "list" }), QUICK).map(|v| {
             let panes = v["panes"].as_array().cloned().unwrap_or_default();
             if panes.is_empty() {
                 return "No hay paneles abiertos.".to_owned();
@@ -294,7 +257,7 @@ fn call_tool(name: &str, args: &Value) -> (String, bool) {
                 .collect::<Vec<_>>()
                 .join("\n")
         }),
-        "read_pane" => ask_app(&json!({ "op": "read", "pane": args.get("pane"), "lines": args.get("lines") })).and_then(|v| {
+        "read_pane" => ask_app(&json!({ "op": "read", "pane": args.get("pane"), "lines": args.get("lines") }), QUICK).and_then(|v| {
             if let Some(err) = v.get("error").and_then(Value::as_str) {
                 return Err(err.to_owned());
             }
@@ -314,7 +277,6 @@ fn call_tool(name: &str, args: &Value) -> (String, bool) {
 }
 
 /// Minimal JSON-RPC 2.0 over stdio, one message per line (MCP stdio transport).
-#[cfg(unix)]
 pub fn stdio_server() -> i32 {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();

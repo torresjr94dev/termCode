@@ -6,7 +6,8 @@ import { openFile, openInEditor, projectFiles, projectRoot } from "../lib/projec
 import { fuzzyFilter } from "../lib/fuzzy";
 import { cn } from "../lib/layout";
 import { IS_MAC } from "../lib/shortcuts";
-import { Kbd } from "./ui";
+import { Kbd, PromptCaret, PromptCursor } from "./ui";
+import { basename } from "../lib/paths";
 
 const LIMIT = 60;
 
@@ -26,7 +27,7 @@ const Highlighted: React.FC<{ text: string; positions: Set<number>; offset: numb
   <span className={className}>
     {Array.from(text, (ch, i) =>
       positions.has(i + offset) ? (
-        <b key={i} className="font-semibold text-amber">
+        <b key={i} className="font-semibold text-accent">
           {ch}
         </b>
       ) : (
@@ -96,7 +97,7 @@ const FinderPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
         role="dialog"
         aria-modal="true"
         aria-label="Buscar archivo"
-        className="flex max-h-[70vh] w-full max-w-[640px] animate-pop-in flex-col overflow-hidden rounded-lg border border-line-strong bg-raised shadow-[0_24px_64px_-12px_rgb(0_0_0/0.7)]"
+        className="flex max-h-[70vh] w-full max-w-[640px] animate-pop-in flex-col overflow-hidden rounded-lg border border-[var(--glass-border)] glass"
       >
         <div className="flex items-center gap-2.5 border-b border-line px-3.5">
           <Search size={15} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-ink-3" />
@@ -126,14 +127,15 @@ const FinderPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
             aria-expanded="true"
             aria-controls="finder-results"
             aria-activedescendant={results[selected] ? `finder-${selected}` : undefined}
-            placeholder={root ? `Buscar en ${root.split("/").pop()}…` : "Abre una carpeta en la terminal"}
+            placeholder={root ? `Buscar en ${basename(root)}…` : "Abre una carpeta en la terminal"}
             spellCheck={false}
             className="h-12 min-w-0 flex-1 bg-transparent font-mono text-[13.5px] text-ink outline-none placeholder:font-sans placeholder:text-ink-3"
           />
           {files && <span className="shrink-0 font-mono text-[11px] tabular-nums text-ink-3">{files.length.toLocaleString("es-MX")}</span>}
         </div>
 
-        <ul ref={listRef} id="finder-results" role="listbox" aria-label="Archivos" className="min-h-0 flex-1 overflow-y-auto py-1.5">
+        <ul ref={listRef} id="finder-results" role="listbox" aria-label="Archivos" className="relative min-h-0 flex-1 overflow-y-auto py-1.5">
+          {results.length > 0 && <PromptCursor as="li" index={selected} layoutKey={results} />}
           {error && <li className="px-4 py-6 text-[12.5px] text-signal">{error}</li>}
           {!error && !files && <li className="px-4 py-6 text-[12.5px] text-ink-3">Indexando archivos…</li>}
           {files && !results.length && <li className="px-4 py-6 text-[12.5px] text-ink-3">Ningún archivo coincide.</li>}
@@ -152,12 +154,15 @@ const FinderPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
                 onMouseMove={() => i !== selected && setCursor(i)}
                 onClick={(e) => pick(r.item, e.metaKey || e.ctrlKey)}
                 className={cn(
-                  "mx-1.5 flex h-8 cursor-pointer items-center gap-2.5 rounded-md px-2.5",
-                  i === selected ? "bg-press text-ink" : "text-ink-2",
+                  "relative mx-1.5 flex h-8 cursor-pointer items-center gap-2.5 rounded-md pl-7 pr-2.5 transition-colors duration-150",
+                  i === selected ? "text-ink" : "text-ink-2",
                 )}
               >
-                <FileText size={13} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-ink-3" />
-                <Highlighted text={name} positions={positions} offset={slash + 1} className="shrink-0 font-mono text-[12.5px]" />
+                <FileText size={13} strokeWidth={1.75} aria-hidden="true" className={cn("shrink-0", i === selected ? "text-accent" : "text-ink-3")} />
+                <span className="prompt-slot shrink-0 text-[12.5px]">
+                  <Highlighted text={name} positions={positions} offset={slash + 1} className="font-mono text-[12.5px]" />
+                  {i === selected && <PromptCaret />}
+                </span>
                 <Highlighted text={dir} positions={positions} offset={0} className="min-w-0 truncate font-mono text-[11.5px] text-ink-3" />
               </li>
             );

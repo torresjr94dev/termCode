@@ -292,6 +292,20 @@ const CONFLICT = [
   "",
 ].join("\n");
 
+const SESSION = "0b6f2a43-1c1e-4e57-9d0e-6b8f1c2d3e4f";
+
+const REVIEW_DIFF = [
+  "diff --git a/src/pagina.ts b/src/pagina.ts",
+  "index 1111111..2222222 100644",
+  "--- a/src/pagina.ts",
+  "+++ b/src/pagina.ts",
+  "@@ -1,2 +1,2 @@",
+  " const a = 1;",
+  "-export const PAGE = 25;",
+  "+export const PAGE = 50;",
+  "",
+].join("\n");
+
 const TESTS = [
   {
     name: "bienvenida-primera-vez",
@@ -307,8 +321,33 @@ const TESTS = [
     async run(p) {
       await p.shortcut("palette");
       await p.waitFor(`document.activeElement?.tagName === "INPUT"`, "la paleta enfoca su buscador");
+      // Un solo cursor, sobre la opción activa, y que la sigue con las flechas.
+      const cursorOnActive = `(() => {
+        const cursor = document.querySelector(".prompt-cursor");
+        const active = document.querySelector('[role="option"][aria-selected="true"]');
+        if (!cursor || !active) return false;
+        const [a, c] = [active.getBoundingClientRect(), cursor.getBoundingClientRect()];
+        return Math.abs(a.top - c.top) < 1 && Math.abs(a.height - c.height) < 1 && document.querySelectorAll(".prompt-caret").length === 1;
+      })()`;
+      await p.waitFor(cursorOnActive, "el cursor está en la primera opción");
+      await new Promise((r) => setTimeout(r, 250));
+      await p.screenshot("paleta-cursor");
+      await p.press("ArrowDown");
+      await p.press("ArrowDown");
+      await p.waitFor(cursorOnActive, "el cursor sigue a la opción activa");
+      await p.run(`(await mod("/src/store/settingsStore.ts")).useSettingsStore.getState().update({ theme: "papel" });`);
+      await p.waitFor(`document.documentElement.dataset.theme === "papel"`, "tema claro");
+      await new Promise((r) => setTimeout(r, 250));
+      await p.screenshot("paleta-cursor-papel");
+      await p.run(`(await mod("/src/store/settingsStore.ts")).useSettingsStore.getState().update({ theme: "neon" });`);
       await p.type("dividir");
       await p.waitFor(`[...document.querySelectorAll('[role="option"]')].some((o) => o.textContent.includes("Dividir"))`, "aparece «Dividir»");
+      await p.waitFor(cursorOnActive, "al filtrar, el cursor vuelve a la opción activa");
+      await p.press("ArrowDown");
+      await p.press("ArrowDown");
+      await p.waitFor(cursorOnActive, "el cursor llega a una opción con pista");
+      await new Promise((r) => setTimeout(r, 250));
+      await p.screenshot("paleta-cursor-pista");
       await p.press("Escape");
       await p.waitFor(`!document.querySelector('[role="option"]')`, "Esc cierra la paleta");
     },
@@ -346,6 +385,14 @@ const TESTS = [
       await p.waitFor(`document.querySelectorAll('#finder-results [role="option"]').length === 4`, "lista los archivos");
       await p.type("tm");
       await p.waitFor(`document.querySelector('#finder-results [role="option"]')?.textContent.includes("TerminalManager")`, "«tm» pone TerminalManager primero");
+      await p.press("ArrowDown");
+      await p.waitFor(`(() => {
+        const cursor = document.querySelector("#finder-results .prompt-cursor");
+        const active = document.querySelector('#finder-results [aria-selected="true"]');
+        return cursor && active && Math.abs(cursor.getBoundingClientRect().top - active.getBoundingClientRect().top) < 1;
+      })()`, "el cursor sigue al archivo activo");
+      await new Promise((r) => setTimeout(r, 250));
+      await p.screenshot("buscador-cursor");
       await p.press("Escape");
       await p.waitFor(`!document.querySelector("#finder-results")`, "Esc cierra el buscador");
     },
@@ -464,6 +511,186 @@ const TESTS = [
       await p.waitFor(`document.body.textContent.includes("No hay agentes abiertos.")`, "estado vacío de agentes");
       await p.press("Escape");
       await p.waitFor(`!document.querySelector('[aria-label="Mission Control de agentes"]')`, "Esc lo cierra");
+    },
+  },
+  // Desde aquí hay agentes abiertos: las pruebas que necesitan cero agentes van antes.
+  {
+    name: "reanudar-agente",
+    async run(p) {
+      await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const pane = { id: "pane-resume", type: "pane", terminalId: "term-resume", title: "app", cwd: "/repo-e2e",
+          resumable: { agent: "claude", sessionId: "${SESSION}", title: "Claude Code", prompt: "Agrega paginación", at: Date.now() - 2 * 3600e3 } };
+        const tab = { id: "tab-resume", title: "Terminal", activePaneId: pane.id, root: pane };
+        useTerminalStore.setState((s) => ({
+          tabs: [...s.tabs, tab],
+          activeTabId: tab.id,
+          agents: { claude: "/bin/claude", codex: null, gh: null, editors: [], claudeSettingsPath: "/s/claude-settings.json", mcpConfigPath: null },
+        }));`);
+      await p.waitFor(`document.querySelector('[data-pane-id="pane-resume"] [role="status"]')?.textContent.includes("«Agrega paginación»")`, "el panel restaurado ofrece reanudar");
+      await p.waitFor(`document.querySelector('[data-pane-id="pane-resume"]').textContent.includes("hace 2 h")`, "dice hace cuánto");
+      // Lo que importa es con qué se arranca el terminal (antes el store decía "claude" y se lanzaba una shell).
+      await p.run(`
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        window.__spawned = [];
+        const attach = terminalManager.attach.bind(terminalManager);
+        terminalManager.attach = (id, el, spec) => { window.__spawned.push({ id, command: spec.command ?? null }); return attach(id, el, spec); };`);
+      await p.click('[data-pane-id="pane-resume"] button', "Reanudar conversación");
+      const spawned = await p.waitFor(`window.__spawned.find((s) => s.id !== "pane-resume")`, "el panel nuevo se monta");
+      if (spawned.command !== `claude --settings '/s/claude-settings.json' --resume '${SESSION}'`) throw new Error(`Se arrancó con: ${spawned.command}`);
+      const resumed = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { collectPanes } = await mod("/src/lib/layout.ts");
+        for (let i = 0; i < 50; i++) {
+          const pane = useTerminalStore.getState().tabs.flatMap((t) => collectPanes(t.root)).find((p) => p.agentType === "claude");
+          if (pane) return pane.command;
+          await new Promise((r) => setTimeout(r, 40));
+        }
+        return null;`);
+      if (resumed !== `claude --settings '/s/claude-settings.json' --resume '${SESSION}'`) throw new Error(`Comando inesperado: ${resumed}`);
+      await p.waitFor(`!document.querySelector('[data-pane-id="pane-resume"]')`, "el panel de shell se reemplazó por el agente");
+    },
+  },
+  {
+    name: "bandeja-permisos",
+    async run(p) {
+      await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { useApprovalStore } = await mod("/src/store/approvalStore.ts");
+        const { collectPanes } = await mod("/src/lib/layout.ts");
+        const { ipc } = await mod("/src/lib/ipc.ts");
+        const agent = useTerminalStore.getState().tabs.flatMap((t) => collectPanes(t.root)).find((p) => p.agentType === "claude");
+        window.__decisions = [];
+        ipc.approvalDecide = async (id, decision, message) => { window.__decisions.push({ id, decision, message }); };
+        // Estás en otra pestaña: la pregunta llega a la bandeja, no al panel.
+        await (await mod("/src/lib/actions.ts")).actions.newTab();
+        // La terminal nueva toma el foco en un frame: se espera a que lo tenga.
+        const activePane = () => { const s = useTerminalStore.getState(); return s.tabs.find((t) => t.id === s.activeTabId)?.activePaneId; };
+        const focusedPane = () => document.activeElement?.closest("[data-pane-id]")?.dataset.paneId;
+        for (let i = 0; i < 75 && focusedPane() !== activePane(); i++) await new Promise((r) => setTimeout(r, 40));
+        if (focusedPane() !== activePane()) throw new Error("la terminal nueva nunca tomó el foco");
+        window.__focusBefore = document.activeElement;
+        useApprovalStore.getState().add({ id: "ap-e2e", paneId: agent.id, tool: "Bash", input: { command: "pnpm add zod", description: "Instala zod" }, cwd: "/repo-e2e", at: Date.now(), expiresAt: Date.now() + 90000 });`);
+      await p.waitFor(`document.querySelector('[aria-label="Permisos pendientes"]')?.textContent.includes("pnpm add zod")`, "la bandeja muestra el comando completo");
+      await p.waitFor(`document.activeElement === window.__focusBefore`, "la bandeja no roba el foco");
+      await p.waitFor(`[...document.querySelectorAll("footer button")].some((b) => b.textContent.includes("1 te necesita"))`, "la barra de estado cuenta al agente bloqueado");
+      await p.click('[aria-label="Permisos pendientes"] button', "Denegar…");
+      await p.waitFor(`document.activeElement?.getAttribute("aria-label") === "Motivo de la negativa"`, "pide el motivo");
+      await p.type("usa npm no, pnpm sí");
+      // CDP manda rawKeyDown sin «char»: Chrome no hace el envío implícito del formulario con Enter.
+      await p.click('[aria-label="Permisos pendientes"] form button[type="submit"]');
+      const decision = await p.waitFor(`window.__decisions[0]`, "la decisión llega al backend");
+      if (decision.decision !== "deny" || decision.message !== "usa npm no, pnpm sí") throw new Error(`Decisión inesperada: ${JSON.stringify(decision)}`);
+      await p.waitFor(`!document.querySelector('[aria-label="Permisos pendientes"]')`, "la bandeja se vacía");
+    },
+  },
+  {
+    name: "al-que-te-necesita",
+    async run(p) {
+      const agentPane = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { collectPanes } = await mod("/src/lib/layout.ts");
+        const agent = useTerminalStore.getState().tabs.flatMap((t) => collectPanes(t.root)).find((p) => p.agentType === "claude");
+        useTerminalStore.getState().setAttention(agent.id, { kind: "needs-input", message: "", at: Date.now() });
+        return agent.id;`);
+      await p.shortcut("nextAttention");
+      const active = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const activePane = () => { const s = useTerminalStore.getState(); return s.tabs.find((t) => t.id === s.activeTabId)?.activePaneId; };
+        for (let i = 0; i < 50 && activePane() !== ${JSON.stringify(agentPane)}; i++) await new Promise((r) => setTimeout(r, 40));
+        return activePane();`);
+      if (active !== agentPane) throw new Error(`⌘J no llevó al agente (activo: ${active})`);
+      const cleared = await p.run(`return !((await mod("/src/store/terminalStore.ts")).useTerminalStore.getState().attention[${JSON.stringify(agentPane)}]);`);
+      if (!cleared) throw new Error("La marca de atención debió quitarse al llegar");
+    },
+  },
+  {
+    name: "revision-al-agente",
+    async run(p) {
+      await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { useProjectStore } = await mod("/src/store/projectStore.ts");
+        const { collectPanes } = await mod("/src/lib/layout.ts");
+        const { gitApi } = await mod("/src/lib/git.ts");
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        const project = await mod("/src/lib/project.ts");
+        const agent = useTerminalStore.getState().tabs.flatMap((t) => collectPanes(t.root)).find((p) => p.agentType === "claude");
+        window.__agent = agent.id;
+        window.__pasted = null;
+        terminalManager.paste = (id, text) => { window.__pasted = { id, text }; };
+        gitApi.reviewDiff = async () => ({ text: ${JSON.stringify(REVIEW_DIFF)}, truncated: false });
+        useProjectStore.setState({ repo: { root: "/repo-e2e", name: "repo", remoteUrl: null, webUrl: null, host: "other", defaultBranch: "main" } });
+        await project.openDiff({ kind: "review", base: "abc123", path: "src/pagina.ts", origPath: null, created: false, root: "/repo-e2e", label: "desde tu último mensaje", paneId: agent.id });`);
+      await p.waitFor(`document.querySelector('[data-viewer] button[aria-label="Comentar la línea 2"]')`, "cada línea se puede comentar");
+      await p.click('[data-viewer] button[aria-label="Comentar la línea 2"]');
+      await p.waitFor(`document.activeElement?.getAttribute("aria-label") === "Comentario para el agente"`, "se abre el campo del comentario");
+      await p.type("Usa la constante de config.");
+      await p.pressMod("Enter");
+      await p.waitFor(`[...document.querySelectorAll("[data-viewer] button")].some((b) => b.textContent.includes("Enviar revisión (1)"))`, "el comentario queda pendiente");
+      await p.click("[data-viewer] button", "Enviar revisión (1)");
+      const pasted = await p.waitFor(`window.__pasted`, "la revisión se pega en el agente");
+      const agent = await p.evaluate(`window.__agent`);
+      const expected = "Revisé tus cambios. Atiende este comentario:\n\n1. src/pagina.ts:2\n   > export const PAGE = 50;\n   Usa la constante de config.\n";
+      if (pasted.id !== agent || pasted.text !== expected) throw new Error(`Pegado inesperado: ${JSON.stringify(pasted)}`);
+      await p.waitFor(`!document.querySelector("[data-viewer]")`, "el visor se cierra para que mandes el mensaje");
+    },
+  },
+  {
+    name: "bienvenida-pestana",
+    async run(p) {
+      await p.shortcut("newTab");
+      const activeCard = `(() => { const pane = document.querySelector('[data-pane-id] .xterm:not([hidden])') && [...document.querySelectorAll("[data-pane-id]")].find((el) => el.offsetParent !== null && el.querySelector(".welcome-card")); return pane?.querySelector(".welcome-card") ?? null; })()`;
+      await p.waitFor(activeCard, "la pestaña nueva muestra la tarjeta de bienvenida", 6000);
+      const text = await p.evaluate(`${activeCard}.textContent`);
+      if (!text.includes("termCode") || !text.includes("by CODERGENIUS MX") || !text.includes("Comandos")) throw new Error(`Tarjeta incompleta: ${text}`);
+      // Las líneas reservadas van vacías: la shell no ve nada y copiar no arrastra arte.
+      const blank = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        const s = useTerminalStore.getState();
+        const id = s.tabs.find((t) => t.id === s.activeTabId)?.activePaneId;
+        return terminalManager.snapshot(id, 12).every((l) => !l.trim());`);
+      if (!blank) throw new Error("Las líneas de la tarjeta deberían estar en blanco");
+      await p.screenshot("bienvenida-pestana");
+
+      // Dividir no deforma la tarjeta (se reacomoda) y el panel nuevo trae la suya.
+      const widthBefore = await p.evaluate(`${activeCard}.getBoundingClientRect().width`);
+      await p.shortcut("splitRight");
+      await p.waitFor(`[...document.querySelectorAll(".welcome-card")].filter((c) => c.offsetParent !== null).length === 2`, "el panel nuevo también da la bienvenida", 6000);
+      const after = await p.evaluate(`(() => {
+        const cards = [...document.querySelectorAll(".welcome-card")].filter((c) => c.offsetParent !== null);
+        return { widths: cards.map((c) => c.getBoundingClientRect().width), text: cards.map((c) => c.textContent).join("|") };
+      })()`);
+      if (!after.widths.every((w) => w < widthBefore) || !after.text.includes("termCode")) throw new Error(`Las tarjetas no se reacomodaron: ${JSON.stringify({ widthBefore, after })}`);
+      await p.screenshot("bienvenida-dividida");
+
+      // `clear` (lo que emite el comando: ESC[H ESC[2J ESC[3J) vuelve a poner la tarjeta arriba.
+      const cleared = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        const s = useTerminalStore.getState();
+        const id = s.tabs.find((t) => t.id === s.activeTabId)?.activePaneId;
+        const pane = document.querySelector('[data-pane-id="' + id + '"]');
+        const before = pane.querySelector(".welcome-card");
+        terminalManager.receiveForTesting(id, "ls\\r\\nuno dos tres\\r\\n");
+        terminalManager.receiveForTesting(id, "\x1b[H\x1b[2J\x1b[3J% ");
+        for (let i = 0; i < 50; i++) {
+          const now = pane.querySelector(".welcome-card");
+          if (now && now !== before) break;
+          await new Promise((r) => setTimeout(r, 40));
+        }
+        const term = terminalManager.getTerminal(id);
+        return { replaced: pane.querySelector(".welcome-card") !== before && !!pane.querySelector(".welcome-card"), cards: pane.querySelectorAll(".welcome-card").length, promptRow: term.buffer.active.cursorY, top: term.buffer.active.viewportY };
+      `);
+      if (!cleared.replaced || cleared.cards !== 1 || cleared.promptRow < 3) throw new Error(`clear no devolvió la tarjeta: ${JSON.stringify(cleared)}`);
+
+      // Solo colores del tema: en el claro se repinta legible.
+      await p.run(`(await mod("/src/store/settingsStore.ts")).useSettingsStore.getState().update({ theme: "papel" });`);
+      await p.waitFor(`document.documentElement.dataset.theme === "papel"`, "tema claro");
+      await new Promise((r) => setTimeout(r, 150));
+      await p.screenshot("bienvenida-papel");
+      await p.run(`(await mod("/src/store/settingsStore.ts")).useSettingsStore.getState().update({ theme: "fosforo" });`);
+      await p.shortcut("closePane");
     },
   },
 ];

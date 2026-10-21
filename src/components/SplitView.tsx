@@ -21,10 +21,12 @@ export const SplitView: React.FC<SplitViewProps> = ({ node, activePaneId, isRoot
   if (zoomedPaneId) {
     const zoomed = findPane(node, zoomedPaneId);
     // El resto de paneles se desmonta; sus terminales siguen vivos y vuelven intactos.
-    if (zoomed) return <TerminalPane pane={zoomed} isActive isSplit={false} isZoomed />;
+    // `key` = id del panel: si un panel se reemplaza por otro en el mismo sitio (reanudar un
+    // agente), React debe montarlo de cero. Si no, el nuevo heredaría la spec de arranque del viejo.
+    if (zoomed) return <TerminalPane key={zoomed.id} pane={zoomed} isActive isSplit={false} isZoomed />;
   }
   if (node.type === "pane") {
-    return <TerminalPane pane={node} isActive={node.id === activePaneId} isSplit={!isRoot} />;
+    return <TerminalPane key={node.id} pane={node} isActive={node.id === activePaneId} isSplit={!isRoot} />;
   }
   return <SplitContainer node={node} activePaneId={activePaneId} />;
 };

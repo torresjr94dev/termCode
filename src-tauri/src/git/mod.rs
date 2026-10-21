@@ -30,6 +30,11 @@ const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 pub(crate) fn command(root: &Path) -> Command {
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(root);
+    // Tests herméticos: Git para Windows trae `core.autocrlf=true` y reescribiría
+    // con CRLF los archivos que los tests comparan con LF. En uso normal manda
+    // tu configuración.
+    #[cfg(test)]
+    cmd.args(["-c", "core.autocrlf=false"]);
     // Status refreshes must not take index.lock while the user runs git in a pane.
     cmd.env("GIT_OPTIONAL_LOCKS", "0");
     // Never wait for a password prompt nobody can see.
@@ -123,8 +128,20 @@ pub struct RepoMeta {
     pub default_branch: Option<String>,
 }
 
+/// Una ruta que imprimió git, con los separadores del sistema: en Windows git
+/// escribe `C:/Users/…` y la shell, el explorador y el frontend, `C:\Users\…`.
+/// Sin esto, la carpeta de un panel nunca coincidiría con la raíz de su repo.
+pub(crate) fn native_path(raw: &str) -> PathBuf {
+    let raw = raw.trim();
+    if cfg!(windows) {
+        PathBuf::from(raw.replace('/', "\\"))
+    } else {
+        PathBuf::from(raw)
+    }
+}
+
 fn repo_meta(cwd: &Path) -> Option<RepoMeta> {
-    let root = PathBuf::from(git(cwd, &["rev-parse", "--show-toplevel"]).ok()?.trim());
+    let root = native_path(&git(cwd, &["rev-parse", "--show-toplevel"]).ok()?);
     let remote_url = git(&root, &["config", "--get", "remote.origin.url"])
         .ok()
         .map(|u| u.trim().to_owned())

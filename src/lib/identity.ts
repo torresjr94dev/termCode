@@ -9,6 +9,15 @@ import { findPane } from "./layout";
 const SHELLS = /^-?(zsh|bash|fish|sh|dash|ksh|tcsh|nu|pwsh|login|terminal)$/i;
 const USER_AT_HOST = /^[\w.-]+@[\w.-]+/;
 
+/**
+ * Los agentes animan su título con glifos de spinner (`✳ Claude Code`,
+ * `⠂ Claude Code`…): fuera los símbolos iniciales. Además de duplicar el
+ * ícono, cada cuadro de la animación sería un cambio de título distinto.
+ */
+export function cleanTitle(title: string): string {
+  return title.replace(/^[^\p{L}\p{N}~/.[(@]+/u, "").trim() || title.trim();
+}
+
 /** Usuario dueño de la carpeta (`/Users/x/…`, `/home/x/…`). */
 function homeUser(cwd: string | undefined): string | null {
   const m = cwd?.match(/^\/(?:Users|home)\/([^/]+)/);
@@ -23,8 +32,9 @@ export function isGenericTitle(title: string, cwd?: string): boolean {
 
 /** Nombre a mostrar de un panel: el título si dice algo; si no, el proyecto. */
 export function paneDisplayName(pane: PaneNode, project?: PaneProject): string {
-  if (pane.agentType || !project) return pane.title;
-  return isGenericTitle(pane.title, project.cwd) ? project.name : pane.title;
+  const title = cleanTitle(pane.title);
+  if (pane.agentType || !project) return title;
+  return isGenericTitle(title, project.cwd) ? project.name : title;
 }
 
 /** Tonos cálidos (sin cian): definidos en index.css para cada tema. */

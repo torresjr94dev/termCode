@@ -92,17 +92,24 @@ fn default_shell() -> CommandBuilder {
     CommandBuilder::new_default_prog()
 }
 
+/// PowerShell 7 if installed, then Windows PowerShell (`None` = cmd only).
+#[cfg(windows)]
+pub fn powershell() -> Option<&'static str> {
+    ["pwsh.exe", "powershell.exe"]
+        .into_iter()
+        .find(|candidate| which(candidate))
+}
+
 #[cfg(windows)]
 fn default_shell() -> CommandBuilder {
-    // Prefer PowerShell 7, then Windows PowerShell, then cmd.
-    for candidate in ["pwsh.exe", "powershell.exe"] {
-        if which(candidate) {
-            let mut c = CommandBuilder::new(candidate);
+    match powershell() {
+        Some(shell) => {
+            let mut c = CommandBuilder::new(shell);
             c.arg("-NoLogo");
-            return c;
+            c
         }
+        None => CommandBuilder::new_default_prog(),
     }
-    CommandBuilder::new_default_prog()
 }
 
 #[cfg(windows)]

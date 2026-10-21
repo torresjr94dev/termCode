@@ -51,7 +51,7 @@ const ALIASES: Record<string, string> = {
 };
 
 function languageKey(path: string): string | null {
-  const name = path.split("/").pop()?.toLowerCase() ?? "";
+  const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
   if (name === "dockerfile" || name.startsWith("dockerfile.")) return "dockerfile";
   if ([".zshrc", ".bashrc", ".zprofile", ".profile"].includes(name) || name.startsWith(".env")) return "sh";
   const ext = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "";
@@ -79,19 +79,19 @@ const theme = EditorView.theme({
   "&": { height: "100%", backgroundColor: "var(--color-canvas)", color: "var(--color-ink)", fontSize: "12px" },
   "&.cm-focused": { outline: "none" },
   ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "20px" },
-  ".cm-content": { caretColor: "var(--color-amber)", paddingBottom: "40vh" },
-  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--color-amber)", borderLeftWidth: "2px" },
+  ".cm-content": { caretColor: "var(--color-accent)", paddingBottom: "40vh" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--color-accent)", borderLeftWidth: "2px" },
   "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, ::selection": {
-    backgroundColor: "color-mix(in srgb, var(--color-amber) 24%, transparent)",
+    backgroundColor: "color-mix(in srgb, var(--color-accent) 24%, transparent)",
   },
   ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--color-hover) 55%, transparent)" },
   ".cm-gutters": { backgroundColor: "var(--color-canvas)", color: "var(--color-ink-3)", border: "none" },
   ".cm-activeLineGutter": { backgroundColor: "transparent", color: "var(--color-ink-2)" },
   ".cm-lineNumbers .cm-gutterElement": { padding: "0 12px 0 16px", minWidth: "48px" },
-  ".cm-matchingBracket": { backgroundColor: "color-mix(in srgb, var(--color-amber) 22%, transparent)", outline: "none" },
+  ".cm-matchingBracket": { backgroundColor: "color-mix(in srgb, var(--color-accent) 22%, transparent)", outline: "none" },
   ".cm-selectionMatch": { backgroundColor: "color-mix(in srgb, var(--color-ink) 10%, transparent)" },
-  ".cm-searchMatch": { backgroundColor: "color-mix(in srgb, var(--color-amber) 22%, transparent)" },
-  ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "color-mix(in srgb, var(--color-amber) 45%, transparent)" },
+  ".cm-searchMatch": { backgroundColor: "color-mix(in srgb, var(--color-accent) 22%, transparent)" },
+  ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "color-mix(in srgb, var(--color-accent) 45%, transparent)" },
   ".cm-panels": { backgroundColor: "var(--color-chrome)", color: "var(--color-ink-2)", fontFamily: "var(--font-sans)" },
   ".cm-panels.cm-panels-bottom": { borderTop: "1px solid var(--color-line)" },
   ".cm-panel.cm-search": { padding: "6px 10px", fontSize: "12px" },
@@ -109,7 +109,7 @@ const theme = EditorView.theme({
     border: "1px solid var(--color-line)",
     borderRadius: "4px",
   },
-  ".cm-flash-line": { backgroundColor: "color-mix(in srgb, var(--color-amber) 18%, transparent)" },
+  ".cm-flash-line": { backgroundColor: "color-mix(in srgb, var(--color-accent) 18%, transparent)" },
 });
 
 export interface EditorOptions {

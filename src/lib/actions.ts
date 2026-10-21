@@ -4,6 +4,9 @@ import { terminalManager } from "../terminal/TerminalManager";
 import { DEFAULT_SETTINGS, settingsNow, useSettingsStore } from "../store/settingsStore";
 import { basename, collectPanes, findOwnerTab, findPane } from "./layout";
 import { ipc, shellQuote } from "./ipc";
+import { agentCommand, type AgentCommandOptions } from "./resume";
+import { nextAttentionPane } from "./attention";
+import { useApprovalStore } from "../store/approvalStore";
 import type { AgentKind, SplitDirection } from "../types/layout";
 
 export type { AgentKind };
@@ -49,16 +52,23 @@ function agentAvailable(agent: AgentKind): boolean {
   return true;
 }
 
-export function agentSpec(agent: AgentKind, cwd?: string, title?: string, prompt?: string): PaneSpec {
-  const parts = [AGENTS[agent].command];
-  if (agent === "claude") {
-    const { claudeSettingsPath, mcpConfigPath } = state().agents ?? {};
-    // Claude recibe statusLine + hooks (y el MCP de lectura) solo en sesiones lanzadas desde termCode.
-    if (claudeSettingsPath) parts.push("--settings", shellQuote(claudeSettingsPath));
-    if (mcpConfigPath && settingsNow().agentsReadPanes) parts.push("--mcp-config", shellQuote(mcpConfigPath));
-  }
-  if (prompt?.trim()) parts.push("--", shellQuote(prompt.trim()));
-  return { title: title ?? AGENTS[agent].title, agentType: agent, command: parts.join(" "), cwd };
+export function agentSpec(
+  agent: AgentKind,
+  cwd?: string,
+  title?: string,
+  prompt?: string,
+  resume?: AgentCommandOptions["resume"],
+): PaneSpec {
+  const { claudeSettingsPath, mcpConfigPath } = state().agents ?? {};
+  // Claude recibe statusLine + hooks (y el MCP de lectura) solo en sesiones lanzadas desde termCode.
+  // Al reanudar se pasan de nuevo: la sesión no los recuerda.
+  const command = agentCommand(agent, AGENTS[agent].command, shellQuote, {
+    settingsPath: claudeSettingsPath,
+    mcpConfigPath: settingsNow().agentsReadPanes ? mcpConfigPath : null,
+    prompt,
+    resume,
+  });
+  return { title: title ?? AGENTS[agent].title, agentType: agent, command, cwd };
 }
 
 async function split(direction: SplitDirection, spec: PaneSpec = {}) {
@@ -173,6 +183,36 @@ export const actions = {
     }
   },
 
+  /**
+   * El panel restaurado vuelve a ser el agente que era: Claude retoma su
+   * conversación (`--resume <id>`), Codex la última de esa carpeta.
+   */
+  resumeAgent: async (paneId: string) => {
+    const owner = findOwnerTab(state().tabs, paneId);
+    const pane = owner ? findPane(owner.root, paneId) : undefined;
+    const info = pane?.resumable;
+    if (!pane || !info || !agentAvailable(info.agent)) return;
+    const resume = info.sessionId ?? (info.agent === "codex" ? "last" : undefined);
+    const relaunch = () => {
+      const fresh = state().replacePane(paneId, agentSpec(info.agent, pane.cwd, info.title, undefined, resume));
+      if (fresh && owner?.id === state().activeTabId) setTimeout(() => state().setActivePane(fresh), 0);
+    };
+    // La shell restaurada puede tener algo corriendo: no se mata sin preguntar.
+    const busy = await terminalManager.info(paneId);
+    guardQuota(info.agent, () => {
+      if (!busy?.busy) {
+        relaunch();
+        return;
+      }
+      ui().askConfirm({
+        title: `¿Reanudar ${AGENTS[info.agent].title} aquí?`,
+        body: `${busy.foregroundName ?? "Un proceso"} sigue corriendo en este panel y se detendrá.`,
+        confirmLabel: "Reanudar",
+        onConfirm: relaunch,
+      });
+    });
+  },
+
   /** Pega texto en el agente más cercano (primero el de esta pestaña). */
   sendTextToAgent: (text: string) => {
     const { tabs } = state();
@@ -212,6 +252,19 @@ export const actions = {
     if (panes.length < 2) return;
     const index = panes.findIndex((pane) => pane.id === tab.activePaneId);
     state().setActivePane(panes[(index + delta + panes.length) % panes.length].id);
+  },
+
+  /** ⌘J: al panel que te necesita (el bloqueado que más lleva esperando, primero). */
+  focusNextAttention: () => {
+    const { tabs, attention, agentActivity } = state();
+    const target = nextAttentionPane(tabs, attention, agentActivity, activePaneId(), useApprovalStore.getState().requests);
+    if (!target) {
+      ui().showToast("Nadie te necesita ahora.");
+      return;
+    }
+    // Ver el panel es atenderlo: la marca se va al llegar (como al hacer clic).
+    actions.focusPane(target.tabId, target.paneId);
+    state().setAttention(target.paneId, null);
   },
 
   goToTab: (index: number) => {

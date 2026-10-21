@@ -8,7 +8,7 @@ import { cn, collectPanes } from "../lib/layout";
 import { paneDisplayName, projectTone, tabDisplayName } from "../lib/identity";
 import { formatDuration } from "../lib/format";
 import { useNow } from "../lib/useNow";
-import { shortcutLabel } from "../lib/shortcuts";
+import { IS_MAC, shortcutLabel } from "../lib/shortcuts";
 import type { PaneNode, Tab } from "../types/layout";
 import { AgentGlyph, IconButton, Lamp } from "./ui";
 
@@ -104,10 +104,10 @@ const OverviewPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
       role="dialog"
       aria-modal="true"
       aria-label="Todos los paneles"
-      className="fixed inset-0 z-40 flex animate-fade-in flex-col bg-canvas"
+      className="fixed inset-0 z-40 flex animate-fade-in flex-col bg-canvas backdrop-blur-2xl"
     >
-      <div className="flex h-12 shrink-0 items-center gap-3 border-b border-line px-5">
-        <h2 className="text-[14px] font-medium text-ink">Paneles</h2>
+      <div data-tauri-drag-region className={cn("flex h-12 shrink-0 items-center gap-3 border-b border-line pr-5", IS_MAC ? "pl-[88px]" : "pl-5")}>
+        <h2 className="text-[15px] font-semibold text-ink">Paneles</h2>
         <span className="font-mono text-[12px] text-ink-3">
           {entries.length} en {tabs.length} pestaña{tabs.length === 1 ? "" : "s"}
         </span>
@@ -201,11 +201,11 @@ const PaneCard: React.FC<{
       onClick={onGo}
       className={cn(
         "flex flex-col overflow-hidden rounded-lg border bg-raised text-left transition-colors duration-150",
-        selected ? "border-amber/70" : attention ? "border-amber/40" : "border-line hover:border-line-strong",
+        selected ? "border-accent/70" : attention ? "border-accent/40" : "border-line hover:border-line-strong",
       )}
     >
       <span className="flex w-full items-center gap-2 border-b border-line px-3 py-2">
-        <span className={cn("font-mono text-[11px] tabular-nums", current ? "text-amber" : "text-ink-3")}>{entry.tabIndex + 1}</span>
+        <span className={cn("font-mono text-[11px] tabular-nums", current ? "text-accent" : "text-ink-3")}>{entry.tabIndex + 1}</span>
         <AgentGlyph agentType={entry.pane.agentType} className="shrink-0 text-ink-3" />
         <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-ink">{entry.name}</span>
         {attention ? (
@@ -223,7 +223,7 @@ const PaneCard: React.FC<{
           <span
             className={cn(
               "ml-auto flex min-w-0 shrink items-center gap-1",
-              running ? "text-amber" : last?.exitCode === 0 ? "text-ink-3" : "text-del",
+              running ? "text-accent" : last?.exitCode === 0 ? "text-ink-3" : "text-del",
             )}
           >
             <span aria-hidden="true">{running ? "▪" : last?.exitCode === 0 ? "✓" : "✗"}</span>

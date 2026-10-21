@@ -31,7 +31,8 @@ export type ShortcutId =
   | "overview"
   | "missionControl"
   | "fileFinder"
-  | "switchBranch";
+  | "switchBranch"
+  | "nextAttention";
 
 interface Chord {
   /**
@@ -71,10 +72,30 @@ export const SHORTCUTS: Record<ShortcutId, Chord> = {
   missionControl: { key: "a", shift: true },
   fileFinder: { key: "p" },
   switchBranch: { key: "b", shift: true },
+  nextAttention: { key: "j" },
 };
 
 export const IS_MAC =
   typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
+export const IS_WINDOWS = typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent);
+
+/** Modificador de los clics y de los atajos de sistema (⌘S, ⌘↵): ⌘ en macOS, Ctrl en el resto. */
+export const CLICK_MOD = IS_MAC ? "⌘" : "Ctrl";
+
+/** `⌘S` / `Ctrl+S`: atajos de sistema (guardar, enviar), no los de la app. */
+export function sysLabel(key: string): string {
+  return IS_MAC ? `⌘${key}` : `Ctrl+${key}`;
+}
+
+/** `⌥↑` / `Alt+↑`. */
+export function altLabel(key: string): string {
+  return IS_MAC ? `⌥${key}` : `Alt+${key}`;
+}
+
+/** `⇧↵` / `Shift+↵`. */
+export function shiftLabel(key: string): string {
+  return IS_MAC ? `⇧${key}` : `Shift+${key}`;
+}
 
 const KEY_GLYPHS: Record<string, string> = {
   ArrowRight: "→",

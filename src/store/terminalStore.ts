@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type {
   AgentActivity,
   AgentKind,
+  AgentSessionRef,
   AgentStatus,
   AgentsInfo,
   PaneNode,
@@ -20,6 +21,8 @@ export interface PaneSpec {
   cwd?: string;
   command?: string;
   agentType?: AgentKind | null;
+  /** Bienvenida antes del primer prompt. Por defecto, toda shell nueva (pestaña, división, rápida). */
+  welcome?: boolean;
 }
 
 export interface PaneProject {
@@ -59,6 +62,7 @@ const loadingProvider = {
   fetchedAt: null,
   windows: [],
   tokens24h: null,
+  tokensByHour: null,
   message: null,
 } as const;
 
@@ -71,6 +75,8 @@ function newPane(spec: PaneSpec = {}): PaneNode {
     cwd: spec.cwd,
     command: spec.command,
     agentType: spec.agentType ?? null,
+    // Las shells nuevas dan la bienvenida; los agentes no (su TUI ocupa el panel).
+    ...(!spec.command && spec.welcome !== false ? { welcome: true } : {}),
   };
 }
 
@@ -124,6 +130,11 @@ interface TerminalState {
   setAgentActivity: (activity: AgentActivity) => void;
   setPaneProject: (paneId: string, project: PaneProject) => void;
   setAttention: (paneId: string, attention: Attention | null) => void;
+  /** El agente del panel reportó su sesión: se guarda con el layout para poder reanudarla. */
+  setAgentSession: (paneId: string, session: AgentSessionRef) => void;
+  /** Cambia un panel por otro nuevo (otro proceso) en el mismo sitio. Devuelve el id nuevo. */
+  replacePane: (paneId: string, spec: PaneSpec) => string | null;
+  dismissResumable: (paneId: string) => void;
   hydrate: (session: PersistedSession) => void;
 }
 
@@ -329,6 +340,53 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
     if (!findOwnerTab(tabs, paneId)) return;
     set({ attention: { ...current, [paneId]: attention } });
+  },
+
+  setAgentSession: (paneId, session) => {
+    const { tabs } = get();
+    const owner = findOwnerTab(tabs, paneId);
+    const pane = owner ? findPane(owner.root, paneId) : undefined;
+    if (!owner || !pane?.agentType) return;
+    const current = pane.agentSession;
+    // El hook de inicio no trae mensaje: se conserva el último conocido de la misma sesión.
+    const prompt = session.prompt ?? (current?.id === session.id ? current.prompt : undefined);
+    if (current?.id === session.id && current.prompt === prompt) return;
+    const root = replacePane(owner.root, paneId, (p) => ({ ...p, agentSession: { ...session, prompt } }));
+    set({ tabs: tabs.map((t) => (t.id === owner.id ? { ...t, root } : t)) });
+  },
+
+  replacePane: (paneId, spec) => {
+    const { tabs } = get();
+    const owner = findOwnerTab(tabs, paneId);
+    if (!owner) return null;
+    const fresh = newPane(spec);
+    const root = replacePane(owner.root, paneId, () => fresh);
+    terminalManager.kill(paneId);
+    set((state) => ({
+      tabs: state.tabs.map((t) =>
+        t.id === owner.id
+          ? {
+              ...t,
+              root,
+              activePaneId: t.activePaneId === paneId ? fresh.id : t.activePaneId,
+              zoomedPaneId: t.zoomedPaneId === paneId ? fresh.id : t.zoomedPaneId,
+            }
+          : t,
+      ),
+      agentStatus: omit(state.agentStatus, [paneId]),
+      agentActivity: omit(state.agentActivity, [paneId]),
+      paneProject: omit(state.paneProject, [paneId]),
+      attention: omit(state.attention, [paneId]),
+    }));
+    return fresh.id;
+  },
+
+  dismissResumable: (paneId) => {
+    const { tabs } = get();
+    const owner = findOwnerTab(tabs, paneId);
+    if (!owner || !findPane(owner.root, paneId)?.resumable) return;
+    const root = replacePane(owner.root, paneId, (p) => ({ ...p, resumable: undefined }));
+    set({ tabs: tabs.map((t) => (t.id === owner.id ? { ...t, root } : t)) });
   },
 
   hydrate: (session) => {

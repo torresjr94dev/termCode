@@ -2,9 +2,10 @@ import { LazyStore } from "@tauri-apps/plugin-store";
 import { warn as logWarn } from "@tauri-apps/plugin-log";
 import { useTerminalStore, type PersistedSession } from "../store/terminalStore";
 import { terminalManager } from "../terminal/TerminalManager";
-import type { LayoutNode, Tab } from "../types/layout";
+import type { LayoutNode, ResumableAgent, Tab } from "../types/layout";
 import { basename } from "./layout";
 import { IS_TAURI } from "./ipc";
+import { isSafeSessionId } from "./resume";
 
 const KEY = "session";
 const SAVE_DEBOUNCE_MS = 1500;
@@ -31,19 +32,49 @@ function isNode(value: unknown): value is LayoutNode {
   );
 }
 
+/** Lo que llega del disco puede venir editado a mano o de otra versión: solo pasa lo válido. */
+export function sanitizeResumable(value: unknown): ResumableAgent | undefined {
+  const r = value as Partial<ResumableAgent> | null;
+  if (!r || (r.agent !== "claude" && r.agent !== "codex") || typeof r.title !== "string") return undefined;
+  return {
+    agent: r.agent,
+    sessionId: typeof r.sessionId === "string" && isSafeSessionId(r.sessionId) ? r.sessionId : null,
+    title: r.title.slice(0, 120),
+    prompt: typeof r.prompt === "string" ? r.prompt.slice(0, 200) : undefined,
+    at: typeof r.at === "number" && Number.isFinite(r.at) ? r.at : undefined,
+  };
+}
+
 /**
  * Los agentes no se relanzan solos (gastarían cuota sin que lo pidas):
- * vuelven como shells en la misma carpeta.
+ * vuelven como shells en la misma carpeta, con lo necesario para reanudarlos
+ * con un clic (`claude --resume`, `codex resume --last`).
  */
-function asShells(node: LayoutNode): LayoutNode {
+export function asShells(node: LayoutNode): LayoutNode {
   if (node.type === "split") return { ...node, first: asShells(node.first), second: asShells(node.second) };
-  if (!node.agentType && !node.command) return node;
-  return {
-    ...node,
-    title: node.cwd ? basename(node.cwd) : "zsh",
+  // `welcome` es de la primera vez que se abrió: restaurar no vuelve a mostrarla.
+  const { agentSession, resumable, welcome: _welcome, ...pane } = node;
+  if (!pane.agentType && !pane.command) {
+    // Un aviso de reanudar que no se usó sigue ahí tras otro reinicio.
+    const kept = sanitizeResumable(resumable);
+    return kept ? { ...pane, resumable: kept } : pane;
+  }
+  const next: LayoutNode = {
+    ...pane,
+    title: pane.cwd ? basename(pane.cwd) : "zsh",
     command: undefined,
     agentType: null,
   };
+  if (pane.agentType) {
+    next.resumable = sanitizeResumable({
+      agent: pane.agentType,
+      sessionId: agentSession?.id ?? null,
+      title: pane.title,
+      prompt: agentSession?.prompt,
+      at: agentSession?.at,
+    });
+  }
+  return next;
 }
 
 export async function loadSession(timeoutMs = 800): Promise<PersistedSession | null> {

@@ -30,6 +30,7 @@ const GROUPS: Array<{ title: string; items: Array<[ShortcutId | ShortcutId[], st
   {
     title: "Agentes",
     items: [
+      ["nextAttention", "Al que te necesita"],
       ["missionControl", "Mission Control"],
       ["toggleUsage", "Cuota de uso"],
       ["toggleBroadcast", "Escribir en todos"],
@@ -95,7 +96,7 @@ export const ShortcutHints: React.FC = () => {
   if (!show) return null;
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-10 z-50 flex justify-center px-6" role="status" aria-label="Atajos de teclado">
-      <div className="grid w-full max-w-[920px] animate-pop-in grid-cols-2 gap-x-8 gap-y-5 rounded-xl border border-line-strong bg-raised/95 px-6 py-5 shadow-[0_24px_64px_-12px_rgb(0_0_0/0.7)] backdrop-blur-sm lg:grid-cols-4">
+      <div className="grid w-full max-w-[920px] animate-pop-in grid-cols-2 gap-x-8 gap-y-5 rounded-xl border border-[var(--glass-border)] glass px-6 py-5 lg:grid-cols-4">
         {GROUPS.map((group) => (
           <section key={group.title}>
             <h3 className="mb-2 font-mono text-[10.5px] uppercase tracking-[0.08em] text-ink-3">{group.title}</h3>

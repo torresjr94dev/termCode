@@ -55,6 +55,11 @@ pub async fn pty_spawn(
     on_data: Channel<InvokeResponseBody>,
     shell_integration: Option<bool>,
 ) -> CmdResult<SessionId> {
+    let kind = if options.command.is_some() {
+        "agent"
+    } else {
+        "shell"
+    };
     // Agents launched in this PTY report back through files in the state dir.
     options.env.retain(|(k, _)| k != agents::ENV_STATE_DIR);
     options.env.push((
@@ -67,13 +72,11 @@ pub async fn pty_spawn(
             .env
             .extend(crate::shell_integration::env_for(&pty_core::user_shell()));
     }
-    #[cfg(not(unix))]
+    // Windows: PowerShell con la integración y el agente dentro, sin cmd.exe.
+    #[cfg(windows)]
+    crate::winlaunch::prepare(&mut options, shell_integration.unwrap_or(true))?;
+    #[cfg(not(any(unix, windows)))]
     let _ = shell_integration;
-    let kind = if options.command.is_some() {
-        "agent"
-    } else {
-        "shell"
-    };
     let pane = options
         .env
         .iter()

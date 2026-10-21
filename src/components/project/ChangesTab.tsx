@@ -276,7 +276,7 @@ const CommitBox: React.FC<{ stagedCount: number }> = ({ stagedCount }) => {
           disabled={!stagedCount || Boolean(busy)}
           title="Claude (Haiku) escribe el mensaje a partir de los cambios preparados"
         >
-          <Sparkles size={13} strokeWidth={1.75} aria-hidden="true" className={busy === "ai" ? "animate-pulse text-amber" : ""} />
+          <Sparkles size={13} strokeWidth={1.75} aria-hidden="true" className={busy === "ai" ? "animate-pulse text-accent" : ""} />
           {busy === "ai" ? "Escribiendo…" : "Mensaje con IA"}
         </TextButton>
         <label
@@ -291,7 +291,7 @@ const CommitBox: React.FC<{ stagedCount: number }> = ({ stagedCount }) => {
             checked={amend}
             disabled={!hasCommits || Boolean(busy)}
             onChange={(e) => void setAmend(e.target.checked)}
-            className="size-3.5 accent-[var(--color-amber)]"
+            className="size-3.5 accent-[var(--color-accent)]"
           />
           Amend
         </label>
@@ -307,7 +307,7 @@ const CommitBox: React.FC<{ stagedCount: number }> = ({ stagedCount }) => {
           ) : (
             <>
               <Check size={13} strokeWidth={2} aria-hidden="true" /> {amend ? "Enmendar" : "Commit"}{" "}
-              <Kbd className="text-on-amber/70">{shortcut}</Kbd>
+              <Kbd className="text-on-accent/70">{shortcut}</Kbd>
             </>
           )}
         </TextButton>
@@ -391,9 +391,9 @@ const SyncBar: React.FC = () => {
 const OperationBanner: React.FC<{ operation: string; pending: number }> = ({ operation, pending }) => {
   const busy = useProjectStore((s) => s.busy === "resolve");
   return (
-    <div role="status" className="mx-3 mb-2 rounded-md border border-amber/50 bg-amber/[0.07] px-3 py-2.5">
+    <div role="status" className="mx-3 mb-2 rounded-md border border-accent/50 bg-accent/[0.07] px-3 py-2.5">
       <p className="flex items-center gap-1.5 text-[12.5px] text-ink">
-        <GitMerge size={13} aria-hidden="true" className="text-amber" />
+        <GitMerge size={13} aria-hidden="true" className="text-accent" />
         Tienes {operationLabel(operation)} a medias
       </p>
       <p className="mt-1 text-[11.5px] leading-relaxed text-ink-3">
@@ -449,7 +449,7 @@ const StashRow: React.FC<{ entry: StashEntry; now: number }> = ({ entry, now }) 
 );
 
 const CI_ICON: Record<CiStatus["state"], { icon: typeof Check; cls: string; label: string }> = {
-  pending: { icon: CircleDashed, cls: "text-amber animate-[spin_3s_linear_infinite]", label: "CI en curso" },
+  pending: { icon: CircleDashed, cls: "text-accent animate-[spin_3s_linear_infinite]", label: "CI en curso" },
   success: { icon: CircleCheck, cls: "text-add", label: "CI en verde" },
   failure: { icon: CircleX, cls: "text-del", label: "CI falló" },
 };
@@ -475,7 +475,7 @@ const CiBadge: React.FC = () => {
       {open && (
         <>
           <div className="fixed inset-0 z-30" aria-hidden="true" onMouseDown={() => setOpen(false)} />
-          <ul className="absolute bottom-full left-2 right-2 z-40 mb-1.5 animate-pop-in overflow-hidden rounded-lg border border-line-strong bg-raised py-1 shadow-[0_16px_48px_-12px_rgb(0_0_0/0.7)]">
+          <ul className="absolute bottom-full left-2 right-2 z-40 mb-1.5 animate-pop-in overflow-hidden rounded-lg border border-[var(--glass-border)] glass py-1">
             <li className="px-3 pb-1 pt-1.5 font-sans text-[11px] text-ink-3">Workflows de {ci.sha.slice(0, 7)}</li>
             {ci.runs.map((run) => {
               const state = run.status !== "completed" ? "pending" : run.conclusion === "success" || run.conclusion === "skipped" ? "success" : "failure";

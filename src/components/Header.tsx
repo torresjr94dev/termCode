@@ -10,7 +10,9 @@ import { useRunningCommand } from "../terminal/useRunningCommand";
 import { IS_MAC, shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
 import type { ProviderUsage, Tab } from "../types/layout";
 import { terminalManager } from "../terminal/TerminalManager";
-import { AgentGlyph, IconButton, Kbd, Lamp } from "./ui";
+import { AgentGlyph, IconButton, Kbd, Lamp, Ring } from "./ui";
+import { pace } from "../lib/quota";
+import { useNow } from "../lib/useNow";
 
 interface HeaderProps {
   onOpenPalette: () => void;
@@ -57,10 +59,10 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
   return (
     <header
       data-tauri-drag-region
-      className="relative z-20 flex h-10 shrink-0 items-stretch bg-chrome pr-2 after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-line"
+      className="relative z-20 flex h-11 shrink-0 items-center bg-chrome pr-2"
     >
       {/* Hueco para los semáforos de macOS (solo cuando la barra lateral no los aloja) */}
-      {IS_MAC && !isSidebarOpen && <div data-tauri-drag-region className="w-[84px] shrink-0" />}
+      {IS_MAC && !isSidebarOpen && <div data-tauri-drag-region className="h-full w-[78px] shrink-0" />}
 
       <div className={cn("flex items-center", !(IS_MAC && !isSidebarOpen) && "pl-2")}>
         <IconButton
@@ -72,8 +74,8 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
         />
       </div>
 
-      <nav aria-label="Pestañas" className="ml-2 flex min-w-0 items-end">
-        <ul ref={listRef} data-tauri-drag-region className="scrollbar-none flex min-w-0 items-end gap-0.5 overflow-x-auto">
+      <nav aria-label="Pestañas" className="ml-1.5 flex min-w-0 items-center">
+        <ul ref={listRef} data-tauri-drag-region className="scrollbar-none flex min-w-0 items-center gap-0.5 overflow-x-auto py-1">
           {tabs.map((tab, index) => (
             <TabItem
               key={tab.id}
@@ -90,7 +92,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
           ))}
         </ul>
 
-        <div className="flex h-[31px] items-center pl-1">
+        <div className="flex items-center pl-1">
           <IconButton icon={Plus} label="Nueva pestaña" shortcut={shortcutLabel("newTab")} onClick={actions.newTab} />
         </div>
       </nav>
@@ -104,7 +106,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
           type="button"
           onClick={onOpenPalette}
           title={`Comandos  ${shortcutLabel("palette")}`}
-          className="flex h-7 items-center gap-2 rounded-md border border-line px-2.5 text-ink-2 transition-colors duration-150 hover:border-line-strong hover:bg-hover hover:text-ink"
+          className="glass-pill flex h-[30px] items-center gap-2 rounded-[10px] px-3 text-ink-2 transition-colors duration-150 hover:text-ink"
         >
           <Search size={13} strokeWidth={1.75} aria-hidden="true" />
           <span className="hidden text-[12px] md:inline">Comandos</span>
@@ -115,25 +117,27 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
   );
 };
 
-/** Lectura principal de un proveedor para el botón: la ventana de sesión. */
-function headline(provider: ProviderUsage): { text: string; critical: boolean; spoken: string } {
-  if (provider.authMode === "api-key") return { text: "API", critical: false, spoken: "API key" };
+/** Lectura principal de un proveedor para el botón: la ventana de sesión, con su ritmo. */
+function headline(provider: ProviderUsage, now: number) {
+  if (provider.authMode === "api-key") return { text: "API", value: null, elapsed: null, spoken: "API key (sin ventanas)" };
   const session = provider.windows.find((w) => w.kind === "session") ?? provider.windows[0];
   if (!session) {
     const text = provider.status === "loading" ? "…" : "—";
-    return { text, critical: false, spoken: provider.status === "loading" ? "cargando" : "sin datos" };
+    return { text, value: null, elapsed: null, spoken: provider.status === "loading" ? "cargando" : "sin datos" };
   }
   const pct = Math.round(session.usedPercent);
-  return { text: `${pct}%`, critical: pct >= 85, spoken: `${pct}%` };
+  const p = pace(session, now);
+  return { text: `${pct}%`, value: pct, elapsed: p?.elapsedPercent ?? null, spoken: `${pct}% de la sesión de 5 h` };
 }
 
 const UsageButton: React.FC = () => {
   const usage = useTerminalStore((s) => s.usage);
   const isOpen = useTerminalStore((s) => s.isUsageDrawerOpen);
+  const now = useNow(30_000);
 
   const readings = [
-    { icon: Asterisk, name: "Claude", ...headline(usage.claude) },
-    { icon: Hexagon, name: "Codex", ...headline(usage.codex) },
+    { icon: Asterisk, name: "Claude", ...headline(usage.claude, now) },
+    { icon: Hexagon, name: "Codex", ...headline(usage.codex, now) },
   ];
 
   return (
@@ -145,16 +149,21 @@ const UsageButton: React.FC = () => {
       aria-label={`Cuotas de IA: ${readings.map((r) => `${r.name} ${r.spoken}`).join(", ")}`}
       title={`Cuotas de IA  ${shortcutLabel("toggleUsage")}`}
       className={cn(
-        "flex h-7 items-center gap-3 rounded-md border px-2.5 font-mono text-[12px] tabular-nums transition-colors duration-150",
-        isOpen
-          ? "border-line-strong bg-press text-ink"
-          : "border-line text-ink-2 hover:border-line-strong hover:bg-hover hover:text-ink",
+        "flex h-[30px] items-center gap-3 rounded-[10px] px-2.5 font-mono text-[12px] tabular-nums transition-colors duration-150",
+        isOpen ? "glass-pill text-ink" : "text-ink-2 hover:bg-hover hover:text-ink",
       )}
     >
-      {readings.map(({ icon: Icon, name, text, critical }) => (
+      {readings.map(({ icon: Icon, name, text, value, elapsed }) => (
         <span key={name} className="flex items-center gap-1.5">
-          <Icon size={13} strokeWidth={1.75} aria-hidden="true" className="text-ink-3" />
-          <span className={critical ? "text-signal" : undefined}>{text}</span>
+          {value === null ? (
+            <Icon size={13} strokeWidth={1.75} aria-hidden="true" className="text-ink-3" />
+          ) : (
+            // Anillo exterior: lo usado. Interior: cuánto de la ventana ya pasó.
+            <Ring value={value} inner={elapsed} size={18} stroke={2.25} />
+          )}
+          <span className={value !== null && value >= 90 ? "text-signal" : value !== null && value >= 75 ? "text-warn" : undefined}>
+            {text}
+          </span>
         </span>
       ))}
     </button>
@@ -180,15 +189,13 @@ const BranchButton: React.FC = () => {
       aria-label={`Rama ${branch}${changes ? `, ${changes} cambios` : ""}`}
       title={`${repo.name} · ${branch}  ${shortcutLabel("projectChanges")}`}
       className={cn(
-        "flex h-7 max-w-[220px] items-center gap-1.5 rounded-md border px-2.5 font-mono text-[12px] transition-colors duration-150",
-        isOpen
-          ? "border-line-strong bg-press text-ink"
-          : "border-line text-ink-2 hover:border-line-strong hover:bg-hover hover:text-ink",
+        "flex h-[30px] max-w-[220px] items-center gap-1.5 rounded-[10px] px-2.5 font-mono text-[12px] transition-colors duration-150",
+        isOpen ? "glass-pill text-ink" : "text-ink-2 hover:bg-hover hover:text-ink",
       )}
     >
       <GitBranch size={13} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-ink-3" />
       <span className="truncate">{branch}</span>
-      {changes > 0 && <span className="shrink-0 tabular-nums text-amber">●{changes}</span>}
+      {changes > 0 && <span className="shrink-0 tabular-nums text-accent">●{changes}</span>}
       {sync && <span className="shrink-0 tabular-nums text-ink-3">{sync}</span>}
     </button>
   );
@@ -256,27 +263,16 @@ const TabItem: React.FC<TabItemProps> = ({
         if (!editing && !(e.target as HTMLElement).closest("[data-no-drag]")) onPointerDownTab(e);
       }}
       className={cn(
-        "group relative flex h-[31px] shrink-0 items-center rounded-t-md border-x border-t transition-colors duration-150",
-        isActive ? "z-10 border-line bg-canvas text-ink" : "border-transparent text-ink-3 hover:bg-hover/60 hover:text-ink-2",
+        // Cápsula de vidrio solo para la activa; el resto, texto que se ilumina al pasar.
+        "group relative flex h-[30px] shrink-0 items-center rounded-[10px] transition-[background-color,color] duration-150",
+        isActive ? "glass-pill z-10 text-ink" : "text-ink-3 hover:bg-hover hover:text-ink-2",
         isDragged && "opacity-50",
       )}
     >
       {dropMarker && (
         <span
           aria-hidden="true"
-          className={cn("absolute inset-y-1 w-0.5 rounded-full bg-amber", dropMarker === "before" ? "-left-1" : "-right-1")}
-        />
-      )}
-      {/* Franja del proyecto: mismo color para todas las pestañas del mismo repo. */}
-      {project && (
-        <span
-          aria-hidden="true"
-          title={project.name}
-          className={cn(
-            "pointer-events-none absolute inset-x-2.5 top-0 h-[2px] rounded-b-full",
-            projectTone(project.root ?? project.cwd),
-            isActive ? "opacity-90" : "opacity-45",
-          )}
+          className={cn("absolute inset-y-1 w-0.5 rounded-full bg-accent", dropMarker === "before" ? "-left-1" : "-right-1")}
         />
       )}
       {editing ? (
@@ -302,18 +298,29 @@ const TabItem: React.FC<TabItemProps> = ({
           onAuxClick={(e) => {
             if (e.button === 1 && canClose) actions.closeTab(tab.id);
           }}
-          className="flex h-full min-w-0 items-center gap-2 pl-3 pr-1 outline-offset-[-2px]"
+          className="flex h-full min-w-0 items-center gap-2 pl-2.5 pr-1 outline-offset-[-2px]"
         >
           {needsAttention ? (
             <Lamp state="attention" />
           ) : (
-            <span className={cn("font-mono text-[11px] tabular-nums", isActive ? "text-amber" : "text-ink-3")}>{index + 1}</span>
+            <span className={cn("font-mono text-[10.5px] tabular-nums", isActive ? "text-accent" : "text-ink-3/80")}>{index + 1}</span>
           )}
-          <AgentGlyph agentType={agentType} className="shrink-0 opacity-80" />
-          <span className="max-w-[180px] truncate font-mono text-[12px]">{label}</span>
+          {agentType ? (
+            <AgentGlyph agentType={agentType} className="shrink-0 opacity-80" />
+          ) : (
+            // Punto del proyecto: mismo color en todas las pestañas del mismo repo.
+            project && (
+              <span
+                aria-hidden="true"
+                title={project.name}
+                className={cn("size-[7px] shrink-0 rounded-full", projectTone(project.root ?? project.cwd), !isActive && "opacity-60")}
+              />
+            )
+          )}
+          <span className="max-w-[180px] truncate text-[12.5px] font-medium">{label}</span>
           {runningHint && <span className="max-w-[110px] shrink-0 truncate font-mono text-[11px] text-ink-3">{runningHint}</span>}
           {tab.zoomedPaneId && (
-            <Maximize2 size={11} strokeWidth={2} aria-label="Panel maximizado" className="shrink-0 text-amber" />
+            <Maximize2 size={11} strokeWidth={2} aria-label="Panel maximizado" className="shrink-0 text-accent" />
           )}
         </button>
       )}
@@ -340,12 +347,12 @@ const TabItem: React.FC<TabItemProps> = ({
           role="progressbar"
           aria-label="Progreso"
           aria-valuenow={progress.state === 3 ? undefined : progress.value}
-          className="absolute inset-x-2 bottom-0.5 h-[2px] overflow-hidden rounded-full bg-line"
+          className="absolute inset-x-3 bottom-[3px] h-[2px] overflow-hidden rounded-full bg-line"
         >
           <span
             className={cn(
               "block h-full rounded-full transition-[width] duration-300",
-              progress.state === 2 ? "bg-signal" : progress.state === 4 ? "bg-ink-3" : "bg-amber",
+              progress.state === 2 ? "bg-signal" : progress.state === 4 ? "bg-ink-3" : "bg-accent",
               progress.state === 3 && "w-1/3 animate-[indeterminate_1.2s_ease-in-out_infinite]",
             )}
             style={progress.state === 3 ? undefined : { width: `${Math.max(2, progress.value)}%` }}

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Fuente del ícono de termCode (misma geometría que src/lib/logo.ts). Regenerar: pnpm tauri icon src-tauri/icons/icon.svg -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#16201b"/>
+      <stop offset="1" stop-color="#050706"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#00e356" stop-opacity="0.32"/>
+      <stop offset="0.55" stop-color="#00e356" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#00e356" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-80%" width="180%" height="260%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="18" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="shape"><rect x="100" y="100" width="824" height="824" rx="184"/></clipPath>
+  </defs>
+  <g clip-path="url(#shape)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#tile)"/>
+    <ellipse cx="512" cy="530" rx="430" ry="300" fill="url(#halo)"/>
+    <rect x="100" y="100" width="824" height="824" fill="url(#sheen)"/>
+  </g>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="182.5" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="3"/>
+  <g transform="translate(207.4 416.5) scale(0.72)">
+    <path d="M42 22Q42 10 54 10H100Q112 10 112 22V102H152Q164 102 164 114V146Q164 158 152 158H112V212H152Q164 212 164 224V260Q164 272 152 272H90Q42 272 42 224V158H12Q0 158 0 146V114Q0 102 12 102H42Z" fill="#e6f1ea"/>
+    <path d="M549 52H683Q695 52 695 64V110Q695 122 683 122H577Q563 122 563 136V198Q563 212 577 212H683Q695 212 695 224V270Q695 282 683 282H549Q495 282 495 228V106Q495 52 549 52Z" fill="#e6f1ea"/>
+    <g filter="url(#glow)" fill="#00e356" stroke="#00e356" stroke-width="10" stroke-linejoin="round">
+      <polygon points="200,52 272,52 350,167 272,282 200,282 278,167"/>
+      <polygon points="315,52 387,52 465,167 387,282 315,282 393,167"/>
+      <rect x="722" y="248" width="124" height="34" rx="7" stroke-width="0"/>
+    </g>
+  </g>
+</svg>

@@ -39,3 +39,14 @@ describe("identidad", () => {
     expect(shortCommand("ls")).toBe("ls");
   });
 });
+
+describe("cleanTitle", () => {
+  it("drops agent spinner glyphs but keeps real titles", async () => {
+    const { cleanTitle } = await import("./identity");
+    expect(cleanTitle("✳ Claude Code")).toBe("Claude Code");
+    expect(cleanTitle("⠂ Claude Code")).toBe("Claude Code");
+    expect(cleanTitle("~/repo")).toBe("~/repo");
+    expect(cleanTitle("vim notas.md")).toBe("vim notas.md");
+    expect(cleanTitle("✳")).toBe("✳"); // solo símbolo: mejor eso que nada
+  });
+});

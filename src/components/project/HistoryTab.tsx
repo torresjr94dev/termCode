@@ -80,13 +80,13 @@ const CommitRow: React.FC<{ commit: CommitInfo; now: number; isLast: boolean }> 
           aria-hidden="true"
           className={cn(
             "mt-1 size-[9px] shrink-0 rounded-[2px] border",
-            isHead ? "border-amber bg-amber" : isMerge ? "border-ink-3 bg-chrome" : "border-ink-3 bg-ink-3",
+            isHead ? "border-accent bg-accent" : isMerge ? "border-ink-3 bg-chrome" : "border-ink-3 bg-ink-3",
           )}
         />
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="truncate text-[12.5px] leading-snug text-ink">{commit.subject}</span>
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-ink-3">
-            <span className="text-amber/80">{commit.short}</span>
+            <span className="text-accent/80">{commit.short}</span>
             <span className="truncate">{commit.author}</span>
             <span>{formatAgo(commit.time * 1000, now)}</span>
             {commit.refs.map((ref) => {
@@ -96,7 +96,7 @@ const CommitRow: React.FC<{ commit: CommitInfo; now: number; isLast: boolean }> 
                   key={ref}
                   className={cn(
                     "rounded-sm border px-1 leading-4",
-                    head ? "border-amber/50 text-amber" : "border-line text-ink-2",
+                    head ? "border-accent/50 text-accent" : "border-line text-ink-2",
                   )}
                 >
                   {text}

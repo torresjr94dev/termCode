@@ -11,6 +11,7 @@ import type {
   RepoMeta,
   StashEntry,
 } from "../lib/git";
+import type { ReviewNote } from "../lib/reviewNotes";
 
 export type ProjectTab = "files" | "changes" | "history";
 
@@ -28,6 +29,8 @@ export type DiffSource =
       created: boolean;
       root: string;
       label: string;
+      /** Panel del agente que hizo los cambios: ahí va la revisión. */
+      paneId?: string;
     };
 
 export type Viewer =
@@ -89,6 +92,8 @@ interface ProjectState {
   viewer: Viewer | null;
   isPrDialogOpen: boolean;
   isBranchPickerOpen: boolean;
+  /** Comentarios por línea aún sin mandar (sobreviven a cerrar el visor). */
+  notes: ReviewNote[];
 
   set: (patch: Partial<ProjectState>) => void;
 }
@@ -121,6 +126,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
   busy: null,
   isPrDialogOpen: false,
   isBranchPickerOpen: false,
+  notes: [],
   set: (patch) => set(patch),
 }));
 

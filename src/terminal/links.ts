@@ -1,10 +1,12 @@
 import type { ILink, ILinkProvider, Terminal } from "@xterm/xterm";
 import { invoke } from "@tauri-apps/api/core";
 import { IS_TAURI } from "../lib/ipc";
+import { isWindowsPath, joinPath, normalizePath } from "../lib/paths";
 
 /**
  * Rutas de archivo en la salida (`src/app.ts:42:7`, `./x.rs`, `/abs/y.md`,
- * `~/z.toml`) como enlaces. Solo se marcan las que existen de verdad.
+ * `~/z.toml`; en Windows también `C:\repo\x.ts` y `src\x.ts`) como enlaces.
+ * Solo se marcan las que existen de verdad.
  */
 
 export interface PathMatch {
@@ -19,7 +21,7 @@ export interface PathMatch {
 
 // Inicio de línea o separador típico antes de una ruta; nunca después de "://".
 const PATH_RE =
-  /(?<=^|[\s'"`([{<=,])((?:~|\.{1,2})?\/?(?:[\w.@+-]+\/)*[\w@+-][\w.@+-]*\.[A-Za-z0-9]{1,12})(?::(\d+))?(?::(\d+))?/g;
+  /(?<=^|[\s'"`([{<=,])((?:[A-Za-z]:[\\/]|(?:~|\.{1,2})?[\\/]?)(?:[\w.@+-]+[\\/])*[\w@+-][\w.@+-]*\.[A-Za-z0-9]{1,12})(?::(\d+))?(?::(\d+))?/g;
 
 export function findPaths(text: string): PathMatch[] {
   const out: PathMatch[] = [];
@@ -27,7 +29,7 @@ export function findPaths(text: string): PathMatch[] {
     const path = m[1];
     // Versiones (v24.12.0), IPs y extensiones numéricas no son archivos.
     if (/^v?\d+(\.\d+)+$/.test(path) || /\.\d+$/.test(path)) continue;
-    if (!path.includes("/") && !/\.(\w+)$/.test(path)) continue;
+    if (!/[\\/]/.test(path) && !/\.(\w+)$/.test(path)) continue;
     const before = text.slice(Math.max(0, (m.index ?? 0) - 3), m.index);
     if (before.endsWith("://")) continue;
     out.push({
@@ -42,20 +44,14 @@ export function findPaths(text: string): PathMatch[] {
 }
 
 export function resolvePath(path: string, cwd: string | null, home: string | null): string | null {
-  if (path.startsWith("/")) return normalize(path);
-  if (path.startsWith("~/")) return home ? normalize(`${home}/${path.slice(2)}`) : null;
+  if (isWindowsPath(path)) return normalizePath(path);
+  if (/^~[\\/]/.test(path)) return home ? joinPath(home, path.slice(2)) : null;
+  // `/x` es absoluta en macOS/Linux; en Windows no sabemos de qué unidad.
+  if (path.startsWith("/")) return cwd && isWindowsPath(cwd) ? null : normalizePath(path);
   if (!cwd) return null;
-  return normalize(`${cwd}/${path}`);
-}
-
-function normalize(path: string): string {
-  const parts: string[] = [];
-  for (const part of path.split("/")) {
-    if (!part || part === ".") continue;
-    if (part === "..") parts.pop();
-    else parts.push(part);
-  }
-  return `/${parts.join("/")}`;
+  // `\` solo separa en Windows: en macOS es un carácter más del nombre.
+  if (path.includes("\\") && !isWindowsPath(cwd)) return null;
+  return joinPath(cwd, path);
 }
 
 /** Existencia de archivos con caché (la salida se repinta mucho). */

@@ -21,6 +21,28 @@ export interface PaneNode {
   /** Command run through the login shell instead of a plain shell (agents). */
   command?: string;
   agentType?: AgentKind | null;
+  /** Sesión del agente que corre aquí (la reportan los hooks de Claude Code). */
+  agentSession?: AgentSessionRef;
+  /** Al restaurar: aquí había un agente y se puede reanudar con un clic. */
+  resumable?: ResumableAgent;
+  /** Pestaña de shell recién abierta: muestra la bienvenida antes del prompt (no se guarda). */
+  welcome?: boolean;
+}
+
+export interface AgentSessionRef {
+  id: string;
+  /** Último mensaje que le mandaste (resumido). */
+  prompt?: string;
+  at: number;
+}
+
+export interface ResumableAgent {
+  agent: AgentKind;
+  /** `null`: no se sabe (Codex, o Claude sin mensajes): se abre de nuevo o la última de la carpeta. */
+  sessionId: string | null;
+  title: string;
+  prompt?: string;
+  at?: number;
 }
 
 export type LayoutNode = SplitNode | PaneNode;
@@ -57,6 +79,8 @@ export interface ProviderUsage {
   fetchedAt: number | null;
   windows: UsageWindow[];
   tokens24h: number | null;
+  /** Los mismos tokens por hora: 24 valores, el último es la hora en curso. */
+  tokensByHour: number[] | null;
   message: string | null;
 }
 
@@ -83,6 +107,13 @@ export interface AgentActivity {
   /** working · needs-input · idle */
   state: string;
   detail: string;
+  at: number;
+}
+
+export interface AgentSessionEvent {
+  paneId: string;
+  sessionId: string;
+  prompt: string | null;
   at: number;
 }
 

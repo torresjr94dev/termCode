@@ -39,7 +39,7 @@ export const ConfirmDialog: React.FC<{ onSettled: () => void }> = ({ onSettled }
         aria-modal="true"
         aria-labelledby="confirm-title"
         aria-describedby="confirm-body"
-        className="w-full max-w-[380px] animate-pop-in overflow-hidden rounded-lg border border-line-strong bg-raised shadow-[0_24px_64px_-12px_rgb(0_0_0/0.7)]"
+        className="w-full max-w-[380px] animate-pop-in overflow-hidden rounded-lg border border-[var(--glass-border)] glass"
       >
         <div className="flex gap-3 px-4 pb-4 pt-4">
           <TriangleAlert size={16} strokeWidth={1.75} aria-hidden="true" className="mt-0.5 shrink-0 text-signal" />
@@ -64,9 +64,9 @@ export const ConfirmDialog: React.FC<{ onSettled: () => void }> = ({ onSettled }
             ref={confirmRef}
             type="button"
             onClick={() => settle(true)}
-            className="flex h-7 items-center gap-2 rounded-md bg-signal px-3 text-[12px] font-medium text-on-amber transition-opacity duration-150 hover:opacity-90"
+            className="flex h-7 items-center gap-2 rounded-md bg-signal px-3 text-[12px] font-medium text-on-accent transition-opacity duration-150 hover:opacity-90"
           >
-            {request.confirmLabel} <Kbd className="text-on-amber/70">↵</Kbd>
+            {request.confirmLabel} <Kbd className="text-on-accent/70">↵</Kbd>
           </button>
         </div>
       </div>
@@ -84,7 +84,7 @@ export const ToastHost: React.FC = () => {
       <div
         role={toast.tone === "error" ? "alert" : "status"}
         className={cn(
-          "pointer-events-auto flex max-w-[560px] animate-pop-in items-start gap-3 rounded-md border bg-raised py-2 pl-3 pr-1.5 text-[12px] shadow-[0_12px_32px_-8px_rgb(0_0_0/0.6)]",
+          "pointer-events-auto flex max-w-[560px] animate-pop-in items-start gap-3 rounded-md border glass py-2 pl-3 pr-1.5 text-[12px]",
           toast.tone === "error" ? "border-signal/60 text-ink" : "border-line-strong text-ink-2",
         )}
       >

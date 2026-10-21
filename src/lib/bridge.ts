@@ -13,7 +13,12 @@ import type { FileLinkTarget } from "../terminal/links";
 import { collectPanes, findOwnerTab, findPane } from "./layout";
 import { IS_TAURI, ipc } from "./ipc";
 import { formatDuration } from "./format";
+import { startApprovals } from "./approvals";
+import { onAgentDone } from "./race";
+import { renderWelcome } from "./welcome";
+import { cleanTitle } from "./identity";
 import { info as logInfo } from "@tauri-apps/plugin-log";
+import { basename } from "./paths";
 
 const state = () => useTerminalStore.getState();
 /** Paneles que ya avisaron de su integración (una línea de log por panel). */
@@ -106,7 +111,7 @@ async function openPath(target: FileLinkTarget) {
 const repoCache = new Map<string, { root: string; name: string } | null>();
 
 async function resolveProject(paneId: string, cwd: string) {
-  const folder = cwd.split("/").filter(Boolean).pop() ?? cwd;
+  const folder = basename(cwd);
   // Respuesta inmediata con la carpeta; el repo llega después (o sale de la caché).
   const cached = repoCache.get(cwd);
   if (cached !== undefined || !IS_TAURI) {
@@ -136,13 +141,18 @@ function clearSeenAttention() {
   if (paneId && paneId in attention && document.hasFocus()) state().setAttention(paneId, null);
 }
 
-export function startBridge(): () => void {
+/**
+ * `isMainWindow`: la bandeja de aprobaciones vive solo en la ventana principal.
+ * La terminal rápida no conoce esos paneles: si escuchara, devolvería cada
+ * solicitud a su panel en carrera con la principal.
+ */
+export function startBridge({ isMainWindow }: { isMainWindow: boolean }): () => void {
   terminalManager.setStoreHooks({
     isBroadcastEnabled: () => state().isBroadcastEnabled,
     onExit: (paneId) => state().closePane(paneId),
     onTitle: (paneId, title) => {
-      const trimmed = title.trim();
-      if (trimmed) state().updatePaneTitle(paneId, trimmed);
+      const clean = cleanTitle(title);
+      if (clean) state().updatePaneTitle(paneId, clean);
     },
     onAttention: raiseAttention,
     onCommandFinished,
@@ -159,6 +169,7 @@ export function startBridge(): () => void {
       }
     },
     onOpenPath: (target) => void openPath(target),
+    renderWelcome,
   });
 
   // Títulos visibles → registro del MCP (para que el agente reconozca "el panel del servidor").
@@ -185,14 +196,23 @@ export function startBridge(): () => void {
   const unlisteners = [
     ipc.onUsage((usage) => state().setUsage(usage)),
     ipc.onAgentStatus((status) => state().setAgentStatus(status)),
-    ipc.onAgentAttention(({ paneId, kind, message }) => raiseAttention(paneId, kind, message)),
+    ipc.onAgentAttention(({ paneId, kind, message }) => {
+      // El turno terminó: si es de una carrera, el juez corre aunque estés mirando ese panel.
+      if (kind === "done") onAgentDone(paneId);
+      raiseAttention(paneId, kind, message);
+    }),
     ipc.onAgentActivity((activity) => state().setAgentActivity(activity)),
+    ipc.onAgentSession(({ paneId, sessionId, prompt, at }) =>
+      state().setAgentSession(paneId, { id: sessionId, prompt: prompt ?? undefined, at }),
+    ),
   ];
 
   void ipc.usageGet().then((usage) => usage && state().setUsage(usage));
   void ipc.agentsInfo().then((agents) => agents && state().setAgents(agents));
+  const stopApprovals = isMainWindow ? startApprovals({ isLookingAt, raiseAttention }) : () => {};
 
   return () => {
+    stopApprovals();
     unsubscribeStore();
     window.removeEventListener("focus", clearSeenAttention);
     unlisteners.forEach((p) => void p.then((unlisten) => unlisten()));

@@ -74,7 +74,7 @@ const BY_NAME: Record<string, string> = {
 
 /** Lenguaje de highlight.js para una ruta, o null si no lo conocemos. */
 export function languageFor(path: string): string | null {
-  const name = path.split("/").pop()?.toLowerCase() ?? "";
+  const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
   if (BY_NAME[name]) return BY_NAME[name];
   if (name.startsWith("dockerfile")) return "dockerfile";
   if (name.startsWith(".env")) return "ini";

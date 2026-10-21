@@ -77,6 +77,14 @@ pub fn run(
     })
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
+    // Windows: una app de ventana que lanza git, gh o claude abriría una
+    // consola por cada uno. Sus salidas van por tuberías; la consola sobra.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
     let mut child = cmd.spawn().map_err(RunError::Spawn)?;
 
     if let (Some(data), Some(mut pipe)) = (stdin, child.stdin.take()) {

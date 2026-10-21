@@ -53,9 +53,18 @@ pub fn now_ms() -> u64 {
 }
 
 /// Pane ids come from the environment: treat them as untrusted file-name input.
-fn valid_pane_id(id: &str) -> bool {
+pub fn valid_pane_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// Ids de sesión de Claude (UUID hoy). Acaban en una línea de comandos al
+/// reanudar: solo caracteres que no necesitan escaparse.
+fn valid_session_id(id: &str) -> bool {
+    (8..=128).contains(&id.len())
         && id
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
@@ -83,8 +92,17 @@ pub fn run_cli() -> Option<i32> {
     match args.next().as_deref() {
         Some("--claude-statusline") => Some(statusline_cli()),
         Some("--claude-hook") => Some(hook_cli(&args.next().unwrap_or_default())),
-        #[cfg(unix)]
         Some("--mcp") => Some(crate::mcp::stdio_server()),
+        // En Windows los hooks van en forma exec (`command` + `args`). Un Claude
+        // Code que no la conozca nos ejecutaría sin argumentos desde un hook:
+        // abrir otra ventana de termCode por cada evento sería mucho peor que
+        // perder ese evento.
+        None if cfg!(windows)
+            && std::env::var_os("CLAUDE_PROJECT_DIR").is_some()
+            && std::env::var_os(ENV_PANE).is_some() =>
+        {
+            Some(0)
+        }
         _ => None,
     }
 }
@@ -128,7 +146,7 @@ pub fn describe_tool(tool: &str, input: &Value) -> String {
     let field = |k: &str| input.get(k).and_then(Value::as_str).unwrap_or_default();
     let file = |k: &str| {
         let path = field(k);
-        path.rsplit('/').next().unwrap_or(path).to_owned()
+        path.rsplit(['/', '\\']).next().unwrap_or(path).to_owned()
     };
     let detail = match tool {
         "Bash" => truncate(field("command"), 90),
@@ -171,7 +189,8 @@ fn capture_baseline(cwd: &Path) -> Option<Value> {
 }
 
 fn hook_cli(event: &str) -> i32 {
-    // A hook must never get in Claude's way: always exit 0 and print nothing.
+    // A hook must never get in Claude's way: always exit 0, and print nothing
+    // except an explicit decision from the approvals tray.
     let input = read_stdin_json().unwrap_or(Value::Null);
     let Some(pane) = pane_from_env() else {
         return 0;
@@ -181,14 +200,27 @@ fn hook_cli(event: &str) -> i32 {
         let record = json!({ "at": now_ms(), "state": state, "detail": detail });
         let _ = write_atomic(&dir.join(format!("activity-{pane}.json")), &record);
     };
+    // Con el id de sesión, el panel se puede reanudar (`claude --resume`) tras reiniciar la app.
+    let session = |prompt: Option<String>| {
+        if let Some(id) = input
+            .get("session_id")
+            .and_then(Value::as_str)
+            .filter(|id| valid_session_id(id))
+        {
+            let record = json!({ "at": now_ms(), "sessionId": id, "prompt": prompt });
+            let _ = write_atomic(&dir.join(format!("session-{pane}.json")), &record);
+        }
+    };
 
     match event {
+        "SessionStart" => session(None),
         "UserPromptSubmit" => {
             let prompt = input
                 .get("prompt")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             activity("working", truncate(prompt, 140));
+            session(Some(truncate(prompt, 140)));
             let cwd = input
                 .get("cwd")
                 .and_then(Value::as_str)
@@ -218,19 +250,34 @@ fn hook_cli(event: &str) -> i32 {
                 describe_tool(tool, input.get("tool_input").unwrap_or(&Value::Null)),
             );
         }
+        // La única salida que imprime algo: tu decisión desde la bandeja de termCode.
+        // Sin decisión (o ante cualquier fallo) no imprime nada y Claude pregunta en su panel.
+        "PermissionRequest" => {
+            let tool = input
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .unwrap_or("herramienta");
+            activity(
+                "needs-input",
+                describe_tool(tool, input.get("tool_input").unwrap_or(&Value::Null)),
+            );
+            if let Some(output) = crate::approvals::ask_from_hook(&pane, &input) {
+                println!("{output}");
+            }
+        }
         "Notification" | "Stop" => {
             let kind = if event == "Notification" {
                 "needs-input"
             } else {
                 "done"
             };
-            let message: String = input
+            // Stop no trae `message`: su resumen útil es la última respuesta del agente.
+            let message = input
                 .get("message")
+                .or_else(|| input.get("last_assistant_message"))
                 .and_then(Value::as_str)
-                .unwrap_or_default()
-                .chars()
-                .take(300)
-                .collect();
+                .map(|m| truncate(m, 300))
+                .unwrap_or_default();
             activity(
                 if kind == "done" {
                     "idle"
@@ -251,15 +298,19 @@ fn hook_cli(event: &str) -> i32 {
 /// every start so it always points at the current executable.
 pub fn write_claude_settings() -> std::io::Result<PathBuf> {
     let exe = std::env::current_exe()?;
-    let exe = pty_core::shell_quote(&exe.to_string_lossy());
-    let hook = |event: &str| json!([{ "hooks": [{ "type": "command", "command": format!("{exe} --claude-hook {event}") }] }]);
+    let hook = |event: &str| hook_command(&exe, event);
+    let mut permission = hook_command(&exe, "PermissionRequest");
+    // Espera tu decisión: timeout propio, mayor que lo que esperan la app y el CLI.
+    permission["timeout"] = json!(crate::approvals::HOOK_TIMEOUT_SECS);
     let settings = json!({
-        "statusLine": { "type": "command", "command": format!("{exe} --claude-statusline"), "padding": 0 },
+        "statusLine": { "type": "command", "command": statusline_command(&exe), "padding": 0 },
         "hooks": {
-            "UserPromptSubmit": hook("UserPromptSubmit"),
-            "PreToolUse": hook("PreToolUse"),
-            "Notification": hook("Notification"),
-            "Stop": hook("Stop"),
+            "SessionStart": [{ "hooks": [hook("SessionStart")] }],
+            "UserPromptSubmit": [{ "hooks": [hook("UserPromptSubmit")] }],
+            "PreToolUse": [{ "hooks": [hook("PreToolUse")] }],
+            "Notification": [{ "hooks": [hook("Notification")] }],
+            "Stop": [{ "hooks": [hook("Stop")] }],
+            "PermissionRequest": [{ "hooks": [permission] }],
         },
         // Las herramientas de solo lectura del MCP de termCode no piden permiso cada vez.
         "permissions": { "allow": ["mcp__termcode__list_panes", "mcp__termcode__read_pane"] },
@@ -435,6 +486,23 @@ fn scan(app: &AppHandle, seen: &mut HashMap<PathBuf, SystemTime>) {
                     "at": value.get("at").and_then(Value::as_u64).unwrap_or_else(now_ms),
                 }),
             );
+        } else if let Some(pane) = stem.strip_prefix("session-").filter(|p| valid_pane_id(p)) {
+            let Some(id) = value
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .filter(|id| valid_session_id(id))
+            else {
+                continue;
+            };
+            let _ = app.emit(
+                "agent-session",
+                json!({
+                    "paneId": pane,
+                    "sessionId": id,
+                    "prompt": value.get("prompt").and_then(Value::as_str),
+                    "at": value.get("at").and_then(Value::as_u64).unwrap_or_else(now_ms),
+                }),
+            );
         } else if let Some(pane) = stem.strip_prefix("event-").filter(|p| valid_pane_id(p)) {
             let field = |k: &str| {
                 value
@@ -463,6 +531,124 @@ pub fn agent_baseline(pane_id: String) -> Option<Value> {
     }
     let bytes = fs::read(agents_dir().join(format!("baseline-{pane_id}.json"))).ok()?;
     serde_json::from_slice(&bytes).ok()
+}
+
+/// Un hook que vuelve a este binario. En macOS y Linux, una línea para `sh -c`.
+/// En Windows, forma exec (`command` + `args`): Claude Code lo lanza sin shell,
+/// así que ni Git Bash ni PowerShell reinterpretan la ruta (espacios, `\`,
+/// apóstrofos) y no se paga el arranque de una shell en cada evento.
+fn hook_command(exe: &Path, event: &str) -> Value {
+    if cfg!(windows) {
+        json!({ "type": "command", "command": exe, "args": ["--claude-hook", event] })
+    } else {
+        let exe = pty_core::shell_quote(&exe.to_string_lossy());
+        json!({ "type": "command", "command": format!("{exe} --claude-hook {event}") })
+    }
+}
+
+#[cfg(unix)]
+fn statusline_command(exe: &Path) -> String {
+    format!(
+        "{} --claude-statusline",
+        pty_core::shell_quote(&exe.to_string_lossy())
+    )
+}
+
+/// El statusLine no tiene forma exec: en Windows lo corre Git Bash si está
+/// instalado y, si no, PowerShell.
+#[cfg(windows)]
+fn statusline_command(exe: &Path) -> String {
+    windows_statusline_command(
+        &exe.to_string_lossy(),
+        win::short_path(exe).as_deref(),
+        win::git_bash_installed(),
+    )
+}
+
+/// Con barras `/` (Git Bash se come las `\` sin comillas) y, si se puede, sin
+/// comillas: una ruta sin espacios ni símbolos (o su nombre corto 8.3) funciona
+/// igual en las dos shells, así que no importa cuál elija Claude Code. Si no,
+/// la sintaxis de la shell que va a usar.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn windows_statusline_command(exe: &str, short: Option<&str>, git_bash: bool) -> String {
+    let slashed = |p: &str| p.replace('\\', "/");
+    let bare = |p: &str| {
+        !p.is_empty()
+            && p.chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_./:~-".contains(c))
+    };
+    let long = slashed(exe);
+    if let Some(path) = std::iter::once(long.clone())
+        .chain(short.map(slashed))
+        .find(|p| bare(p))
+    {
+        return format!("{path} --claude-statusline");
+    }
+    if git_bash {
+        format!("{} --claude-statusline", pty_core::shell_quote(&long))
+    } else {
+        format!("& {} --claude-statusline", powershell_quote(&long))
+    }
+}
+
+/// Comillas simples de PowerShell, que también trata ‘ ’ ‚ ‛ como comillas.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn powershell_quote(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('\'');
+    for c in value.chars() {
+        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            out.push(c);
+        }
+        out.push(c);
+    }
+    out.push('\'');
+    out
+}
+
+#[cfg(windows)]
+mod win {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::path::{Path, PathBuf};
+    use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
+
+    /// Nombre 8.3 (`C:\Users\JORGET~1\…`), si el volumen los tiene.
+    pub fn short_path(path: &Path) -> Option<String> {
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut buf = vec![0u16; 1024];
+        // SAFETY: `wide` termina en NUL y `buf` tiene la capacidad que se declara.
+        let len = unsafe { GetShortPathNameW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) };
+        let len = usize::try_from(len)
+            .ok()
+            .filter(|&n| n > 0 && n < buf.len())?;
+        Some(
+            std::ffi::OsString::from_wide(&buf[..len])
+                .to_string_lossy()
+                .into_owned(),
+        )
+    }
+
+    /// Lo mismo que busca Claude Code: `CLAUDE_CODE_GIT_BASH_PATH`, el Git del
+    /// PATH (`Git\cmd\git.exe` → `Git\bin\bash.exe`) o la instalación por defecto.
+    pub fn git_bash_installed() -> bool {
+        if std::env::var_os("CLAUDE_CODE_GIT_BASH_PATH").is_some_and(|p| Path::new(&p).is_file()) {
+            return true;
+        }
+        let dirs = crate::winlaunch::search_dirs();
+        let from_path = crate::winlaunch::find_program("git.exe", &dirs)
+            .and_then(|git| git.parent()?.parent().map(Path::to_path_buf));
+        let defaults = ["ProgramFiles", "ProgramW6432"]
+            .into_iter()
+            .filter_map(|key| std::env::var_os(key).map(|dir| PathBuf::from(dir).join("Git")))
+            .chain(
+                std::env::var_os("LOCALAPPDATA")
+                    .map(|dir| PathBuf::from(dir).join("Programs").join("Git")),
+            );
+        from_path
+            .into_iter()
+            .chain(defaults)
+            .any(|root| root.join("bin").join("bash.exe").is_file())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -515,7 +701,27 @@ fn detect_tools() -> Tools {
     }
 }
 
-#[cfg(not(unix))]
+/// Windows: el PATH de la app más donde instalan Claude Code, npm, pnpm y bun.
+/// No hace falta una shell de login: el PATH vive en el registro, no en un rc.
+#[cfg(windows)]
+fn detect_tools() -> Tools {
+    let dirs = crate::winlaunch::search_dirs();
+    let find = |name: &str| {
+        crate::winlaunch::find_program(name, &dirs).map(|path| path.to_string_lossy().into_owned())
+    };
+    Tools {
+        claude: find("claude"),
+        codex: find("codex"),
+        gh: find("gh"),
+        cursor: find("cursor"),
+        code: find("code"),
+        zed: find("zed"),
+        subl: find("subl"),
+        path: None,
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn detect_tools() -> Tools {
     Tools::default()
 }
@@ -536,6 +742,9 @@ fn refresh_tools() -> Tools {
 
 /// A command for one of the user's tools, with their login PATH.
 pub fn tool_command(binary: &str) -> Command {
+    #[cfg(windows)]
+    let mut cmd = crate::winlaunch::command(binary);
+    #[cfg(not(windows))]
     let mut cmd = Command::new(binary);
     if let Some(path) = tools().path {
         cmd.env("PATH", path);
@@ -591,6 +800,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn windows_statusline_works_in_git_bash_and_powershell() {
+        // Sin espacios ni símbolos: sin comillas, vale para las dos shells.
+        assert_eq!(
+            windows_statusline_command(
+                r"C:\Users\jorge\AppData\Local\termCode\termcode.exe",
+                None,
+                false
+            ),
+            "C:/Users/jorge/AppData/Local/termCode/termcode.exe --claude-statusline"
+        );
+        // Con espacios, el nombre 8.3 si existe.
+        let long = r"C:\Users\Jorge Torres\AppData\Local\termCode\termcode.exe";
+        assert_eq!(
+            windows_statusline_command(
+                long,
+                Some(r"C:\Users\JORGET~1\AppData\Local\termCode\termcode.exe"),
+                true
+            ),
+            "C:/Users/JORGET~1/AppData/Local/termCode/termcode.exe --claude-statusline"
+        );
+        // Si no, la sintaxis de la shell que usará Claude Code.
+        assert_eq!(
+            windows_statusline_command(long, None, true),
+            "'C:/Users/Jorge Torres/AppData/Local/termCode/termcode.exe' --claude-statusline"
+        );
+        assert_eq!(
+            windows_statusline_command(r"C:\Users\Jorge’s PC\termcode.exe", None, false),
+            "& 'C:/Users/Jorge’’s PC/termcode.exe' --claude-statusline"
+        );
+        assert_eq!(powershell_quote("it's"), "'it''s'");
+    }
+
+    #[test]
+    fn hooks_point_back_at_this_binary() {
+        let exe = Path::new("/Applications/term Code.app/Contents/MacOS/termcode");
+        let hook = hook_command(exe, "Stop");
+        assert_eq!(hook["type"], "command");
+        if cfg!(windows) {
+            assert_eq!(hook["command"], exe.to_string_lossy().as_ref());
+            assert_eq!(hook["args"], json!(["--claude-hook", "Stop"]));
+        } else {
+            assert_eq!(
+                hook["command"],
+                "'/Applications/term Code.app/Contents/MacOS/termcode' --claude-hook Stop"
+            );
+        }
+    }
+
+    #[test]
     fn pane_ids_are_validated() {
         assert!(valid_pane_id("pane-1792429046842-2"));
         assert!(!valid_pane_id("../../etc/passwd"));
@@ -632,6 +890,10 @@ mod tests {
         );
         assert_eq!(
             describe_tool("Edit", &json!({ "file_path": "/repo/src/db/schema.ts" })),
+            "Edit: schema.ts"
+        );
+        assert_eq!(
+            describe_tool("Edit", &json!({ "file_path": r"C:\repo\src\db\schema.ts" })),
             "Edit: schema.ts"
         );
         assert_eq!(describe_tool("TodoWrite", &json!({})), "TodoWrite");
@@ -681,6 +943,17 @@ mod tests {
             "el índice sigue igual"
         );
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn session_ids_are_validated() {
+        assert!(valid_session_id("0b6f2a43-1c1e-4e57-9d0e-6b8f1c2d3e4f"));
+        assert!(!valid_session_id("abc"), "demasiado corto");
+        assert!(
+            !valid_session_id("x'; rm -rf ~; '"),
+            "nada que una shell interprete"
+        );
+        assert!(!valid_session_id(&"a".repeat(129)));
     }
 
     #[test]

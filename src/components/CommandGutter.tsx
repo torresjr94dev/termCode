@@ -7,6 +7,7 @@ import { formatDuration } from "../lib/format";
 import { cn } from "../lib/layout";
 import { useUiStore } from "../store/uiStore";
 import { useNow } from "../lib/useNow";
+import { shortcutLabel } from "../lib/shortcuts";
 
 interface Placed {
   record: CommandRecord;
@@ -87,7 +88,7 @@ export const CommandGutter: React.FC<{ paneId: string }> = ({ paneId }) => {
             <span
               className={cn(
                 "size-[6px] rounded-[1px] transition-transform duration-150 hover:scale-150",
-                state === "running" && "animate-pulse bg-amber",
+                state === "running" && "animate-pulse bg-accent",
                 state === "ok" && "bg-add/70",
                 state === "failed" && "bg-del",
               )}
@@ -151,12 +152,12 @@ const CommandCard: React.FC<{ paneId: string; placed: Placed; onClose: () => voi
       role="dialog"
       aria-label="Detalle del comando"
       style={{ top: Math.max(4, top - 8) }}
-      className="pointer-events-auto absolute left-4 z-20 w-[320px] animate-pop-in overflow-hidden rounded-md border border-line-strong bg-raised shadow-[0_16px_40px_-10px_rgb(0_0_0/0.6)]"
+      className="pointer-events-auto absolute left-4 z-20 w-[320px] animate-pop-in overflow-hidden rounded-md border border-[var(--glass-border)] glass"
     >
       <div className="border-b border-line px-3 py-2">
         <p className="select-text break-all font-mono text-[12px] text-ink">{record.command || "(comando sin texto)"}</p>
         <p className="mt-1 flex flex-wrap gap-x-2 font-mono text-[11px] text-ink-3">
-          <span className={cn(state === "ok" && "text-add", state === "failed" && "text-del", state === "running" && "text-amber")}>
+          <span className={cn(state === "ok" && "text-add", state === "failed" && "text-del", state === "running" && "text-accent")}>
             {state === "running" ? "corriendo" : state === "ok" ? "✓ código 0" : `✗ código ${record.exitCode ?? "?"}`}
           </span>
           <span>{formatDuration(duration)}</span>
@@ -179,7 +180,7 @@ const CommandCard: React.FC<{ paneId: string; placed: Placed; onClose: () => voi
         ))}
       </ul>
       <p className="flex items-center gap-1.5 border-t border-line px-3 py-1.5 text-[11px] text-ink-3">
-        <CornerDownLeft size={11} aria-hidden="true" /> ⌘↑ / ⌘↓ salta entre comandos
+        <CornerDownLeft size={11} aria-hidden="true" /> {shortcutLabel("prevCommand")} / {shortcutLabel("nextCommand")} salta entre comandos
       </p>
     </div>
   );

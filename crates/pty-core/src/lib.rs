@@ -11,6 +11,8 @@ mod shell;
 pub use flow::FlowConfig;
 pub use procinfo::ProcessInfo;
 pub use session::{OutputSink, Session, SessionId, SpawnOptions};
+#[cfg(windows)]
+pub use shell::powershell;
 pub use shell::shell_quote;
 #[cfg(unix)]
 pub use shell::user_shell;

@@ -1,6 +1,15 @@
 import { create } from "zustand";
+import { IS_MAC } from "../lib/shortcuts";
 
-export type ThemeId = "fosforo" | "fosforo-verde" | "papel";
+export type ThemeId = "neon" | "fosforo" | "fosforo-verde" | "papel";
+
+/** Nombres para mostrar, en el orden de los selectores. */
+export const THEME_NAMES: Record<ThemeId, string> = {
+  neon: "Neón",
+  fosforo: "Fósforo",
+  "fosforo-verde": "Fósforo verde",
+  papel: "Papel",
+};
 export type EditorId = "auto" | "cursor" | "code" | "zed" | "subl" | "system";
 
 export interface Settings {
@@ -27,6 +36,10 @@ export interface Settings {
   quotaGuard: boolean;
   /** Los agentes pueden leer la salida de otros paneles (MCP de solo lectura). */
   agentsReadPanes: boolean;
+  /** Los permisos de Claude se aprueban desde la bandeja, sin ir a su panel. */
+  approvalsInApp: boolean;
+  /** Bienvenida al abrir una pestaña de shell: la más grande que quepa, compacta o nada. */
+  welcomeBanner: "full" | "compact" | "off";
   screenReader: boolean;
   /** Mantener ⌘ sola muestra la hoja de atajos (macOS). */
   holdHints: boolean;
@@ -36,7 +49,7 @@ export interface Settings {
 export const DEFAULT_FONT = '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, Menlo, monospace';
 
 export const DEFAULT_SETTINGS: Settings = {
-  theme: "fosforo",
+  theme: "neon",
   fontFamily: DEFAULT_FONT,
   fontSize: 13,
   lineHeight: 1.15,
@@ -51,10 +64,13 @@ export const DEFAULT_SETTINGS: Settings = {
   openPathsIn: "editor",
   editor: "auto",
   quickTerminal: true,
-  quickShortcut: "Alt+Space",
+  // Alt+Space es el menú de la ventana en Windows y en GNOME: no se le roba al sistema.
+  quickShortcut: IS_MAC ? "Alt+Space" : "Ctrl+Alt+Space",
   quickHideOnBlur: true,
   quotaGuard: true,
   agentsReadPanes: true,
+  approvalsInApp: true,
+  welcomeBanner: "full",
   screenReader: false,
   holdHints: true,
   onboardingDone: false,
@@ -79,7 +95,7 @@ export function sanitize(input: unknown): Settings {
   const oneOf = (...options: string[]) => (v: unknown) => typeof v === "string" && options.includes(v);
 
   return {
-    theme: pick("theme", oneOf("fosforo", "fosforo-verde", "papel")),
+    theme: pick("theme", oneOf("neon", "fosforo", "fosforo-verde", "papel")),
     fontFamily: pick("fontFamily", (v) => typeof v === "string" && v.trim().length > 0 && v.length < 300),
     fontSize: clamp(pick("fontSize", isNum), LIMITS.fontSize),
     lineHeight: clamp(pick("lineHeight", isNum), LIMITS.lineHeight),
@@ -98,6 +114,8 @@ export function sanitize(input: unknown): Settings {
     quickHideOnBlur: pick("quickHideOnBlur", isBool),
     quotaGuard: pick("quotaGuard", isBool),
     agentsReadPanes: pick("agentsReadPanes", isBool),
+    approvalsInApp: pick("approvalsInApp", isBool),
+    welcomeBanner: pick("welcomeBanner", oneOf("full", "compact", "off")),
     screenReader: pick("screenReader", isBool),
     holdHints: pick("holdHints", isBool),
     onboardingDone: pick("onboardingDone", isBool),

@@ -1,4 +1,5 @@
 import type { IMarker, Terminal } from "@xterm/xterm";
+import type { ProcessInfo } from "../types/layout";
 
 /**
  * Comandos de un panel, a partir de las marcas de la integración con la shell
@@ -30,15 +31,42 @@ export function decodeCommandLine(raw: string): string {
   );
 }
 
-/** `file://host/Users/x/Mi%20dir` → `/Users/x/Mi dir`. */
+/** `file://host/Users/x/Mi%20dir` → `/Users/x/Mi dir`; `file://host/C:/Users/x` → `C:\Users\x`. */
 export function decodeCwd(raw: string): string | null {
   const match = /^file:\/\/[^/]*(\/.*)$/.exec(raw);
   if (!match) return null;
+  let path: string;
   try {
-    return decodeURIComponent(match[1]);
+    path = decodeURIComponent(match[1]);
   } catch {
-    return match[1];
+    path = match[1];
   }
+  return /^\/[A-Za-z]:(\/|$)/.test(path) ? `${path.slice(1, 3)}\\${path.slice(4).replace(/\//g, "\\")}` : path;
+}
+
+/**
+ * Completa lo que el sistema no sabe con lo que reportó la shell. En Windows
+ * no se puede leer la carpeta ni el proceso en primer plano de otro proceso
+ * (`foregroundPid` llega vacío), pero la integración sí los cuenta (OSC 7 y
+ * 133). Un agente se lanza sin prompt previo: sigue ocupado hasta que aparece
+ * el primero, que es cuando el agente terminó.
+ */
+export function withShellFacts(
+  info: ProcessInfo,
+  tracker: Pick<CommandTracker, "cwd" | "records" | "integrated">,
+  isShell: boolean,
+): ProcessInfo {
+  const cwd = info.cwd ?? tracker.cwd;
+  if (info.foregroundPid !== null) return { ...info, cwd };
+  const last = tracker.records.at(-1);
+  const command = last && last.endedAt === null ? last.command.split(/\s+/)[0] || "un comando" : null;
+  const agentRunning = !isShell && !tracker.integrated;
+  return {
+    ...info,
+    cwd,
+    busy: info.busy || command !== null || agentRunning,
+    foregroundName: command ?? info.foregroundName,
+  };
 }
 
 export class CommandTracker {

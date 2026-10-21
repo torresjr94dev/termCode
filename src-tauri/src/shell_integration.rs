@@ -7,8 +7,10 @@
 //! * `OSC 7;file://<host><cwd>`
 //!
 //! zsh is hooked through `ZDOTDIR`, the way VS Code does it: our startup files
-//! source the user's own (untouched) files and then add two hooks. Nothing in
-//! the user's dotfiles is modified. Other shells start without integration.
+//! source the user's own (untouched) files and then add two hooks. On Windows,
+//! PowerShell loads its profile as usual and then our script wraps `prompt` and
+//! PSReadLine's `PSConsoleHostReadLine` (see `winlaunch`). Nothing in the user's
+//! dotfiles or profile is modified. Other shells start without integration.
 
 use crate::agents::state_dir;
 use std::path::PathBuf;
@@ -85,6 +87,72 @@ precmd_functions=(__tc_precmd ${precmd_functions[@]})
 preexec_functions+=(__tc_preexec)
 "#;
 
+/// PowerShell 5.1 y 7: `[char]27`/`[char]7` porque `` `e `` no existe en 5.1.
+/// El código de salida es 0 si el comando salió bien; si no, el del último
+/// programa nativo o 1 (un cmdlet que falla no tiene código). El prompt del
+/// usuario (oh-my-posh, starship…) ve el mismo `$?` y `$LASTEXITCODE` que sin
+/// termCode. Sin PSReadLine no hay línea de comando ni marca de salida, solo
+/// prompts y carpeta.
+const POWERSHELL: &str = r#"# termCode: marcas de prompt, comando, salida y código de salida.
+if ($Global:__TcIntegrated) { return }
+$Global:__TcIntegrated = $true
+$Global:__TcRunning = $false
+$Global:__TcPrompt = $function:prompt
+
+function Global:__TcEscape([string]$Value) {
+  $Value = $Value.Replace('\', '\\').Replace(';', '\x3b').Replace("`r", '').Replace("`n", '\x0a')
+  $Value.Replace([string][char]7, '').Replace([string][char]27, '')
+}
+
+function Global:prompt {
+  $ok = $global:?
+  $code = $Global:LASTEXITCODE
+  $e = [char]27
+  $bel = [char]7
+  $out = ''
+  if ($Global:__TcRunning) {
+    $Global:__TcRunning = $false
+    $status = if ($ok) { 0 } elseif ($code -is [int] -and $code -ne 0) { $code } else { 1 }
+    $out += "$e]133;D;$status$bel"
+  }
+  $location = $ExecutionContext.SessionState.Path.CurrentLocation
+  if ($location.Provider.Name -eq 'FileSystem' -and $location.ProviderPath -match '^[A-Za-z]:\\') {
+    $path = $location.ProviderPath.Replace('\', '/').Replace('%', '%25').Replace(' ', '%20')
+    $out += "$e]7;file://$env:COMPUTERNAME/$path$bel"
+  }
+  $out += "$e]133;A$bel"
+  $Global:LASTEXITCODE = $code
+  if (-not $ok) { Write-Error 'termCode' -ErrorAction Ignore }
+  $out + (& $Global:__TcPrompt)
+}
+
+if (Get-Command PSConsoleHostReadLine -ErrorAction Ignore) {
+  $Global:__TcReadLine = $function:PSConsoleHostReadLine
+  function Global:PSConsoleHostReadLine {
+    $line = & $Global:__TcReadLine
+    if (-not [string]::IsNullOrWhiteSpace($line)) {
+      $e = [char]27
+      $bel = [char]7
+      [Console]::Write("$e]633;E;$(__TcEscape $line)$bel$e]133;C$bel")
+      $Global:__TcRunning = $true
+    }
+    $line
+  }
+}
+"#;
+
+const POWERSHELL_FILE: &str = "termcode-integration.ps1";
+
+fn powershell_dir() -> PathBuf {
+    state_dir().join("shell").join("pwsh")
+}
+
+/// The PowerShell integration script, if it was installed.
+#[cfg(windows)]
+pub fn powershell_script() -> Option<PathBuf> {
+    Some(powershell_dir().join(POWERSHELL_FILE)).filter(|p| p.is_file())
+}
+
 fn zsh_dir() -> PathBuf {
     state_dir().join("shell").join("zsh")
 }
@@ -106,10 +174,16 @@ pub fn install() -> std::io::Result<PathBuf> {
     ] {
         std::fs::write(dir.join(name), content)?;
     }
+    if cfg!(windows) {
+        let pwsh = powershell_dir();
+        std::fs::create_dir_all(&pwsh)?;
+        std::fs::write(pwsh.join(POWERSHELL_FILE), POWERSHELL)?;
+    }
     Ok(dir)
 }
 
 /// Environment that turns integration on for a zsh session (empty for other shells).
+#[cfg(unix)]
 pub fn env_for(shell: &str) -> Vec<(String, String)> {
     if !shell.ends_with("/zsh") && shell != "zsh" {
         return Vec::new();

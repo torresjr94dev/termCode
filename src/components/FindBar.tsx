@@ -4,6 +4,7 @@ import { terminalManager } from "../terminal/TerminalManager";
 import { useUiStore } from "../store/uiStore";
 import { cn } from "../lib/layout";
 import { IconButton } from "./ui";
+import { shiftLabel } from "../lib/shortcuts";
 
 /** Búsqueda en el scrollback del panel (⌘F). Enter: siguiente · ⇧Enter: anterior · Esc: cerrar. */
 export const FindBar: React.FC<{ paneId: string }> = ({ paneId }) => {
@@ -44,7 +45,7 @@ export const FindBar: React.FC<{ paneId: string }> = ({ paneId }) => {
   return (
     <div
       role="search"
-      className="absolute right-3 top-2 z-20 flex h-9 animate-pop-in items-center gap-1 rounded-md border border-line-strong bg-raised pl-3 pr-1 shadow-[0_12px_32px_-8px_rgb(0_0_0/0.6)]"
+      className="absolute right-3 top-2 z-20 flex h-9 animate-pop-in items-center gap-1 rounded-md border border-[var(--glass-border)] glass pl-3 pr-1"
     >
       <input
         ref={inputRef}
@@ -80,7 +81,7 @@ export const FindBar: React.FC<{ paneId: string }> = ({ paneId }) => {
         pressed={caseSensitive}
         onClick={() => setCaseSensitive((v) => !v)}
       />
-      <IconButton size="sm" icon={ArrowUp} label="Anterior" shortcut="⇧↵" onClick={() => search({ backwards: true })} />
+      <IconButton size="sm" icon={ArrowUp} label="Anterior" shortcut={shiftLabel("↵")} onClick={() => search({ backwards: true })} />
       <IconButton size="sm" icon={ArrowDown} label="Siguiente" shortcut="↵" onClick={() => search()} />
       <IconButton size="sm" icon={X} label="Cerrar búsqueda" shortcut="esc" onClick={close} />
     </div>

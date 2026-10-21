@@ -29,9 +29,15 @@ pub struct Counter {
     entries: HashMap<String, (u64, u64)>,
 }
 
+/// Tokens of the last 24 h: total and by hour.
+pub struct Reading {
+    pub total: u64,
+    pub by_hour: Vec<u64>,
+}
+
 impl Counter {
     /// Returns `None` when Claude Code has no transcripts on this machine.
-    pub fn refresh(&mut self) -> Option<u64> {
+    pub fn refresh(&mut self) -> Option<Reading> {
         let root = dirs::home_dir()?.join(".claude").join("projects");
         if !root.is_dir() {
             return None;
@@ -46,9 +52,13 @@ impl Counter {
             ingest(&path, state, &mut self.entries);
         }
 
-        let cutoff = now_ms().saturating_sub(WINDOW_MS);
+        let now = now_ms();
+        let cutoff = now.saturating_sub(WINDOW_MS);
         self.entries.retain(|_, (ts, _)| *ts >= cutoff);
-        Some(self.entries.values().map(|(_, tokens)| tokens).sum())
+        Some(Reading {
+            total: self.entries.values().map(|(_, tokens)| tokens).sum(),
+            by_hour: super::bucket_by_hour(self.entries.values().copied(), now),
+        })
     }
 }
 

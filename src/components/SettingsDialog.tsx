@@ -16,6 +16,8 @@ import { cn } from "../lib/layout";
 import { IS_TAURI } from "../lib/ipc";
 import { checkForUpdate, installUpdate, updatesSupported, type UpdateInfo, type UpdateProgress } from "../lib/updates";
 import { IconButton } from "./ui";
+import { LogoMark } from "./Logo";
+import { CLICK_MOD, IS_MAC, IS_WINDOWS, shortcutLabel } from "../lib/shortcuts";
 
 /** Fuentes monoespaciadas comunes; solo se ofrecen las que el sistema tiene. */
 const FONT_CANDIDATES: Array<{ label: string; family: string; bundled?: boolean }> = [
@@ -32,6 +34,7 @@ const FONT_CANDIDATES: Array<{ label: string; family: string; bundled?: boolean 
 ];
 
 const THEMES: Array<{ id: ThemeId; name: string; swatch: [string, string, string] }> = [
+  { id: "neon", name: "Neón", swatch: ["#0a0d0c", "#e6f1ea", "#00e356"] },
   { id: "fosforo", name: "Fósforo", swatch: ["#0f0e0c", "#e6dfd2", "#ffb224"] },
   { id: "fosforo-verde", name: "Fósforo verde", swatch: ["#0d0f0d", "#d8f0dc", "#6fe39a"] },
   { id: "papel", name: "Papel", swatch: ["#f6f3ec", "#1d1a15", "#8c4b00"] },
@@ -100,7 +103,7 @@ const SettingsPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
-        className="flex max-h-[84vh] w-full max-w-[640px] animate-pop-in flex-col overflow-hidden rounded-lg border border-line-strong bg-raised shadow-[0_24px_64px_-12px_rgb(0_0_0/0.7)] outline-none"
+        className="flex max-h-[84vh] w-full max-w-[640px] animate-pop-in flex-col overflow-hidden rounded-lg border border-[var(--glass-border)] glass outline-none"
       >
         <div className="flex h-11 shrink-0 items-center border-b border-line pl-4 pr-2">
           <h2 id="settings-title" className="flex-1 text-[13px] font-medium text-ink">
@@ -122,7 +125,7 @@ const SettingsPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
                     onClick={() => set("theme")(theme.id)}
                     className={cn(
                       "flex flex-col items-start gap-1.5 rounded-md border p-2 text-[12px] transition-colors duration-150",
-                      settings.theme === theme.id ? "border-amber text-ink" : "border-line text-ink-2 hover:border-line-strong",
+                      settings.theme === theme.id ? "border-accent text-ink" : "border-line text-ink-2 hover:border-line-strong",
                     )}
                   >
                     <span className="flex h-7 w-24 overflow-hidden rounded-sm border border-line" aria-hidden="true">
@@ -142,7 +145,7 @@ const SettingsPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
                 options={fonts.map((f) => ({ value: f.family, label: f.label }))}
               />
             </Row>
-            <Row label="Tamaño" hint="También con ⌘+ / ⌘− / ⌘0">
+            <Row label="Tamaño" hint={`También con ${shortcutLabel("fontBigger")} / ${shortcutLabel("fontSmaller")} / ${shortcutLabel("fontReset")}`}>
               <Stepper value={settings.fontSize} {...LIMITS.fontSize} step={1} suffix="px" onChange={set("fontSize")} />
             </Row>
             <Row label="Interlineado">
@@ -164,9 +167,20 @@ const SettingsPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
           </Section>
 
           <Section title="Terminal">
+            <Row label="Bienvenida en terminales nuevas" hint="El logo, tus agentes y los atajos en cada shell nueva (pestaña, división o rápida) y tras `clear`. Nunca en agentes">
+              <Segmented
+                value={settings.welcomeBanner}
+                onChange={set("welcomeBanner")}
+                options={[
+                  { value: "full", label: "Completa" },
+                  { value: "compact", label: "Compacta" },
+                  { value: "off", label: "No" },
+                ]}
+              />
+            </Row>
             <Toggle
-              label="Integración con zsh"
-              hint="Marcas de comando, ⌘↑/⌘↓, avisos y carpeta en vivo. Aplica a terminales nuevas."
+              label={`Integración con ${IS_WINDOWS ? "PowerShell" : "zsh"}`}
+              hint={`Marcas de comando, ${shortcutLabel("prevCommand")}/${shortcutLabel("nextCommand")}, avisos y carpeta en vivo. Aplica a terminales nuevas.`}
               checked={settings.shellIntegration}
               onChange={set("shellIntegration")}
             />
@@ -188,7 +202,7 @@ const SettingsPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
           </Section>
 
           <Section title="Rutas y editor">
-            <Row label="⌘-clic en una ruta abre">
+            <Row label={`${CLICK_MOD}-clic en una ruta abre`}>
               <Segmented
                 value={settings.openPathsIn}
                 onChange={set("openPathsIn")}
@@ -220,7 +234,7 @@ const SettingsPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
             />
             {settings.quickTerminal && (
               <>
-                <Row label="Atajo" hint="Formato: Alt+Space, Cmd+Shift+T…">
+                <Row label="Atajo" hint={IS_MAC ? "Formato: Alt+Space, Cmd+Shift+T…" : "Formato: Ctrl+Alt+Space, Ctrl+Shift+T…"}>
                   <ShortcutInput value={settings.quickShortcut} onChange={set("quickShortcut")} />
                 </Row>
                 <Toggle label="Ocultar al perder el foco" checked={settings.quickHideOnBlur} onChange={set("quickHideOnBlur")} />
@@ -241,21 +255,29 @@ const SettingsPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
               checked={settings.agentsReadPanes}
               onChange={set("agentsReadPanes")}
             />
+            <Toggle
+              label="Aprobar permisos desde la bandeja"
+              hint="Los permisos de Claude aparecen abajo a la derecha, estés donde estés. Si no respondes en 90 s, Claude te pregunta en su panel"
+              checked={settings.approvalsInApp}
+              onChange={set("approvalsInApp")}
+            />
           </Section>
 
           <Section title="Accesibilidad">
             <Toggle
               label="Modo lector de pantalla"
-              hint="Expone el contenido del terminal a VoiceOver (más lento con mucha salida)"
+              hint={`Expone el contenido del terminal a ${IS_MAC ? "VoiceOver" : "tu lector de pantalla"} (más lento con mucha salida)`}
               checked={settings.screenReader}
               onChange={set("screenReader")}
             />
-            <Toggle
-              label="Mostrar atajos al mantener ⌘"
-              hint="Medio segundo con ⌘ presionada (sin otra tecla) abre la hoja de atajos"
-              checked={settings.holdHints}
-              onChange={set("holdHints")}
-            />
+            {IS_MAC && (
+              <Toggle
+                label="Mostrar atajos al mantener ⌘"
+                hint="Medio segundo con ⌘ presionada (sin otra tecla) abre la hoja de atajos"
+                checked={settings.holdHints}
+                onChange={set("holdHints")}
+              />
+            )}
           </Section>
 
           <AboutSection />
@@ -317,14 +339,14 @@ export const Toggle: React.FC<{ label: string; hint?: string; checked: boolean; 
       onClick={() => onChange(!checked)}
       className={cn(
         "relative h-5 w-9 rounded-full border transition-colors duration-150",
-        checked ? "border-amber bg-amber" : "border-line-strong bg-press",
+        checked ? "border-accent bg-accent" : "border-line-strong bg-press",
       )}
     >
       <span
         aria-hidden="true"
         className={cn(
           "absolute top-1/2 size-3.5 -translate-y-1/2 rounded-full transition-[left] duration-150",
-          checked ? "left-[18px] bg-on-amber" : "left-[2px] bg-ink-3",
+          checked ? "left-[18px] bg-on-accent" : "left-[2px] bg-ink-3",
         )}
       />
     </button>
@@ -502,6 +524,10 @@ const AboutSection: React.FC = () => {
 
   return (
     <Section title="Acerca de">
+      <div className="flex items-center gap-3 py-1">
+        <LogoMark title="termCode" className="h-6 w-auto text-ink" />
+        <span className="text-[11.5px] text-ink-3">by CODERGENIUS MX</span>
+      </div>
       <Row label="termCode" hint={version ? `Versión ${version}` : "Versión de desarrollo"}>
         {supported ? (
           <button
@@ -523,7 +549,7 @@ const AboutSection: React.FC = () => {
         </p>
       )}
       {(state.kind === "available" || state.kind === "installing") && (
-        <div className="rounded-md border border-amber/50 bg-amber/[0.06] p-3">
+        <div className="rounded-md border border-accent/50 bg-accent/[0.06] p-3">
           <p className="text-[13px] text-ink">
             termCode {state.info.version} disponible
             <span className="text-ink-3"> · tienes {state.info.currentVersion}</span>
@@ -536,7 +562,7 @@ const AboutSection: React.FC = () => {
               <button
                 type="button"
                 onClick={() => install(state.info)}
-                className="h-7 rounded-md bg-amber px-3 text-[12px] font-medium text-on-amber hover:opacity-90"
+                className="h-7 rounded-md bg-accent px-3 text-[12px] font-medium text-on-accent hover:opacity-90"
               >
                 Instalar y reiniciar
               </button>

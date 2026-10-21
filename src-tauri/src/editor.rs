@@ -4,6 +4,7 @@
 use crate::agents::{tool_command, tools};
 use crate::proc;
 use std::path::Path;
+#[cfg(unix)]
 use std::process::Command;
 use std::time::Duration;
 
@@ -22,17 +23,19 @@ fn pick(preference: &str) -> Option<(String, &'static str)> {
         .find_map(|(_, path, style)| path.map(|p| (p, style)))
 }
 
+/// Windows: `ShellExecuteW` (vía el plugin opener), nunca `cmd /C start`, que
+/// leería `&`, `^` o `%` de un nombre de archivo como parte del comando.
+#[cfg(windows)]
+fn system_open(path: &Path) -> Result<(), String> {
+    tauri_plugin_opener::open_path(path, None::<&str>).map_err(|e| e.to_string())
+}
+
+#[cfg(unix)]
 fn system_open(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let mut cmd = Command::new("/usr/bin/open");
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(not(target_os = "macos"))]
     let mut cmd = Command::new("xdg-open");
-    #[cfg(windows)]
-    let mut cmd = {
-        let mut c = Command::new("cmd");
-        c.args(["/C", "start", ""]);
-        c
-    };
     cmd.arg(path);
     let out = proc::run(cmd, None, Duration::from_secs(10), 4096).map_err(|e| e.to_string())?;
     if out.success() {

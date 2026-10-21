@@ -126,6 +126,40 @@ describe("titles, attention and font", () => {
     expect(after.type === "split" && after.ratio).toBe(0.5);
   });
 
+  it("replaces a pane in place with a new process, keeping it active", () => {
+    const old = s().tabs[0].activePaneId;
+    s().setAttention(old, { kind: "done", message: "", at: 1 });
+    const fresh = s().replacePane(old, { cwd: "/repo", agentType: "claude", command: "claude --resume x" });
+    expect(fresh).not.toBe(old);
+    expect(collectPanes(s().tabs[0].root)).toEqual([expect.objectContaining({ id: fresh, agentType: "claude", cwd: "/repo" })]);
+    expect(s().tabs[0].activePaneId).toBe(fresh);
+    expect(terminalManager.kill).toHaveBeenCalledWith(old);
+    expect(s().attention).toEqual({});
+  });
+
+  it("remembers the agent session, keeping the last prompt when the session restarts", () => {
+    const shell = s().tabs[0].activePaneId;
+    s().setAgentSession(shell, { id: "session-1234", at: 1 });
+    expect(collectPanes(s().tabs[0].root)[0].agentSession).toBeUndefined(); // una shell no tiene sesión
+
+    s().splitPane(shell, "horizontal", { agentType: "claude", command: "claude" });
+    const agent = s().tabs[0].activePaneId;
+    s().setAgentSession(agent, { id: "session-1234", prompt: "hola", at: 2 });
+    s().setAgentSession(agent, { id: "session-1234", at: 3 }); // SessionStart: sin mensaje
+    expect(collectPanes(s().tabs[0].root)[1].agentSession).toEqual({ id: "session-1234", prompt: "hola", at: 2 });
+    s().setAgentSession(agent, { id: "session-9999", at: 4 }); // /clear: sesión nueva
+    expect(collectPanes(s().tabs[0].root)[1].agentSession).toEqual({ id: "session-9999", prompt: undefined, at: 4 });
+  });
+
+  it("every new shell gets the welcome card; agents do not", () => {
+    s().createTab();
+    expect(collectPanes(s().tabs.at(-1)!.root)[0].welcome).toBe(true);
+    s().splitPane(s().tabs.at(-1)!.activePaneId, "horizontal", { agentType: "claude", command: "claude" });
+    expect(collectPanes(s().tabs.at(-1)!.root)[1].welcome).toBeUndefined();
+    s().createTab({ welcome: false });
+    expect(collectPanes(s().tabs.at(-1)!.root)[0].welcome).toBeUndefined();
+  });
+
   it("splits inherit the spec (cwd, agent)", () => {
     s().splitPane(s().tabs[0].activePaneId, "horizontal", { cwd: "/repo", agentType: "claude", command: "claude" });
     const created = collectPanes(s().tabs[0].root)[1];

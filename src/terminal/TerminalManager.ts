@@ -14,8 +14,10 @@ import { IS_TAURI } from "../lib/ipc";
 import { IS_MAC } from "../lib/shortcuts";
 import { DEFAULT_SETTINGS, type Settings } from "../store/settingsStore";
 import type { ProcessInfo } from "../types/layout";
-import { CommandTracker, type CommandRecord } from "./commands";
+import { CommandTracker, withShellFacts, type CommandRecord } from "./commands";
 import { fileLinkProvider, type FileLinkTarget } from "./links";
+import { sanitizePaste } from "./paste";
+import { indexAfterClear } from "./clear";
 import { XTERM_THEMES } from "./themes";
 
 export const FONT_SIZE = { min: 9, max: 24, default: DEFAULT_SETTINGS.fontSize } as const;
@@ -36,7 +38,35 @@ export interface SpawnSpec {
   cwd?: string;
   /** Línea de comandos que corre la shell de login (agentes). */
   command?: string;
+  /** Escribir la bienvenida antes de arrancar la shell (pestañas nuevas). */
+  welcome?: boolean;
 }
+
+/** Medidas vivas del panel para la tarjeta de bienvenida (se reacomoda al redimensionar). */
+export interface WelcomeView {
+  /** Ancho útil de la terminal, en píxeles. */
+  width: () => number;
+  onResize: (listener: () => void) => () => void;
+}
+
+/**
+ * Bienvenida de una pestaña nueva: una tarjeta real anclada a unas líneas en
+ * blanco (no se deforma al dividir, porque una línea vacía no tiene nada que
+ * partirse) o, con lector de pantalla, una línea de texto.
+ */
+export type WelcomeContent =
+  | { kind: "text"; text: string }
+  | { kind: "card"; height: number; mount: (host: HTMLElement, view: WelcomeView) => () => void };
+
+/** El próximo frame, o poco después si la ventana no está pintando (rAF en pausa). */
+const nextFrame = () =>
+  new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, 80);
+    requestAnimationFrame(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
 
 interface TerminalInstance {
   id: string;
@@ -52,6 +82,10 @@ interface TerminalInstance {
   /** Bytes ya procesados por xterm y aún no confirmados al backend. */
   pendingAck: number;
   ackScheduled: boolean;
+  /** Shell (no agente): tras `clear` vuelve a dar la bienvenida. */
+  isShell: boolean;
+  /** La tarjeta de bienvenida visible (una a la vez). */
+  welcomeCard: { dispose: () => void } | null;
   dispose: Array<() => void>;
 }
 
@@ -67,6 +101,8 @@ interface StoreHooks {
   onCwd: (paneId: string, cwd: string) => void;
   /** ⌘-clic en una ruta de archivo de la salida. */
   onOpenPath: (target: FileLinkTarget) => void;
+  /** Bienvenida para un panel de ese tamaño (`null` = no cabe o está desactivada). */
+  renderWelcome: (paneId: string, size: { cols: number; rows: number; height: number }) => WelcomeContent | null;
 }
 
 /** ⌘-clic (Ctrl-clic fuera de macOS): un clic normal selecciona texto, no abre cosas. */
@@ -92,6 +128,16 @@ const writeOnlyClipboard: IClipboardProvider = {
   writeText: (_selection, text) => navigator.clipboard.writeText(text).catch(() => {}),
 };
 
+/**
+ * Con glass (Neón en la ventana de macOS) el fondo de xterm es transparente:
+ * el velo lo pone el panel por CSS, así hay una sola capa sobre el escritorio.
+ */
+function terminalTheme(s: Settings) {
+  const theme = XTERM_THEMES[s.theme];
+  const glass = s.theme === "neon" && typeof document !== "undefined" && document.documentElement.dataset.glass === "on";
+  return glass ? { ...theme, background: "#00000000" } : theme;
+}
+
 function terminalOptions(s: Settings) {
   return {
     fontSize: s.fontSize,
@@ -101,7 +147,7 @@ function terminalOptions(s: Settings) {
     cursorBlink: s.cursorBlink,
     scrollback: s.scrollback,
     screenReaderMode: s.screenReader,
-    theme: XTERM_THEMES[s.theme],
+    theme: terminalTheme(s),
   };
 }
 
@@ -153,6 +199,8 @@ class TerminalManager {
 
     const term = new Terminal({
       allowProposedApi: true,
+      // Solo se puede fijar al crear: sin esto no hay fondo transparente si luego cambias a Neón.
+      allowTransparency: true,
       cursorInactiveStyle: "outline",
       ...terminalOptions(this.settings),
     });
@@ -184,6 +232,8 @@ class TerminalManager {
       spawnRequested: false,
       pendingAck: 0,
       ackScheduled: false,
+      isShell: false,
+      welcomeCard: null,
       dispose: [],
     };
     instance.dispose.push(instance.tracker.attach());
@@ -268,8 +318,111 @@ class TerminalManager {
 
     if (!instance.spawnRequested) {
       instance.spawnRequested = true;
-      void this.spawn(instance, spec);
+      instance.isShell = !spec.command;
+      if (spec.welcome) void this.welcomeThenSpawn(instance, spec);
+      else void this.spawn(instance, spec);
     }
+  }
+
+  /**
+   * La bienvenida va antes que cualquier byte de la shell: se mide el panel,
+   * se escribe y solo entonces arranca el PTY (ya con su tamaño real). Nunca
+   * pasa por el PTY: la shell no la ve y los agentes que leen paneles tampoco.
+   */
+  private async welcomeThenSpawn(instance: TerminalInstance, spec: SpawnSpec) {
+    await nextFrame();
+    // Se cerró mientras esperaba el frame: no hay shell que arrancar.
+    if (this.instances.get(instance.id) !== instance) return;
+    this.fit(instance.id);
+    await this.showWelcome(instance);
+    await this.spawn(instance, spec);
+  }
+
+  /** Pone la bienvenida en la posición actual del cursor (al abrir el panel o tras `clear`). */
+  private showWelcome(instance: TerminalInstance): Promise<void> {
+    try {
+      const height = instance.term.element?.querySelector<HTMLElement>(".xterm-screen")?.clientHeight ?? 0;
+      const welcome = this.hooks?.renderWelcome(instance.id, { cols: instance.term.cols, rows: instance.term.rows, height });
+      if (welcome?.kind === "text") instance.term.write(welcome.text);
+      else if (welcome?.kind === "card") return this.mountWelcomeCard(instance, welcome);
+    } catch (err) {
+      // Una bienvenida rota nunca puede dejar el panel sin shell.
+      console.warn("[termCode] bienvenida:", err);
+    }
+    return Promise.resolve();
+  }
+
+  /**
+   * Salida de la shell hacia xterm. Si es un `clear` (borra el historial) en
+   * una shell, la tarjeta vuelve justo después del borrado y antes del prompt:
+   * misma pantalla limpia de cuando abriste el panel, sin saltos.
+   */
+  private receive(instance: TerminalInstance, bytes: Uint8Array) {
+    const { term } = instance;
+    const ack = (n: number) => () => this.queueAck(instance, n);
+    const cut = instance.isShell && term.buffer.active.type === "normal" ? indexAfterClear(bytes) : -1;
+    if (cut < 0) {
+      term.write(bytes, ack(bytes.byteLength));
+      return;
+    }
+    term.write(bytes.subarray(0, cut), ack(cut));
+    // `showWelcome` encola sus líneas en xterm ya: el resto de la salida va detrás, en orden.
+    void this.showWelcome(instance);
+    term.write(bytes.subarray(cut), ack(bytes.byteLength - cut));
+  }
+
+  /** Para pruebas sin backend: salida como si viniera de la shell del panel. */
+  public receiveForTesting(id: string, text: string) {
+    const instance = this.instances.get(id);
+    if (instance) this.receive(instance, new TextEncoder().encode(text));
+  }
+
+  /**
+   * Reserva `rows + 1` líneas en blanco y ancla a la primera una decoración de
+   * xterm donde vive la tarjeta. Se desplaza con el historial y desaparece
+   * con él (`clear`, recorte del scrollback o al cerrar el panel).
+   */
+  private mountWelcomeCard(instance: TerminalInstance, card: Extract<WelcomeContent, { kind: "card" }>): Promise<void> {
+    const { term } = instance;
+    const screenHeight = term.element?.querySelector<HTMLElement>(".xterm-screen")?.clientHeight ?? 0;
+    const cell = term.rows ? screenHeight / term.rows : 0;
+    // Filas que ocupa la tarjeta con la letra actual (más una de aire antes del prompt).
+    const rows = Math.max(2, Math.ceil(card.height / (cell || 15)));
+    const reserved = rows + 1;
+    // Una sola a la vez: si la anterior sigue (p. ej. su línea solo se borró), se retira.
+    instance.welcomeCard?.dispose();
+    instance.welcomeCard = null;
+    return new Promise((resolve) => {
+      term.write("\r\n".repeat(reserved), () => {
+        try {
+          const marker = term.registerMarker(-reserved);
+          const decoration = marker ? term.registerDecoration({ marker, height: rows, width: 1, layer: "top" }) : undefined;
+          if (!decoration) return;
+          instance.welcomeCard = decoration;
+          const screen = () => term.element?.querySelector<HTMLElement>(".xterm-screen");
+          const view: WelcomeView = {
+            width: () => screen()?.clientWidth ?? 0,
+            onResize: (listener) => {
+              const sub = term.onResize(() => requestAnimationFrame(listener));
+              return () => sub.dispose();
+            },
+          };
+          let unmount: (() => void) | null = null;
+          decoration.onRender((element) => {
+            if (unmount) return;
+            element.classList.add("welcome-decoration");
+            unmount = card.mount(element, view);
+          });
+          decoration.onDispose(() => {
+            unmount?.();
+            unmount = null;
+            if (instance.welcomeCard === decoration) instance.welcomeCard = null;
+          });
+        } finally {
+          resolve();
+        }
+      });
+    });
   }
 
   private async spawn(instance: TerminalInstance, spec: SpawnSpec) {
@@ -278,10 +431,9 @@ class TerminalManager {
 
     const channel = new Channel<ArrayBuffer>();
     channel.onmessage = (message) => {
-      const bytes = new Uint8Array(message);
       // El ack va cuando xterm *procesó* los bytes, no cuando llegaron: así el
       // backpressure del backend frena al proceso antes de saturar el parser.
-      term.write(bytes, () => this.queueAck(instance, bytes.byteLength));
+      this.receive(instance, new Uint8Array(message));
     };
 
     try {
@@ -458,13 +610,20 @@ class TerminalManager {
   }
 
   public async info(id: string): Promise<ProcessInfo | null> {
-    const sessionId = this.instances.get(id)?.backendSessionId;
-    if (sessionId === null || sessionId === undefined) return null;
+    const instance = this.instances.get(id);
+    const sessionId = instance?.backendSessionId;
+    if (!instance || sessionId === null || sessionId === undefined) return null;
     try {
-      return await invoke<ProcessInfo>("pty_info", { id: sessionId });
+      const info = await invoke<ProcessInfo>("pty_info", { id: sessionId });
+      return withShellFacts(info, instance.tracker, instance.isShell);
     } catch {
       return null;
     }
+  }
+
+  /** Carpeta de inicio del usuario (para mostrar rutas como `~/…`). */
+  public getHome(): string | null {
+    return this.home;
   }
 
   /** Carpeta conocida sin preguntar al backend (OSC 7). */
@@ -476,9 +635,20 @@ class TerminalManager {
     return this.instances.get(id)?.term.getSelection() ?? "";
   }
 
-  /** Pega respetando el bracketed paste del programa (Claude Code, vim, zsh…). */
+  /**
+   * Pega en *este* panel respetando el bracketed paste del programa (Claude
+   * Code, vim, zsh…). Nunca pasa por broadcast: es texto dirigido a uno.
+   * Sin caracteres de control: un `ESC[201~` dentro del texto (p. ej. una línea
+   * citada de un archivo que escribió un agente) cerraría el pegado antes de
+   * tiempo y lo que sigue se "teclearía" como comandos.
+   */
   public paste(id: string, text: string) {
-    this.instances.get(id)?.term.paste(text);
+    const instance = this.instances.get(id);
+    if (!instance) return;
+    const clean = sanitizePaste(text);
+    if (!clean) return;
+    const data = instance.term.modes.bracketedPasteMode ? `\x1b[200~${clean}\x1b[201~` : clean;
+    this.send(instance, "pty_write", { data });
   }
 
   /** Escribe y ejecuta (Enter) una línea en la shell del panel. */

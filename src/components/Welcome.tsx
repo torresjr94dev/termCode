@@ -3,6 +3,7 @@ import { useSettingsStore } from "../store/settingsStore";
 import { useUiStore } from "../store/uiStore";
 import { IS_MAC, shortcutLabel, type ShortcutId } from "../lib/shortcuts";
 import { Kbd } from "./ui";
+import { Logo } from "./Logo";
 
 const TOUR: Array<{ keys: ShortcutId[]; title: string; detail: string }> = [
   { keys: ["palette"], title: "Todo está en la paleta", detail: "Cada acción de termCode, con su atajo al lado. Si dudas, empieza aquí." },
@@ -33,7 +34,7 @@ const WelcomeCard: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-canvas/80 px-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-canvas/70 px-4 backdrop-blur-md">
       <div
         role="dialog"
         aria-modal="true"
@@ -44,21 +45,26 @@ const WelcomeCard: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
             finish();
           }
         }}
-        className="w-full max-w-[600px] animate-pop-in overflow-hidden rounded-xl border border-line-strong bg-raised shadow-[0_32px_80px_-16px_rgb(0_0_0/0.75)]"
+        className="relative w-full max-w-[600px] animate-pop-in overflow-hidden rounded-2xl border border-[var(--glass-border)] glass"
       >
-        <div className="px-7 pb-2 pt-7">
-          <p className="font-mono text-[11px] uppercase tracking-[0.1em] text-amber">termCode</p>
-          <h2 id="welcome-title" className="mt-2 text-[20px] font-medium leading-tight text-ink">
+        {/* El halo del logo: luz del color de marca detrás de la marca. */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -top-24 left-1/2 h-64 w-[420px] -translate-x-1/2 rounded-full bg-accent/15 blur-3xl"
+        />
+        <div className="relative flex flex-col items-center px-7 pb-3 pt-9 text-center">
+          <Logo blink title="termCode" />
+          <h2 id="welcome-title" className="mt-6 text-[20px] font-medium leading-tight text-ink">
             Una terminal hecha para trabajar con agentes.
           </h2>
-          <p className="mt-2 text-[13px] leading-relaxed text-ink-3">
+          <p className="mt-2 max-w-[440px] text-[13px] leading-relaxed text-ink-3">
             Cuatro atajos y ya conoces lo importante.{" "}
             {IS_MAC ? "Para ver todos: mantén ⌘ presionada medio segundo." : "Todos los demás están en la paleta."}
           </p>
         </div>
-        <ul className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2">
+        <ul className="relative mx-5 mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
           {TOUR.map((item) => (
-            <li key={item.title} className="bg-raised px-7 py-4">
+            <li key={item.title} className="rounded-xl border border-line bg-hover/40 px-4 py-3.5">
               <span className="flex gap-1">
                 {item.keys.map((k) => (
                   <Kbd key={k}>{shortcutLabel(k)}</Kbd>
@@ -69,7 +75,7 @@ const WelcomeCard: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
             </li>
           ))}
         </ul>
-        <div className="flex items-center justify-between gap-3 border-t border-line bg-chrome px-7 py-4">
+        <div className="relative mt-5 flex items-center justify-between gap-3 border-t border-line px-7 py-4">
           <button type="button" onClick={() => finish(true)} className="text-[12.5px] text-ink-3 hover:text-ink-2">
             Ajustar tema y fuente
           </button>
@@ -77,7 +83,7 @@ const WelcomeCard: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
             ref={startRef}
             type="button"
             onClick={() => finish()}
-            className="h-8 rounded-md bg-amber px-4 text-[13px] font-medium text-on-amber transition-opacity duration-150 hover:opacity-90"
+            className="h-9 rounded-full bg-accent px-5 text-[13px] font-semibold text-on-accent transition-opacity duration-150 hover:opacity-90"
           >
             Empezar
           </button>

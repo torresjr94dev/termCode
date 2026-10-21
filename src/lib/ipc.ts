@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AgentActivity, AgentAttention, AgentStatus, AgentsInfo, UsageSnapshot } from "../types/layout";
+import type { ApprovalDecision, ApprovalRequest } from "../store/approvalStore";
+import type { AgentActivity, AgentAttention, AgentSessionEvent, AgentStatus, AgentsInfo, UsageSnapshot } from "../types/layout";
 
 /** `false` en un navegador normal (p. ej. el harness de pruebas): todo se vuelve no-op. */
 export const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -46,6 +47,15 @@ export const ipc = {
   onAgentStatus: (handler: (status: AgentStatus) => void) => on("agent-status", handler),
   onAgentAttention: (handler: (attention: AgentAttention) => void) => on("agent-attention", handler),
   onAgentActivity: (handler: (activity: AgentActivity) => void) => on("agent-activity", handler),
+  onAgentSession: (handler: (session: AgentSessionEvent) => void) => on("agent-session", handler),
+  approvalDecide: async (id: string, decision: ApprovalDecision, message?: string): Promise<void> => {
+    if (!IS_TAURI) return;
+    await invoke("approval_decide", { id, decision, message: message ?? null });
+  },
+  approvalsSetEnabled: (enabled: boolean) => call<void>("approvals_set_enabled", { enabled }),
+  approvalsPending: () => call<ApprovalRequest[]>("approvals_pending"),
+  onApprovalRequest: (handler: (request: ApprovalRequest) => void) => on("approval-request", handler),
+  onApprovalClosed: (handler: (closed: { id: string }) => void) => on("approval-closed", handler),
   paneSetTitle: (paneId: string, title: string) => call<void>("pane_set_title", { paneId, title }),
   setUnsaved: (unsaved: boolean) => call<void>("editor_set_unsaved", { unsaved }),
   quitApp: () => call<void>("app_quit"),

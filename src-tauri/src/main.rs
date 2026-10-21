@@ -2,6 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    #[cfg(windows)]
+    termcode_lib::harden_dll_search();
     // Claude Code invokes this same binary for its statusLine and hooks; those
     // calls must answer fast and never start the GUI.
     if let Some(code) = termcode_lib::agents::run_cli() {

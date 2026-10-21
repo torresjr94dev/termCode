@@ -70,7 +70,25 @@ pub struct Provider {
     pub windows: Vec<Window>,
     /// Tokens (input + output, no cache) in the last 24 h.
     pub tokens_24h: Option<u64>,
+    /// The same tokens by hour: 24 buckets, oldest first; the last one is the current hour.
+    pub tokens_by_hour: Option<Vec<u64>>,
     pub message: Option<String>,
+}
+
+/// Tokens per hour for the last 24 h (oldest first, last = the hour ending now).
+pub fn bucket_by_hour(entries: impl IntoIterator<Item = (u64, u64)>, now: u64) -> Vec<u64> {
+    const HOUR: u64 = 60 * 60 * 1000;
+    let mut buckets = vec![0u64; 24];
+    for (ts, tokens) in entries {
+        if ts > now {
+            continue;
+        }
+        let age = (now - ts) / HOUR;
+        if age < 24 {
+            buckets[23 - age as usize] += tokens;
+        }
+    }
+    buckets
 }
 
 impl Provider {
@@ -83,6 +101,7 @@ impl Provider {
             fetched_at: None,
             windows: Vec::new(),
             tokens_24h: None,
+            tokens_by_hour: None,
             message: None,
         }
     }
@@ -261,14 +280,17 @@ fn spawn_claude_tokens(app: AppHandle) {
         let mut tick = tokio::time::interval(Duration::from_secs(60));
         loop {
             tick.tick().await;
-            let (next, total) = tauri::async_runtime::spawn_blocking(move || {
-                let total = counter.refresh();
-                (counter, total)
+            let (next, reading) = tauri::async_runtime::spawn_blocking(move || {
+                let reading = counter.refresh();
+                (counter, reading)
             })
             .await
             .unwrap_or_else(|_| (claude_tokens::Counter::default(), None));
             counter = next;
-            hub.update(&app, |s| s.claude.tokens_24h = total);
+            hub.update(&app, |s| {
+                s.claude.tokens_24h = reading.as_ref().map(|r| r.total);
+                s.claude.tokens_by_hour = reading.map(|r| r.by_hour);
+            });
         }
     });
 }
@@ -320,5 +342,26 @@ mod tests {
                 ("weekly_scoped:Fable", 0.0)
             ]
         );
+    }
+
+    #[test]
+    fn buckets_tokens_by_hour_oldest_first() {
+        const HOUR: u64 = 60 * 60 * 1000;
+        let now = 100 * HOUR;
+        let buckets = bucket_by_hour(
+            [
+                (now - 10, 5),            // esta hora
+                (now - HOUR - 1, 7),      // la anterior
+                (now - 23 * HOUR - 5, 3), // la más vieja que entra
+                (now - 25 * HOUR, 99),    // fuera de las 24 h
+                (now + 10, 99),           // del futuro (reloj desfasado): fuera
+            ],
+            now,
+        );
+        assert_eq!(buckets.len(), 24);
+        assert_eq!(buckets[23], 5);
+        assert_eq!(buckets[22], 7);
+        assert_eq!(buckets[0], 3);
+        assert_eq!(buckets.iter().sum::<u64>(), 15);
     }
 }

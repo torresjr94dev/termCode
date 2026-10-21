@@ -7,6 +7,9 @@ import { terminalManager } from "../terminal/TerminalManager";
 import { gitApi, isStaged, isUnstaged, type GitChange, type StashEntry } from "./git";
 import { IS_TAURI, ipc, shellQuote } from "./ipc";
 import { settingsNow } from "../store/settingsStore";
+import { collectPanes, findOwnerTab, findPane } from "./layout";
+import { formatReview, type ReviewNote } from "./reviewNotes";
+import { sysLabel } from "./shortcuts";
 
 const project = () => useProjectStore.getState();
 const toast = (text: string, tone: "info" | "error" = "info") => useUiStore.getState().showToast(text, tone);
@@ -205,7 +208,7 @@ export function confirmDiscard(): Promise<boolean> {
   return new Promise((resolve) =>
     useUiStore.getState().askConfirm({
       title: "¿Descartar los cambios sin guardar?",
-      body: `${pending.path} tiene cambios que no guardaste (⌘S los guarda).`,
+      body: `${pending.path} tiene cambios que no guardaste (${sysLabel("S")} los guarda).`,
       confirmLabel: "Descartar cambios",
       onConfirm: () => resolve(true),
       onCancel: () => resolve(false),
@@ -468,6 +471,7 @@ export async function reviewAgent(paneId: string, scope: "turn" | "session" = "t
       created: f.status === "A" && !f.origPath,
       root: snap.root,
       label,
+      paneId,
     }));
     await openDiff(sources[0], sources);
     return true;
@@ -483,6 +487,73 @@ export function stepDiff(delta: number) {
   const index = viewer.siblings.findIndex((s) => sameSource(s, viewer.source));
   const next = viewer.siblings[index + delta];
   if (next) void openDiff(next, viewer.siblings);
+}
+
+/* ------------------------------------------------------------------ */
+/* Revisión por líneas → al agente                                     */
+/* ------------------------------------------------------------------ */
+
+let noteSeq = 0;
+
+export function addNote(note: Omit<ReviewNote, "id">) {
+  if (!note.text.trim()) return;
+  project().set({ notes: [...project().notes, { ...note, id: `note-${Date.now()}-${++noteSeq}` }] });
+}
+
+export function removeNote(id: string) {
+  project().set({ notes: project().notes.filter((n) => n.id !== id) });
+}
+
+/**
+ * Quién recibe la revisión: el agente que hizo esos cambios (si el diff lo
+ * sabe) o el que trabaja en ese árbol (repo o worktree).
+ */
+export function reviewTarget(source: DiffSource): string | null {
+  const agents = useTerminalStore
+    .getState()
+    .tabs.flatMap((t) => collectPanes(t.root))
+    .filter((p) => p.agentType);
+  if (source.kind === "review" && source.paneId && agents.some((p) => p.id === source.paneId)) return source.paneId;
+  const root = source.root ?? project().repo?.root;
+  if (!root) return null;
+  const inside = agents.find((p) => {
+    const cwd = terminalManager.knownCwd(p.id) ?? p.cwd;
+    return cwd === root || Boolean(cwd?.startsWith(`${root}/`));
+  });
+  return inside?.id ?? null;
+}
+
+/**
+ * Pega todos los comentarios de este árbol en el agente como un solo mensaje,
+ * sin Enter: lo lees y lo mandas tú. Sin agente, se copia al portapapeles.
+ */
+export async function sendReview() {
+  const viewer = project().viewer;
+  if (viewer?.kind !== "diff") return;
+  const root = viewer.source.root ?? project().repo?.root;
+  const notes = project().notes.filter((n) => n.root === root);
+  if (!root || !notes.length) return;
+  const text = formatReview(notes);
+  const target = reviewTarget(viewer.source);
+  if (!target) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("No hay un agente trabajando en esa carpeta: copié la revisión al portapapeles.");
+    } catch {
+      toast("No hay un agente en esa carpeta y no se pudo copiar la revisión.", "error");
+    }
+    return;
+  }
+  const terminals = useTerminalStore.getState();
+  const owner = findOwnerTab(terminals.tabs, target);
+  const pane = owner ? findPane(owner.root, target) : undefined;
+  terminalManager.paste(target, text);
+  project().set({ notes: project().notes.filter((n) => n.root !== root), viewer: null });
+  if (owner) {
+    terminals.setActiveTab(owner.id);
+    terminals.setActivePane(target);
+  }
+  toast(`Revisión pegada en ${pane?.title ?? "el agente"}: léela y pulsa Enter para mandarla.`);
 }
 
 export function closeViewer() {

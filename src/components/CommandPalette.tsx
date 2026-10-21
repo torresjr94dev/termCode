@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  BellRing,
   FolderTree,
   Maximize2,
   Palette,
@@ -43,10 +44,10 @@ import { commit, generateCommitMessage, openBranchPicker, openProject, pull, pus
 import { useUiStore } from "../store/uiStore";
 import { collectPanes as panesOf } from "../lib/layout";
 import { useProjectStore } from "../store/projectStore";
-import { useSettingsStore } from "../store/settingsStore";
+import { THEME_NAMES, useSettingsStore, type ThemeId } from "../store/settingsStore";
 import { cn, tabLabel } from "../lib/layout";
 import { shortcutLabel, tabShortcutLabel, type ShortcutId } from "../lib/shortcuts";
-import { Kbd } from "./ui";
+import { Kbd, PromptCaret, PromptCursor } from "./ui";
 
 interface Command {
   id: string;
@@ -110,6 +111,7 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           { id: `${agent}-worktree`, group: "Agentes", title: `${name} en un worktree nuevo`, hint: hint ?? "rama propia", icon: GitBranch, run: () => actions.openAgentInWorktree(agent) },
         ];
       }),
+      { id: "next-attention", group: "Agentes", title: "Ir al que te necesita", hint: "permisos y preguntas primero", icon: BellRing, shortcut: sc("nextAttention"), run: actions.focusNextAttention },
       { id: "mission", group: "Agentes", title: "Mission Control de agentes", icon: LayoutGrid, shortcut: sc("missionControl"), run: () => useUiStore.getState().setMissionOpen(true) },
       { id: "review-agent", group: "Agentes", title: "Revisar cambios del agente", hint: "desde tu último mensaje", icon: Eye, run: () => void reviewNearestAgent() },
       { id: "send-selection", group: "Agentes", title: "Enviar selección al agente", hint: "pega el texto seleccionado", icon: Send, run: actions.sendSelectionToAgent },
@@ -138,10 +140,10 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       { id: "reopen", group: "Sesión", title: "Reabrir lo último cerrado", icon: Undo2, shortcut: sc("reopenClosed"), run: actions.reopenClosed },
       { id: "prev-command", group: "Sesión", title: "Comando anterior", icon: ArrowUp, shortcut: sc("prevCommand"), run: () => actions.jumpCommand(-1) },
       { id: "next-command", group: "Sesión", title: "Comando siguiente", icon: ArrowDown, shortcut: sc("nextCommand"), run: () => actions.jumpCommand(1) },
-      ...(["fosforo", "fosforo-verde", "papel"] as const).map<Command>((theme) => ({
+      ...(Object.keys(THEME_NAMES) as ThemeId[]).map<Command>((theme) => ({
         id: `theme-${theme}`,
         group: "Vista",
-        title: `Tema: ${theme === "fosforo" ? "Fósforo" : theme === "fosforo-verde" ? "Fósforo verde" : "Papel"}`,
+        title: `Tema: ${THEME_NAMES[theme]}`,
         hint: theme === currentTheme ? "actual" : undefined,
         icon: Palette,
         run: () => useSettingsStore.getState().update({ theme }),
@@ -238,10 +240,10 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         role="dialog"
         aria-modal="true"
         aria-label="Paleta de comandos"
-        className="flex w-full max-w-[560px] animate-pop-in flex-col overflow-hidden rounded-lg border border-line-strong bg-raised shadow-[0_24px_64px_-12px_rgb(0_0_0/0.7)]"
+        className="flex w-full max-w-[560px] animate-pop-in flex-col overflow-hidden rounded-lg border border-[var(--glass-border)] glass"
       >
         <div className="flex h-12 items-center gap-3 border-b border-line px-4">
-          <span className="font-mono text-[15px] text-amber" aria-hidden="true">
+          <span className="font-mono text-[15px] text-accent" aria-hidden="true">
             ›
           </span>
           <input
@@ -266,7 +268,8 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           <Kbd>esc</Kbd>
         </div>
 
-        <div ref={listRef} id={listId} role="listbox" aria-label="Comandos" className="max-h-[min(400px,55vh)] overflow-y-auto p-1.5">
+        <div ref={listRef} id={listId} role="listbox" aria-label="Comandos" className="relative max-h-[min(400px,55vh)] overflow-y-auto p-1.5">
+          {filtered.length > 0 && <PromptCursor index={activeIndex} layoutKey={filtered} />}
           {filtered.length === 0 ? (
             <p className="px-3 py-8 text-center text-[13px] text-ink-3">
               Nada coincide con «{query}».
@@ -283,7 +286,7 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                   {showGroup && (
                     <div
                       role="presentation"
-                      className="px-2.5 pb-1 pt-2.5 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-3 first:pt-1"
+                      className="pb-1 pl-7 pr-2.5 pt-2.5 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-3 first:pt-1"
                     >
                       {cmd.group}
                     </div>
@@ -298,21 +301,21 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     }}
                     onClick={() => execute(cmd)}
                     className={cn(
-                      "relative flex h-9 cursor-pointer items-center gap-3 rounded-md px-2.5",
-                      isSelected ? "bg-hover text-ink" : "text-ink-2",
+                      "relative flex h-9 cursor-pointer items-center gap-3 rounded-md pl-7 pr-2.5 transition-colors duration-150",
+                      isSelected ? "text-ink" : "text-ink-2",
                     )}
                   >
-                    {isSelected && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-amber" aria-hidden="true" />}
                     <Icon
                       size={15}
                       strokeWidth={1.75}
                       aria-hidden="true"
-                      className={cn("shrink-0", isSelected ? "text-amber" : "text-ink-3")}
+                      className={cn("shrink-0", isSelected ? "text-accent" : "text-ink-3")}
                     />
-                    <span className={cn("min-w-0 truncate text-[13px]", cmd.group === "Pestañas" && "font-mono text-[12px]")}>
-                      {cmd.title}
+                    <span className="prompt-slot flex min-w-0 text-[13px]">
+                      <span className={cn("truncate text-[13px]", cmd.group === "Pestañas" && "font-mono text-[12px]")}>{cmd.title}</span>
+                      {isSelected && <PromptCaret />}
                     </span>
-                    {cmd.hint && <span className="shrink-0 truncate text-[12px] text-ink-3">{cmd.hint}</span>}
+                    {cmd.hint && <span className="-ml-1 shrink-0 truncate text-[12px] text-ink-3">{cmd.hint}</span>}
                     <span className="flex-1" />
                     {cmd.shortcut && <Kbd className={isSelected ? "text-ink-2" : undefined}>{cmd.shortcut}</Kbd>}
                   </div>

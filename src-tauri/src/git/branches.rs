@@ -278,7 +278,9 @@ fn finish_operation(root: &Path, abort: bool) -> Result<(), String> {
     let op = operation(root).ok_or("No hay ninguna operación en curso.")?;
     let flag = if abort { "--abort" } else { "--continue" };
     let mut cmd = command(root);
-    cmd.args([op, flag]).env("GIT_EDITOR", "true");
+    // `:` es "sin editor" para git en todas las plataformas; `true` necesitaría
+    // un `true.exe` en el PATH de Windows.
+    cmd.args([op, flag]).env("GIT_EDITOR", ":");
     let out = proc::run(cmd, None, LOCAL, 256 * 1024).map_err(|e| format!("git {e}"))?;
     if out.success() {
         Ok(())

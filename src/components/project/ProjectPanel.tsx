@@ -8,6 +8,7 @@ import { IconButton } from "../ui";
 import { ChangesTab } from "./ChangesTab";
 import { FilesTab } from "./FilesTab";
 import { HistoryTab } from "./HistoryTab";
+import { basename } from "../../lib/paths";
 
 const TABS: Array<{ id: ProjectTab; label: string }> = [
   { id: "files", label: "Archivos" },
@@ -24,10 +25,10 @@ export const ProjectPanel: React.FC = () => {
   const changeCount = useProjectStore((s) => s.status?.changes.length ?? 0);
 
   if (!isOpen) return null;
-  const title = repo?.name ?? cwd?.split("/").filter(Boolean).pop() ?? "Proyecto";
+  const title = repo?.name ?? (cwd ? basename(cwd) : "Proyecto");
 
   return (
-    <aside aria-label="Proyecto" className="flex h-full w-[360px] shrink-0 flex-col border-l border-line bg-chrome">
+    <aside aria-label="Proyecto" className="flex h-full w-[360px] shrink-0 flex-col overflow-hidden rounded-xl border border-line bg-canvas">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line pl-3 pr-1.5">
         <FolderGit2 size={14} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-ink-3" />
         <h2 className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink" title={repo?.root ?? cwd ?? undefined}>
@@ -55,7 +56,7 @@ export const ProjectPanel: React.FC = () => {
             >
               {label}
               {id === "changes" && changeCount > 0 && (
-                <span className={cn("font-mono text-[11px] tabular-nums", selected ? "text-amber" : "text-ink-3")}>
+                <span className={cn("font-mono text-[11px] tabular-nums", selected ? "text-accent" : "text-ink-3")}>
                   {changeCount}
                 </span>
               )}

@@ -70,7 +70,39 @@ const PAPEL: ITheme = {
   brightWhite: "#fbf9f4",
 };
 
+/**
+ * Neón: el verde del logo como acento (cursor, selección, verde ANSI). El
+ * fondo es opaco; con glass, el TerminalManager lo vuelve transparente y el
+ * velo lo pone el panel (CSS), así la terminal se ve sobre el escritorio
+ * difuminado sin perder contraste.
+ */
+const NEON: ITheme = {
+  background: "#0a0d0c",
+  foreground: "#e6f1ea",
+  cursor: "#00e356",
+  cursorAccent: "#0a0d0c",
+  selectionBackground: "rgba(0, 227, 86, 0.24)",
+  selectionInactiveBackground: "rgba(230, 241, 234, 0.08)",
+  black: "#18201c",
+  red: "#ff6b5b",
+  green: "#00e356",
+  yellow: "#f2c14e",
+  blue: "#7aa7e0",
+  magenta: "#c58fd0",
+  cyan: "#5fd4c0",
+  white: "#d5e2da",
+  brightBlack: "#71857a",
+  brightRed: "#ff9286",
+  brightGreen: "#6dff9e",
+  brightYellow: "#ffd97a",
+  brightBlue: "#a3c3ec",
+  brightMagenta: "#ddb2e6",
+  brightCyan: "#8ce8d8",
+  brightWhite: "#f5fbf7",
+};
+
 export const XTERM_THEMES: Record<ThemeId, ITheme> = {
+  neon: NEON,
   fosforo: FOSFORO,
   "fosforo-verde": FOSFORO_VERDE,
   papel: PAPEL,

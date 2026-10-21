@@ -6,6 +6,7 @@ import { loadSettings, startSettingsSync } from "./lib/settings";
 import { startUpdateChecks } from "./lib/updates";
 import { useTerminalStore } from "./store/terminalStore";
 import { startBridge } from "./lib/bridge";
+import { IS_MAC } from "./lib/shortcuts";
 import { startProjectTracking } from "./lib/project";
 import { loadSession, startAutosave } from "./lib/persistence";
 import { IS_TAURI } from "./lib/ipc";
@@ -56,8 +57,19 @@ async function boot(root: HTMLElement) {
   ]);
   if (session) useTerminalStore.getState().hydrate(session);
 
+  // Glass real solo en la ventana principal de macOS: es la única con vibrancy
+  // (tauri.conf.json). En el resto, o con "reducir transparencia", Neón se pinta opaco.
+  if (IS_TAURI && IS_MAC && !isQuick) {
+    const reduced = window.matchMedia("(prefers-reduced-transparency: reduce)");
+    const sync = () => {
+      if (reduced.matches) delete document.documentElement.dataset.glass;
+      else document.documentElement.dataset.glass = "on";
+    };
+    sync();
+    reduced.addEventListener("change", sync);
+  }
   startSettingsSync({ isMainWindow: !isQuick });
-  startBridge();
+  startBridge({ isMainWindow: !isQuick });
   if (!isQuick) {
     startAutosave();
     startProjectTracking();

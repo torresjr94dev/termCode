@@ -67,7 +67,7 @@ const PrForm: React.FC = () => {
         role="dialog"
         aria-modal="true"
         aria-labelledby="pr-title"
-        className="flex max-h-[80vh] w-full max-w-[620px] animate-pop-in flex-col overflow-hidden rounded-lg border border-line-strong bg-raised shadow-[0_24px_64px_-12px_rgb(0_0_0/0.7)]"
+        className="flex max-h-[80vh] w-full max-w-[620px] animate-pop-in flex-col overflow-hidden rounded-lg border border-[var(--glass-border)] glass"
       >
         <div className="flex items-center gap-2 border-b border-line px-4 py-3">
           <GitPullRequestArrow size={15} strokeWidth={1.75} aria-hidden="true" className="text-ink-3" />
@@ -111,7 +111,7 @@ const PrForm: React.FC = () => {
             />
           </label>
           <label className="flex w-fit cursor-pointer items-center gap-2 text-[12px] text-ink-2">
-            <input type="checkbox" checked={draft} onChange={(e) => setDraft(e.target.checked)} className="size-3.5 accent-[var(--color-amber)]" />
+            <input type="checkbox" checked={draft} onChange={(e) => setDraft(e.target.checked)} className="size-3.5 accent-[var(--color-accent)]" />
             Crear como borrador
           </label>
         </div>
@@ -122,7 +122,7 @@ const PrForm: React.FC = () => {
             disabled={!hasClaude || Boolean(busy) || !base.trim()}
             title={hasClaude ? "Claude (Haiku) escribe título y descripción a partir de los commits" : "Claude Code no está instalado"}
           >
-            <Sparkles size={13} strokeWidth={1.75} aria-hidden="true" className={busy === "pr-ai" ? "animate-pulse text-amber" : ""} />
+            <Sparkles size={13} strokeWidth={1.75} aria-hidden="true" className={busy === "pr-ai" ? "animate-pulse text-accent" : ""} />
             {busy === "pr-ai" ? "Escribiendo…" : "Redactar con IA"}
           </TextButton>
           <span className="min-w-0 flex-1 truncate text-[11px] text-ink-3">

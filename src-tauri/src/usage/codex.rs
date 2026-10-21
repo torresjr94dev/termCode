@@ -140,6 +140,15 @@ fn parse_session(content: &str) -> SessionSummary {
     summary
 }
 
+/// Cumulative counters → (timestamp, tokens added since the previous reading).
+fn increments(totals: &[(i64, u64)]) -> impl Iterator<Item = (u64, u64)> + '_ {
+    totals.windows(2).filter_map(|w| {
+        let added = w[1].1.saturating_sub(w[0].1);
+        let ts = u64::try_from(w[1].0).ok()?;
+        (added > 0).then_some((ts, added))
+    })
+}
+
 /// Tokens a session used after `cutoff` (its counters are cumulative).
 fn tokens_since(totals: &[(i64, u64)], cutoff: i64) -> u64 {
     let Some(&(_, last)) = totals.last() else {
@@ -189,6 +198,7 @@ pub fn read() -> Provider {
         fetched_at: None,
         windows: Vec::new(),
         tokens_24h: None,
+        tokens_by_hour: None,
         message: None,
     };
 
@@ -211,6 +221,10 @@ pub fn read() -> Provider {
             .map(|s| tokens_since(&s.totals, cutoff))
             .sum(),
     );
+    provider.tokens_by_hour = Some(super::bucket_by_hour(
+        summaries.iter().flat_map(|s| increments(&s.totals)),
+        now_ms(),
+    ));
 
     match provider.auth_mode {
         Some(AuthMode::ApiKey) => {

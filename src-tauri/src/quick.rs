@@ -21,7 +21,7 @@ fn window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .skip_taskbar(true)
         .resizable(true)
         .visible(false)
-        .background_color(tauri::window::Color(15, 14, 12, 255))
+        .background_color(tauri::window::Color(10, 13, 12, 255))
         .build()
 }
 

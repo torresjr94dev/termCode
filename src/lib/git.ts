@@ -131,6 +131,15 @@ export interface FilePreview {
   absolute: string;
 }
 
+export interface VerifyResult {
+  /** `null`: no terminó (tiempo agotado o señal). */
+  code: number | null;
+  timedOut: boolean;
+  /** Final de la salida (stdout+stderr en orden, sin colores). */
+  output: string;
+  durationMs: number;
+}
+
 /** Errores de git/gh/claude llegan como texto legible: se propagan tal cual. */
 async function call<T>(command: string, args: Record<string, unknown>): Promise<T> {
   if (!IS_TAURI) throw new Error("Solo disponible en la app de escritorio.");
@@ -174,6 +183,7 @@ export const gitApi = {
   worktreeCreateFor: (cwd: string, label: string) => call<string>("git_worktree_create", { cwd, label }),
   worktreeApply: (source: string, target: string) => call<number>("git_worktree_apply", { source, target }),
   worktreeRemove: (root: string, path: string) => call<void>("git_worktree_remove", { root, path }),
+  worktreeVerify: (worktree: string, command: string) => call<VerifyResult>("git_worktree_verify", { worktree, command }),
   branches: (root: string) => call<GitBranch[]>("git_branches", { root }),
   switchBranch: (root: string, name: string, create: boolean, remote: boolean) =>
     call<void>("git_switch", { root, name, create, remote }),

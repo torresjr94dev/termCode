@@ -27,6 +27,13 @@ export async function loadSettings(timeoutMs = 600): Promise<void> {
 function applyTheme(theme: Settings["theme"]) {
   if (theme === "fosforo") delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = theme;
+  // La apariencia nativa sigue al tema: el vidrio de macOS (y menús, barras de
+  // desplazamiento) se pinta oscuro u claro según lo que estás viendo.
+  if (IS_TAURI) {
+    void import("@tauri-apps/api/window")
+      .then(({ getCurrentWindow }) => getCurrentWindow().setTheme(theme === "papel" ? "light" : "dark"))
+      .catch((err) => console.warn("[termCode] apariencia de la ventana:", err));
+  }
 }
 
 let registeredShortcut: string | null = null;

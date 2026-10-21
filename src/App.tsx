@@ -16,6 +16,7 @@ import { FileFinder } from "./components/FileFinder";
 import { Overview } from "./components/Overview";
 import { ShortcutHints } from "./components/ShortcutHints";
 import { Welcome } from "./components/Welcome";
+import { ApprovalTray } from "./components/ApprovalTray";
 import { useTerminalStore } from "./store/terminalStore";
 import { useUiStore } from "./store/uiStore";
 import { settingsNow } from "./store/settingsStore";
@@ -52,6 +53,7 @@ const SHORTCUT_HANDLERS: Record<Exclude<ShortcutId, "palette">, () => unknown> =
   missionControl: () => useUiStore.getState().setMissionOpen(!useUiStore.getState().isMissionOpen),
   fileFinder: () => useUiStore.getState().setFinderOpen(!useUiStore.getState().isFinderOpen),
   switchBranch: openBranchPicker,
+  nextAttention: actions.focusNextAttention,
 };
 
 const EDITOR_OWNED = new Set<ShortcutId>(["find", "splitRight", "prevCommand", "nextCommand"]);
@@ -209,14 +211,16 @@ export const App: React.FC = () => {
   }, [activeTabId, tabs.length]);
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-canvas text-ink">
+    <div className="flex h-full w-full overflow-hidden bg-window text-ink">
       <Sidebar />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <Header onOpenPalette={() => setPaletteOpen(true)} />
 
-        <div className="flex min-h-0 flex-1">
-          <main className="relative min-w-0 flex-1 bg-canvas">
+        {/* Las tarjetas (terminales, visor, proyecto) flotan sobre el vidrio con 8 px de aire. */}
+        <div className="flex min-h-0 flex-1 gap-2 px-2">
+          {/* Sin fondo propio: cada panel pinta el suyo (con glass, un solo velo sobre el escritorio). */}
+          <main className="relative min-w-0 flex-1">
             {tabs.map((tab) => (
               <div key={tab.id} hidden={tab.id !== activeTabId} className="absolute inset-0">
                 <SplitView node={tab.root} activePaneId={tab.activePaneId} zoomedPaneId={tab.zoomedPaneId} />
@@ -226,7 +230,7 @@ export const App: React.FC = () => {
             {isBroadcastEnabled && (
               <div
                 aria-hidden="true"
-                className="pointer-events-none absolute inset-0 z-20 shadow-[inset_0_0_0_1px_var(--color-signal)]"
+                className="pointer-events-none absolute inset-0 z-20 rounded-xl shadow-[inset_0_0_0_1.5px_var(--color-signal)]"
               />
             )}
             {/* Diffs y vistas previas se abren sobre las terminales; el panel queda a mano */}
@@ -247,6 +251,7 @@ export const App: React.FC = () => {
       <Overview onClosed={focusActivePane} />
       <ShortcutHints />
       <Welcome onClosed={focusActivePane} />
+      <ApprovalTray />
       <ConfirmDialog onSettled={focusActivePane} />
       <ToastHost />
     </div>

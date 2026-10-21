@@ -86,3 +86,26 @@ jobs:
             echo '|---|---|'
             jq -r 'to_entries[] | "| \(.key) | \(.value) |"' bench.json
           } >> "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    # Que compile y pase lint y tests en Windows: sin este job, un `cfg(unix)`
+    # mal puesto rompe la versión de Windows sin que nadie se entere.
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      # tauri::generate_context! necesita el frontend compilado en dist/.
+      - run: pnpm build
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace

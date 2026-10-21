@@ -6,6 +6,7 @@ import { switchBranch } from "../../lib/project";
 import { fuzzyFilter } from "../../lib/fuzzy";
 import { formatAgo } from "../../lib/format";
 import { cn } from "../../lib/layout";
+import { PromptCursor } from "../ui";
 
 type Item = { kind: "branch"; branch: Branch } | { kind: "create"; name: string };
 
@@ -76,7 +77,7 @@ const PickerPanel: React.FC = () => {
       <div
         role="dialog"
         aria-label="Cambiar de rama"
-        className="absolute bottom-full left-2 right-2 z-40 mb-1.5 flex max-h-[min(440px,60vh)] animate-pop-in flex-col overflow-hidden rounded-lg border border-line-strong bg-raised shadow-[0_16px_48px_-12px_rgb(0_0_0/0.7)]"
+        className="absolute bottom-full left-2 right-2 z-40 mb-1.5 flex max-h-[min(440px,60vh)] animate-pop-in flex-col overflow-hidden rounded-lg border border-[var(--glass-border)] glass"
       >
         <div className="flex items-center gap-2 border-b border-line px-3">
           <Search size={13} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-ink-3" />
@@ -111,7 +112,8 @@ const PickerPanel: React.FC = () => {
             className="h-10 min-w-0 flex-1 bg-transparent font-mono text-[12.5px] text-ink outline-none placeholder:font-sans placeholder:text-ink-3"
           />
         </div>
-        <ul ref={listRef} id="branch-results" role="listbox" aria-label="Ramas" className="min-h-0 flex-1 overflow-y-auto py-1">
+        <ul ref={listRef} id="branch-results" role="listbox" aria-label="Ramas" className="relative min-h-0 flex-1 overflow-y-auto py-1">
+          {items.length > 0 && <PromptCursor as="li" index={selected} layoutKey={items} />}
           {error && <li className="px-3 py-4 text-[12px] text-signal">{error}</li>}
           {!error && !branches && <li className="px-3 py-4 text-[12px] text-ink-3">Leyendo ramas…</li>}
           {items.map((item, i) => (
@@ -123,14 +125,13 @@ const PickerPanel: React.FC = () => {
               onMouseMove={() => i !== selected && setCursor(i)}
               onClick={() => pick(item)}
               className={cn(
-                "mx-1 flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5",
-                i === selected ? "bg-press" : "",
+                "relative mx-1 flex cursor-pointer items-center gap-2 rounded-md py-1.5 pl-7 pr-2",
                 item.kind === "create" && "mt-1 border-t border-line pt-2",
               )}
             >
               {item.kind === "create" ? (
                 <>
-                  <Plus size={13} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-amber" />
+                  <Plus size={13} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-accent" />
                   <span className="min-w-0 truncate text-[12.5px] text-ink">
                     Crear <span className="font-mono">{item.name}</span>
                     <span className="text-ink-3"> desde {current ?? "HEAD"}</span>
@@ -150,7 +151,7 @@ const PickerPanel: React.FC = () => {
 const BranchRow: React.FC<{ branch: Branch; now: number }> = ({ branch, now }) => (
   <>
     {branch.current ? (
-      <Check size={13} strokeWidth={2} aria-label="Rama actual" className="shrink-0 text-amber" />
+      <Check size={13} strokeWidth={2} aria-label="Rama actual" className="shrink-0 text-accent" />
     ) : branch.remote ? (
       <Cloud size={13} strokeWidth={1.75} aria-label="Solo en el remoto" className="shrink-0 text-ink-3" />
     ) : (

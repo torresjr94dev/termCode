@@ -2,7 +2,7 @@ import React from "react";
 import { cn } from "../../lib/layout";
 
 const LETTER_STYLE: Record<string, string> = {
-  M: "text-amber",
+  M: "text-accent",
   A: "text-add",
   U: "text-add",
   "?": "text-add",
@@ -69,9 +69,9 @@ export const TextButton: React.FC<React.ButtonHTMLAttributes<HTMLButtonElement> 
   <button
     type="button"
     className={cn(
-      "flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[12px] transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40",
+      "flex h-7 shrink-0 items-center gap-1.5 rounded-full px-3 text-[12px] transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40",
       tone === "primary"
-        ? "bg-amber font-medium text-on-amber hover:opacity-90"
+        ? "bg-accent font-medium text-on-accent hover:opacity-90"
         : "border border-line text-ink-2 hover:border-line-strong hover:bg-hover hover:text-ink",
       className,
     )}

@@ -16,7 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-opener = "2"
 pty-core.workspace = true
 serde.workspace = true
@@ -31,3 +31,16 @@ reqwest = { version = "0.13.5", default-features = false, features = ["json", "n
 tokio = { version = "1.54.0", features = ["time", "sync", "macros"] }
 tauri-plugin-global-shortcut = "2.4"
 tauri-plugin-updater = "2"
+
+[target.'cfg(windows)'.dependencies]
+# Named pipe del canal local (MCP y aprobaciones) con ACL solo del usuario,
+# nombres cortos 8.3 y búsqueda segura de DLLs.
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Pipes",
+] }

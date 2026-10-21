@@ -1,9 +1,11 @@
 //! termCode desktop app: Tauri commands bridging the webview and `pty-core`.
 
 pub mod agents;
+mod approvals;
 mod editor;
 mod fs;
 mod git;
+mod local_ipc;
 mod mcp;
 mod proc;
 mod pty;
@@ -11,6 +13,7 @@ mod quick;
 mod shell_integration;
 mod updater;
 mod usage;
+mod winlaunch;
 
 use pty_core::PtyManager;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,6 +40,24 @@ fn app_quit(app: AppHandle) {
 
 fn must_ask_before_quitting() -> bool {
     UNSAVED.load(Ordering::Relaxed) && !QUIT_CONFIRMED.load(Ordering::Relaxed)
+}
+
+/// Windows: DLLs only from the app folder and System32, never from the current
+/// folder or the PATH. portable-pty loads `conpty.dll` by name and Windows has
+/// none in System32, so the default search would reach both: a `conpty.dll`
+/// planted in the folder termCode starts in would run inside it.
+#[cfg(windows)]
+pub fn harden_dll_search() {
+    use windows_sys::Win32::System::LibraryLoader::{
+        LOAD_LIBRARY_SEARCH_DEFAULT_DIRS, SetDefaultDllDirectories,
+    };
+    // SAFETY: only changes the process-wide search order; no pointers involved.
+    if unsafe { SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS) } == 0 {
+        log::warn!(
+            "SetDefaultDllDirectories failed: {}",
+            std::io::Error::last_os_error()
+        );
+    }
 }
 
 /// With `panic = "abort"` a panic takes every session down with it: make sure
@@ -84,7 +105,6 @@ pub fn run() {
                 log::error!("shell integration: cannot install: {e}");
             }
             agents::spawn_watcher(app.handle().clone());
-            #[cfg(unix)]
             mcp::spawn_socket(app.handle().clone());
             usage::spawn(app.handle().clone());
             updater::init(app.handle());
@@ -105,6 +125,7 @@ pub fn run() {
             git::worktree::git_worktree_list,
             git::worktree::git_worktree_apply,
             git::worktree::git_worktree_remove,
+            git::worktree::git_worktree_verify,
             git::review::git_apply_patch,
             git::review::review_files,
             git::review::review_diff,
@@ -145,6 +166,9 @@ pub fn run() {
             quick::quick_hide,
             mcp::pane_set_title,
             agents::agent_baseline,
+            approvals::approval_decide,
+            approvals::approvals_set_enabled,
+            approvals::approvals_pending,
             updater::update_supported,
             updater::update_check,
             updater::update_install,
@@ -171,4 +195,45 @@ pub fn run() {
         RunEvent::Exit => handle.state::<PtyManager>().kill_all(),
         _ => {}
     });
+}
+
+#[cfg(test)]
+mod tests {
+    /// `tauri.windows.conf.json` reemplaza la lista de ventanas entera (JSON
+    /// Merge Patch no mezcla arrays): fuera de lo que es solo de macOS (glass,
+    /// barra de título superpuesta) o solo de Windows, debe ser la misma ventana.
+    #[test]
+    fn windows_window_config_matches_the_main_one() {
+        let parse = |text: &str| serde_json::from_str::<serde_json::Value>(text).unwrap();
+        let main = parse(include_str!("../tauri.conf.json"));
+        let windows = parse(include_str!("../tauri.windows.conf.json"));
+        let (main, windows) = (&main["app"]["windows"], &windows["app"]["windows"]);
+        assert_eq!(
+            main.as_array().map(Vec::len),
+            windows.as_array().map(Vec::len)
+        );
+        let without = |window: &serde_json::Value, keys: &[&str]| {
+            let mut map = window.as_object().cloned().unwrap_or_default();
+            keys.iter().for_each(|k| {
+                map.remove(*k);
+            });
+            map
+        };
+        let mac_only = [
+            "titleBarStyle",
+            "hiddenTitle",
+            "transparent",
+            "windowEffects",
+            "trafficLightPosition",
+        ];
+        assert_eq!(
+            without(&main[0], &mac_only),
+            without(&windows[0], &["backgroundColor"])
+        );
+        assert_eq!(
+            windows[0].get("transparent"),
+            None,
+            "sin vibrancy, transparente se vería el escritorio"
+        );
+    }
 }

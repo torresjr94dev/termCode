@@ -25,7 +25,7 @@ fn create(cwd: &Path, label: &str) -> Result<PathBuf, String> {
     }
     let top = git(cwd, &["rev-parse", "--show-toplevel"])
         .map_err(|_| "La carpeta del panel no está dentro de un repositorio git.".to_owned())?;
-    let top = PathBuf::from(top.trim());
+    let top = super::native_path(&top);
     let name = top
         .file_name()
         .and_then(|n| n.to_str())
@@ -154,7 +154,8 @@ fn list(root: &Path) -> Result<Vec<AgentWorktree>, String> {
         if !branch.starts_with("termcode/") {
             continue;
         }
-        let wt = Path::new(path);
+        let wt = super::native_path(path);
+        let wt = wt.as_path();
         let Ok(base) = fork_base(wt, &head) else {
             continue;
         };
@@ -164,7 +165,7 @@ fn list(root: &Path) -> Result<Vec<AgentWorktree>, String> {
             .unwrap_or(0);
         let (changed, insertions, deletions) = stats(wt, &base);
         out.push(AgentWorktree {
-            path: path.to_owned(),
+            path: wt.to_string_lossy().into_owned(),
             branch: branch.to_owned(),
             base,
             commits,
@@ -247,9 +248,123 @@ pub async fn git_worktree_remove(root: String, path: String) -> Result<(), Strin
         .map_err(|e| e.to_string())?
 }
 
+// ---------------------------------------------------------------------------
+// Juez de la carrera: tu comando de verificación en el worktree de cada agente
+// ---------------------------------------------------------------------------
+
+const VERIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+/// Se lee mucho y se guarda la cola: el resumen de un test runner va al final.
+const VERIFY_READ: usize = 8 * 1024 * 1024;
+const VERIFY_TAIL: usize = 24 * 1024;
+const MAX_VERIFY_COMMAND: usize = 2000;
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyResult {
+    /// `None`: no terminó (tiempo agotado o lo mató una señal).
+    pub code: Option<i32>,
+    pub timed_out: bool,
+    /// Últimos KB de stdout+stderr, en orden y sin colores.
+    pub output: String,
+    pub duration_ms: u64,
+}
+
+fn tail(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_owned();
+    }
+    let mut start = text.len() - max;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    format!("…\n{}", &text[start..])
+}
+
+/// Tu comando, tal cual lo escribiste, en tu shell de login (tu PATH: nvm,
+/// brew…). `exec 2>&1` junta stderr con stdout respetando el orden.
+#[cfg(unix)]
+fn verify_command(command: &str) -> std::process::Command {
+    let mut cmd = crate::agents::tool_command(&pty_core::user_shell());
+    cmd.args(["-l", "-c", &format!("exec 2>&1\n{command}")]);
+    cmd
+}
+
+/// En Windows, PowerShell (la misma que usan los paneles): `2>&1` junta los
+/// flujos. El código es el del último programa si corrió alguno (en 5.1, `$?`
+/// sale falso con cualquier línea en stderr aunque el programa salga con 0); si
+/// solo hubo cmdlets, 1 cuando fallaron.
+#[cfg(windows)]
+fn verify_command(command: &str) -> std::process::Command {
+    let mut cmd = crate::agents::tool_command(pty_core::powershell().unwrap_or("powershell.exe"));
+    cmd.args([
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        &format!(
+            "$global:LASTEXITCODE = $null; & {{ {command} }} 2>&1; $ok = $?; \
+             if ($null -ne $global:LASTEXITCODE) {{ exit $global:LASTEXITCODE }}; if ($ok) {{ exit 0 }}; exit 1"
+        ),
+    ]);
+    cmd
+}
+
+fn verify(worktree: &Path, command: &str) -> Result<VerifyResult, String> {
+    let command = command.trim();
+    if command.is_empty() || command.len() > MAX_VERIFY_COMMAND || command.contains('\0') {
+        return Err("Comando de verificación inválido.".into());
+    }
+    let branch = git(worktree, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    if !branch.trim().starts_with("termcode/") {
+        return Err("Solo se verifican worktrees creados por termCode.".into());
+    }
+    let mut cmd = verify_command(command);
+    cmd.current_dir(worktree)
+        .env("CI", "1")
+        .env("NO_COLOR", "1")
+        .env("FORCE_COLOR", "0");
+    let started = std::time::Instant::now();
+    let result = crate::proc::run(cmd, None, VERIFY_TIMEOUT, VERIFY_READ);
+    let duration_ms = started.elapsed().as_millis() as u64;
+    match result {
+        Ok(out) => Ok(VerifyResult {
+            code: out.code,
+            timed_out: false,
+            output: tail(&crate::mcp::strip_ansi(&out.stdout), VERIFY_TAIL),
+            duration_ms,
+        }),
+        Err(crate::proc::RunError::Timeout) => Ok(VerifyResult {
+            code: None,
+            timed_out: true,
+            output: format!("Se canceló tras {} min.", VERIFY_TIMEOUT.as_secs() / 60),
+            duration_ms,
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn git_worktree_verify(
+    worktree: String,
+    command: String,
+) -> Result<VerifyResult, String> {
+    tauri::async_runtime::spawn_blocking(move || verify(Path::new(&worktree), &command))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_the_tail_of_long_output_on_char_boundaries() {
+        assert_eq!(tail("corto", 10), "corto");
+        let long = format!("{}ñfin", "x".repeat(100));
+        let cut = tail(&long, 4);
+        assert!(cut.ends_with("fin"));
+        assert!(cut.starts_with("…\n"));
+    }
 
     #[test]
     fn validates_labels() {
@@ -337,10 +452,62 @@ mod tests {
             apply(&repo, &repo).is_err(),
             "el repo principal no es un worktree de termCode"
         );
+        // El juez solo corre en worktrees de termCode y con un comando razonable.
+        assert!(
+            verify(&repo, "true").is_err(),
+            "el repo principal no se verifica"
+        );
+        assert!(verify(&first, "   ").is_err());
+        assert!(verify(&first, &"x".repeat(MAX_VERIFY_COMMAND + 1)).is_err());
+
         remove(&repo, &first).unwrap();
         remove(&repo, &second).unwrap();
         assert!(list(&repo).unwrap().is_empty());
 
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Lanza tu shell de login de verdad (lento y depende de la máquina): `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn verify_runs_the_command_in_the_worktree() {
+        let root = std::env::temp_dir().join(format!("termcode-verify-{}", std::process::id()));
+        let repo = root.join("demo");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]).unwrap();
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+        )
+        .unwrap();
+        let wt = create(&repo, "claude").unwrap();
+
+        let out = verify(&wt, "printf 'ok\\n'; echo fallo >&2; pwd; exit 3").unwrap();
+        assert_eq!(out.code, Some(3));
+        assert!(!out.timed_out);
+        assert!(
+            out.output.contains("ok\nfallo"),
+            "stderr en orden: {:?}",
+            out.output
+        );
+        assert!(
+            out.output.contains("claude-1"),
+            "corre dentro del worktree: {:?}",
+            out.output
+        );
+        assert_eq!(verify(&wt, "test \"$CI\" = 1").unwrap().code, Some(0));
+
+        remove(&repo, &wt).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 }
