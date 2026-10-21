@@ -656,7 +656,13 @@ const TESTS = [
       // Dividir no deforma la tarjeta (se reacomoda) y el panel nuevo trae la suya.
       const widthBefore = await p.evaluate(`${activeCard}.getBoundingClientRect().width`);
       await p.shortcut("splitRight");
-      await p.waitFor(`[...document.querySelectorAll(".welcome-card")].filter((c) => c.offsetParent !== null).length === 2`, "el panel nuevo también da la bienvenida", 6000);
+      // El ancho nuevo llega en un layout posterior al de la tarjeta nueva: se espera en vez
+      // de medir una sola vez (en el runner del CI tarda más y la primera aún medía lo de antes).
+      await p.waitFor(
+        `(() => { const cards = [...document.querySelectorAll(".welcome-card")].filter((c) => c.offsetParent !== null); return cards.length === 2 && cards.every((c) => c.getBoundingClientRect().width < ${widthBefore}); })()`,
+        "el panel nuevo también da la bienvenida y las dos tarjetas caben",
+        6000,
+      );
       const after = await p.evaluate(`(() => {
         const cards = [...document.querySelectorAll(".welcome-card")].filter((c) => c.offsetParent !== null);
         return { widths: cards.map((c) => c.getBoundingClientRect().width), text: cards.map((c) => c.textContent).join("|") };

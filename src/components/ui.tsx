@@ -233,7 +233,8 @@ export const PromptCursor: React.FC<{
     const moved = lastIndex.current !== null && lastIndex.current !== index;
     lastIndex.current = index;
     let frame = 0;
-    if (!node.dataset.ready) {
+    // Presencia del atributo, no su valor: `data-ready=""` es falsy y nunca pasaría al `else`.
+    if (!("ready" in node.dataset)) {
       // La primera vez aparece en su sitio; desde ahí, se desliza.
       frame = requestAnimationFrame(() => {
         node.dataset.ready = "";
