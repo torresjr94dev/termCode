@@ -1,7 +1,9 @@
 name: Release
 
 # git tag v0.2.0 && git push --tags → borrador de release con el .dmg universal
-# y los instaladores de Windows (NSIS .exe y .msi).
+# y los instaladores de Windows (NSIS .exe y .msi). Los archivos no llevan la
+# versión en el nombre (termCode_universal.dmg, termCode_x64-setup.exe), así
+# releases/latest/download/<archivo> siempre baja la última versión publicada.
 on:
   push:
     tags: ["v*"]
@@ -10,7 +12,28 @@ permissions:
   contents: write
 
 jobs:
+  # El borrador se crea antes de compilar: si cada job lo creara al terminar y
+  # coincidieran, saldrían dos borradores con la misma etiqueta. Si ya existe
+  # (re-ejecución), se reutiliza.
+  draft:
+    runs-on: ubuntu-24.04
+    outputs:
+      id: ${{ steps.create.outputs.id }}
+    steps:
+      - id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | "\(.tag_name)\t\(.id)"' \
+            | awk -F'\t' -v tag="$TAG" '$1 == tag { print $2; exit }')
+          if [ -z "$id" ]; then
+            id=$(gh api "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f name="termCode $TAG" -F draft=true --jq .id)
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
   macos:
+    needs: draft
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
@@ -42,27 +65,46 @@ jobs:
           jq -n --arg pubkey "$PUBKEY" --arg url "https://github.com/$REPO/releases/latest/download/latest.json" \
             '{bundle: {createUpdaterArtifacts: true}, plugins: {updater: {pubkey: $pubkey, endpoints: [$url]}}}' > "$conf"
           echo "args=--config $conf" >> "$GITHUB_OUTPUT"
-      - uses: tauri-apps/tauri-action@v0
+      # Firma + notarización. Las APPLE_* solo se exportan si hay certificado:
+      # Tauri da por definida una variable vacía e intentaría importar un
+      # certificado vacío. Sin certificado se firma ad hoc ("-"), que Apple
+      # Silicon exige a las apps descargadas; Gatekeeper pedirá abrirla desde
+      # Ajustes → Privacidad y seguridad.
+      - name: Configurar la firma de Apple
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Firma de los artefactos de actualización (minisign).
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Firma + notarización. Sin estos secretos el build sale sin firmar
-          # (Gatekeeper lo bloqueará en otras Macs).
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::warning::Sin APPLE_CERTIFICATE: el .dmg sale con firma ad hoc y sin notarizar."
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!name}" ] || continue
+            delim="EOF_$(openssl rand -hex 16)"
+            printf '%s<<%s\n%s\n%s\n' "$name" "$delim" "${!name}" "$delim" >> "$GITHUB_ENV"
+          done
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Firma de los artefactos de actualización (minisign).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          releaseId: ${{ needs.draft.outputs.id }}
           tagName: ${{ github.ref_name }}
-          releaseName: termCode ${{ github.ref_name }}
           releaseDraft: true
+          releaseAssetNamePattern: "[name]_[arch][setup][ext]"
           args: --target universal-apple-darwin ${{ steps.updater.outputs.args }}
 
   windows:
+    needs: draft
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -95,13 +137,16 @@ jobs:
           jq -n --arg pubkey "$PUBKEY" --arg url "https://github.com/$REPO/releases/latest/download/latest.json" \
             '{bundle: {createUpdaterArtifacts: true}, plugins: {updater: {pubkey: $pubkey, endpoints: [$url]}}}' > "$conf"
           echo "args=--config $conf" >> "$GITHUB_OUTPUT"
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          releaseId: ${{ needs.draft.outputs.id }}
           tagName: ${{ github.ref_name }}
-          releaseName: termCode ${{ github.ref_name }}
           releaseDraft: true
+          releaseAssetNamePattern: "[name]_[arch][setup][ext]"
+          # La landing enlaza el instalador NSIS; el updater usa el mismo.
+          updaterJsonPreferNsis: true
           args: ${{ steps.updater.outputs.args }}
