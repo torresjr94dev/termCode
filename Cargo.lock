@@ -3059,7 +3059,7 @@ dependencies = [
 
 [[package]]
 name = "pty-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "log",
@@ -4410,7 +4410,7 @@ dependencies = [
 
 [[package]]
 name = "termcode"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dirs",
  "log",
