@@ -60,6 +60,17 @@ pub fn harden_dll_search() {
     }
 }
 
+/// Windows: Ctrl+C vuelve a interrumpir dentro de las shells. "Ignorar
+/// Ctrl+C" se hereda de padre a hijo: si a termCode lo abrió un proceso que lo
+/// ignora (un lanzador o una tarea en segundo plano creada con
+/// `CREATE_NEW_PROCESS_GROUP`), ningún programa de sus paneles se podría cortar.
+#[cfg(windows)]
+pub fn restore_ctrl_c() {
+    use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
+    // SAFETY: sin manejador: solo cambia el atributo (heredable) del proceso.
+    unsafe { SetConsoleCtrlHandler(None, 0) };
+}
+
 /// With `panic = "abort"` a panic takes every session down with it: make sure
 /// it reaches the log file first.
 fn install_panic_logger() {

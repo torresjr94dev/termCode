@@ -34,12 +34,14 @@ tauri-plugin-updater = "2"
 
 [target.'cfg(windows)'.dependencies]
 # Named pipe del canal local (MCP y aprobaciones) con ACL solo del usuario,
-# nombres cortos 8.3, búsqueda segura de DLLs y la build de Windows (registro).
+# nombres cortos 8.3, búsqueda segura de DLLs, la build de Windows (registro)
+# y Ctrl+C para las shells aunque quien abrió termCode lo ignore.
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",
   "Win32_Storage_FileSystem",
+  "Win32_System_Console",
   "Win32_System_IO",
   "Win32_System_LibraryLoader",
   "Win32_System_Pipes",
