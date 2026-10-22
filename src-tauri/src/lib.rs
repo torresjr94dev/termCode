@@ -221,8 +221,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     /// `tauri.windows.conf.json` reemplaza la lista de ventanas entera (JSON
-    /// Merge Patch no mezcla arrays): fuera de lo que es solo de macOS (glass,
-    /// barra de título superpuesta) o solo de Windows, debe ser la misma ventana.
+    /// Merge Patch no mezcla arrays): fuera de la apariencia, que es propia de
+    /// cada sistema (vibrancy y barra superpuesta en macOS; Mica y sin marco en
+    /// Windows), debe ser la misma ventana.
     #[test]
     fn windows_window_config_matches_the_main_one() {
         let parse = |text: &str| serde_json::from_str::<serde_json::Value>(text).unwrap();
@@ -240,21 +241,26 @@ mod tests {
             });
             map
         };
-        let mac_only = [
+        let appearance = [
             "titleBarStyle",
             "hiddenTitle",
             "transparent",
             "windowEffects",
             "trafficLightPosition",
+            "decorations",
         ];
         assert_eq!(
-            without(&main[0], &mac_only),
-            without(&windows[0], &["backgroundColor"])
+            without(&main[0], &appearance),
+            without(&windows[0], &appearance)
         );
+        // Sin marco: la barra de pestañas es la de título y trae sus botones.
+        assert_eq!(windows[0]["decorations"], false);
+        // Transparente solo para que se vea Mica; donde no hay Mica (Windows 10)
+        // la vista se pinta opaca, así que nunca se ve el escritorio.
+        assert_eq!(windows[0]["transparent"], true);
         assert_eq!(
-            windows[0].get("transparent"),
-            None,
-            "sin vibrancy, transparente se vería el escritorio"
+            windows[0]["windowEffects"]["effects"],
+            serde_json::json!(["mica"])
         );
     }
 }

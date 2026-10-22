@@ -6,7 +6,7 @@ import { useUiStore } from "../store/uiStore";
 import { actions, AGENTS, type AgentKind } from "../lib/actions";
 import { basename, cn, collectPanes, findPane } from "../lib/layout";
 import { paneDisplayName, projectTone, tabDisplayName } from "../lib/identity";
-import { IS_MAC, shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
+import { shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
 import { useRunningCommand } from "../terminal/useRunningCommand";
 import { terminalManager } from "../terminal/TerminalManager";
 import type { PaneNode, Tab } from "../types/layout";
@@ -28,8 +28,9 @@ export const Sidebar: React.FC = () => {
 
   return (
     <aside aria-label="Sesiones" className="flex h-full w-64 shrink-0 flex-col bg-chrome">
-      {/* Zona de arrastre: aquí viven los semáforos de macOS; la marca, a la derecha (no captura el arrastre). */}
-      <div data-tauri-drag-region className={cn("flex shrink-0 items-center justify-end pr-3.5", IS_MAC ? "h-11" : "h-9")}>
+      {/* Zona de arrastre a la altura del header (es parte de la barra de título): aquí
+          viven los semáforos de macOS; la marca, a la derecha (no captura el arrastre). */}
+      <div data-tauri-drag-region className="flex h-11 shrink-0 items-center justify-end pr-3.5">
         <LogoMark title="termCode" className="pointer-events-none h-3.5 w-auto text-ink-2" />
       </div>
 

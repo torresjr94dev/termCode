@@ -7,10 +7,11 @@ import { actions } from "../lib/actions";
 import { cn, collectPanes, findPane } from "../lib/layout";
 import { projectTone, shortCommand, tabDisplayName } from "../lib/identity";
 import { useRunningCommand } from "../terminal/useRunningCommand";
-import { IS_MAC, shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
+import { IS_MAC, IS_WINDOWS, shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
 import type { ProviderUsage, Tab } from "../types/layout";
 import { terminalManager } from "../terminal/TerminalManager";
 import { AgentGlyph, IconButton, Kbd, Lamp, Ring } from "./ui";
+import { WindowControls } from "./WindowControls";
 import { pace } from "../lib/quota";
 import { useNow } from "../lib/useNow";
 
@@ -59,7 +60,9 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
   return (
     <header
       data-tauri-drag-region
-      className="relative z-20 flex h-11 shrink-0 items-center bg-chrome pr-2"
+      // En Windows la ventana no tiene marco: esta es la barra de título y los
+      // botones de ventana van pegados al borde derecho.
+      className={cn("relative z-20 flex h-11 shrink-0 items-center bg-chrome", IS_WINDOWS ? "pr-0" : "pr-2")}
     >
       {/* Hueco para los semáforos de macOS (solo cuando la barra lateral no los aloja) */}
       {IS_MAC && !isSidebarOpen && <div data-tauri-drag-region className="h-full w-[78px] shrink-0" />}
@@ -113,6 +116,11 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
           <Kbd>{shortcutLabel("palette")}</Kbd>
         </button>
       </div>
+      {IS_WINDOWS && (
+        <div className="ml-2 flex h-full">
+          <WindowControls />
+        </div>
+      )}
     </header>
   );
 };
