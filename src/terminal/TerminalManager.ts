@@ -25,6 +25,10 @@ export const FONT_SIZE = { min: 9, max: 24, default: DEFAULT_SETTINGS.fontSize }
 /** Contextos WebGL vivos como máximo; los navegadores cortan alrededor de 16. */
 const MAX_WEBGL_CONTEXTS = 10;
 
+/** Escrituras que se guardan mientras el PTY arranca (con tope: nadie teclea tanto tan rápido). */
+const MAX_PENDING_INPUT = 256;
+const INPUT_COMMANDS = new Set(["pty_write", "pty_write_bytes"]);
+
 const SEARCH_DECORATIONS: ISearchOptions["decorations"] = {
   matchBackground: "#3b3426",
   matchBorder: "#7a6534",
@@ -82,6 +86,8 @@ interface TerminalInstance {
   /** Bytes ya procesados por xterm y aún no confirmados al backend. */
   pendingAck: number;
   ackScheduled: boolean;
+  /** Lo que xterm o el usuario escribieron antes de conocer el id de la sesión. */
+  pendingInput: Array<{ command: string; args: Record<string, unknown> }>;
   /** Shell (no agente): tras `clear` vuelve a dar la bienvenida. */
   isShell: boolean;
   /** La tarjeta de bienvenida visible (una a la vez). */
@@ -232,6 +238,7 @@ class TerminalManager {
       spawnRequested: false,
       pendingAck: 0,
       ackScheduled: false,
+      pendingInput: [],
       isShell: false,
       welcomeCard: null,
       dispose: [],
@@ -460,13 +467,25 @@ class TerminalManager {
         onData: channel,
         shellIntegration: this.settings.shellIntegration,
       });
-      instance.backendSessionId = sessionId;
       this.sessionToInstanceId.set(sessionId, instance.id);
+      // En orden y antes que lo nuevo: hasta tener el id, `send` sigue encolando.
+      while (instance.pendingInput.length) {
+        const { command, args } = instance.pendingInput.shift()!;
+        await invoke(command, { id: sessionId, ...args }).catch((err) => console.warn(`[termCode] ${command}:`, err));
+      }
+      // Se cerró el panel mientras arrancaba: su PTY no tiene quién lo lea.
+      if (this.instances.get(instance.id) !== instance) {
+        this.sessionToInstanceId.delete(sessionId);
+        invoke("pty_kill", { id: sessionId }).catch(() => {});
+        return;
+      }
+      instance.backendSessionId = sessionId;
       // Lo que se procesó antes de conocer el id también se confirma.
       this.flushAck(instance);
       // El tamaño pudo cambiar mientras el PTY arrancaba.
       this.send(instance, "pty_resize", { cols: term.cols, rows: term.rows });
     } catch (err) {
+      instance.pendingInput = [];
       console.error("[termCode] no se pudo iniciar el PTY:", err);
       term.writeln(`\r\n\x1b[31m[termCode] Error al iniciar el PTY: ${String(err)}\x1b[0m\r\n`);
     }
@@ -492,7 +511,15 @@ class TerminalManager {
   }
 
   private send(instance: TerminalInstance, command: string, args: Record<string, unknown>) {
-    if (instance.backendSessionId === null) return;
+    if (instance.backendSessionId === null) {
+      // ConPTY pregunta dónde está el cursor (`ESC[6n`) al arrancar y no muestra
+      // nada hasta que xterm contesta; esa respuesta puede salir antes de que
+      // `pty_spawn` devuelva el id. Perderla dejaba el panel en blanco.
+      if (instance.spawnRequested && INPUT_COMMANDS.has(command) && instance.pendingInput.length < MAX_PENDING_INPUT) {
+        instance.pendingInput.push({ command, args });
+      }
+      return;
+    }
     invoke(command, { id: instance.backendSessionId, ...args }).catch((err) =>
       console.warn(`[termCode] ${command}:`, err),
     );
