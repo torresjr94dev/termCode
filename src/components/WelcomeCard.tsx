@@ -6,7 +6,7 @@ import { useUiStore } from "../store/uiStore";
 import { actions } from "../lib/actions";
 import { pace } from "../lib/quota";
 import { cn } from "../lib/layout";
-import { shortcutLabel, type ShortcutId } from "../lib/shortcuts";
+import { IS_MAC, shortcutLabel, type ShortcutId } from "../lib/shortcuts";
 import { useNow } from "../lib/useNow";
 import type { WelcomeView } from "../terminal/TerminalManager";
 import { LogoMark } from "./Logo";
@@ -52,6 +52,10 @@ const WelcomeCard: React.FC<WelcomeCardProps> = ({ cwd, home, user, version, com
     { id: "missionControl", label: "Agentes", icon: LayoutGrid, run: () => useUiStore.getState().setMissionOpen(true) },
     { id: "fileFinder", label: "Buscar archivo", icon: FileSearch, run: () => useUiStore.getState().setFinderOpen(true) },
   ];
+  // La tarjeta tiene alto fijo: lo que no quepa en su fila se recorta. Fuera de
+  // macOS los atajos son largos (Ctrl+Shift+Alt+A) y en angosto dos botones ya
+  // no caben en una fila; la paleta lleva a todo lo demás.
+  const quickCount = compact || narrow ? (IS_MAC ? 2 : 1) : 3;
 
   return (
     <div
@@ -129,7 +133,7 @@ const WelcomeCard: React.FC<WelcomeCardProps> = ({ cwd, home, user, version, com
           )}
 
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            {quick.slice(0, compact || narrow ? 2 : 3).map((q) => (
+            {quick.slice(0, quickCount).map((q) => (
               <button
                 key={q.id}
                 type="button"
