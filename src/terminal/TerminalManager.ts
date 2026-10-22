@@ -134,6 +134,34 @@ const writeOnlyClipboard: IClipboardProvider = {
   writeText: (_selection, text) => navigator.clipboard.writeText(text).catch(() => {}),
 };
 
+/** `c` o `v` del evento, también con layouts que no son latinos (Ctrl+С en cirílico). */
+function letterOf(e: KeyboardEvent): string {
+  const key = e.key.toLowerCase();
+  return /^[a-z]$/.test(key) ? key : e.code.replace(/^Key/, "").toLowerCase();
+}
+
+/**
+ * Fuera de macOS no hay ⌘: copiar y pegar son Ctrl, como en Windows Terminal.
+ * Ctrl+C copia si hay selección (si no, es ^C para la shell), Ctrl+Shift+C
+ * siempre copia, y Ctrl+V / Ctrl+Shift+V pegan por el evento `paste` nativo,
+ * igual que ⌘V en macOS (xterm añade el bracketed paste). AltGr llega como
+ * Ctrl+Alt y escribe caracteres (@, #, [): nunca es un atajo.
+ * Devuelve `false` cuando xterm no debe procesar la tecla.
+ */
+function handleClipboardKey(term: Terminal, e: KeyboardEvent): boolean {
+  if (IS_MAC || e.type !== "keydown" || !e.ctrlKey || e.altKey || e.metaKey || e.getModifierState("AltGraph")) return true;
+  const letter = letterOf(e);
+  if (letter === "c" && (e.shiftKey || term.hasSelection())) {
+    const text = term.getSelection();
+    if (text) void navigator.clipboard.writeText(text).catch(() => {});
+    term.clearSelection();
+    e.preventDefault();
+    return false;
+  }
+  // Sin preventDefault: el navegador dispara `paste` sobre la textarea de xterm.
+  return letter !== "v";
+}
+
 /**
  * Con glass (Neón en la ventana de macOS) el fondo de xterm es transparente:
  * el velo lo pone el panel por CSS, así hay una sola capa sobre el escritorio.
@@ -210,6 +238,7 @@ class TerminalManager {
       cursorInactiveStyle: "outline",
       ...terminalOptions(this.settings),
     });
+    term.attachCustomKeyEventHandler((e) => handleClipboardKey(term, e));
 
     const fitAddon = new FitAddon();
     const searchAddon = new SearchAddon({ highlightLimit: 2000 });
