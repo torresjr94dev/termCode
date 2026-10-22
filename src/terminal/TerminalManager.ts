@@ -108,7 +108,7 @@ interface StoreHooks {
   /** ⌘-clic en una ruta de archivo de la salida. */
   onOpenPath: (target: FileLinkTarget) => void;
   /** Bienvenida para un panel de ese tamaño (`null` = no cabe o está desactivada). */
-  renderWelcome: (paneId: string, size: { cols: number; rows: number; height: number }) => WelcomeContent | null;
+  renderWelcome: (paneId: string, size: { cols: number; rows: number; height: number; width: number }) => WelcomeContent | null;
 }
 
 /** ⌘-clic (Ctrl-clic fuera de macOS): un clic normal selecciona texto, no abre cosas. */
@@ -393,8 +393,9 @@ class TerminalManager {
   /** Pone la bienvenida en la posición actual del cursor (al abrir el panel o tras `clear`). */
   private showWelcome(instance: TerminalInstance): Promise<void> {
     try {
-      const height = instance.term.element?.querySelector<HTMLElement>(".xterm-screen")?.clientHeight ?? 0;
-      const welcome = this.hooks?.renderWelcome(instance.id, { cols: instance.term.cols, rows: instance.term.rows, height });
+      const screen = instance.term.element?.querySelector<HTMLElement>(".xterm-screen");
+      const size = { cols: instance.term.cols, rows: instance.term.rows, height: screen?.clientHeight ?? 0, width: screen?.clientWidth ?? 0 };
+      const welcome = this.hooks?.renderWelcome(instance.id, size);
       if (welcome?.kind === "text") instance.term.write(welcome.text);
       else if (welcome?.kind === "card") return this.mountWelcomeCard(instance, welcome);
     } catch (err) {
