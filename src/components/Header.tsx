@@ -6,7 +6,7 @@ import { useApprovalStore } from "../store/approvalStore";
 import { openProject } from "../lib/project";
 import { actions } from "../lib/actions";
 import { cn, collectPanes, findPane } from "../lib/layout";
-import { projectTone, shortCommand, tabDisplayName } from "../lib/identity";
+import { projectColor, shortCommand, tabDisplayName } from "../lib/identity";
 import { attentionCandidates } from "../lib/attention";
 import { useRunningCommand } from "../terminal/useRunningCommand";
 import { IS_MAC, IS_WINDOWS, shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
@@ -317,7 +317,9 @@ const TabItem: React.FC<TabItemProps> = ({
       }}
       className={cn(
         // Cápsula de vidrio solo para la activa; el resto, texto que se ilumina al pasar.
-        "group relative flex h-[30px] shrink-0 items-center rounded-[10px] transition-[background-color,color] duration-150",
+        // Como en un navegador, con muchas pestañas se encogen (el nombre se corta)
+        // antes de que la tira se desborde y esconda la activa.
+        "group relative flex h-[30px] min-w-[64px] shrink items-center rounded-[10px] transition-[background-color,color] duration-150",
         isActive ? "glass-pill z-10 text-ink" : "text-ink-3 hover:bg-hover hover:text-ink-2",
         isDragged && "opacity-50",
       )}
@@ -356,21 +358,16 @@ const TabItem: React.FC<TabItemProps> = ({
           {needsAttention ? (
             <Lamp state="attention" />
           ) : (
-            <span className={cn("font-mono text-[10.5px] tabular-nums", isActive ? "text-accent" : "text-ink-3/80")}>{index + 1}</span>
+            // La forma dice qué corre (shell, Claude, Codex); el color, de qué
+            // proyecto es: el mismo tono en todas las pestañas del mismo repo.
+            <span
+              className={cn("flex shrink-0", !project && "text-ink-3", !isActive && "opacity-70")}
+              style={project ? { color: projectColor(project.root ?? project.cwd) } : undefined}
+            >
+              <AgentGlyph agentType={agentType ?? null} />
+            </span>
           )}
-          {agentType ? (
-            <AgentGlyph agentType={agentType} className="shrink-0 opacity-80" />
-          ) : (
-            // Punto del proyecto: mismo color en todas las pestañas del mismo repo.
-            project && (
-              <span
-                aria-hidden="true"
-                title={project.name}
-                className={cn("size-[7px] shrink-0 rounded-full", projectTone(project.root ?? project.cwd), !isActive && "opacity-60")}
-              />
-            )
-          )}
-          <span className="max-w-[180px] truncate text-[12.5px] font-medium">{label}</span>
+          <span className="min-w-0 max-w-[180px] truncate text-[12.5px] font-medium">{label}</span>
           {runningHint && <span className="max-w-[110px] shrink-0 truncate font-mono text-[11px] text-ink-3">{runningHint}</span>}
           {tab.zoomedPaneId && (
             <Maximize2 size={11} strokeWidth={2} aria-label="Panel maximizado" className="shrink-0 text-accent" />

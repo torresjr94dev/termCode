@@ -54,13 +54,22 @@ export function paneDisplayName(pane: PaneNode, project?: PaneProject): string {
 export const PROJECT_TONES = ["bg-proj-0", "bg-proj-1", "bg-proj-2", "bg-proj-3", "bg-proj-4", "bg-proj-5"] as const;
 
 /** FNV-1a: el mismo proyecto da siempre el mismo tono, en cualquier sesión. */
-export function projectTone(key: string): (typeof PROJECT_TONES)[number] {
+function toneIndex(key: string): number {
   let hash = 0x811c9dc5;
   for (let i = 0; i < key.length; i++) {
     hash ^= key.charCodeAt(i);
     hash = Math.imul(hash, 0x01000193);
   }
-  return PROJECT_TONES[(hash >>> 0) % PROJECT_TONES.length];
+  return (hash >>> 0) % PROJECT_TONES.length;
+}
+
+export function projectTone(key: string): (typeof PROJECT_TONES)[number] {
+  return PROJECT_TONES[toneIndex(key)];
+}
+
+/** El mismo tono como color de texto (para teñir un ícono). */
+export function projectColor(key: string): string {
+  return `var(--color-proj-${toneIndex(key)})`;
 }
 
 /** `pnpm run dev --port 3000` → `pnpm run dev`. */
