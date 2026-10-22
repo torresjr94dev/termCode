@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentSummary, nextAttentionPane } from "./attention";
+import { agentSummary, attentionCandidates, nextAttentionPane } from "./attention";
 import type { PaneNode, Tab } from "../types/layout";
 
 const pane = (id: string, agentType: PaneNode["agentType"] = null): PaneNode => ({ id, type: "pane", terminalId: `t-${id}`, title: id, agentType });
@@ -35,6 +35,19 @@ describe("nextAttentionPane", () => {
     const attention = { "claude-b": { kind: "needs-input", message: "", at: 1 } };
     expect(nextAttentionPane(tabs, attention, {}, "claude-b")).toBeNull();
     expect(nextAttentionPane(tabs, {}, {}, undefined)).toBeNull();
+  });
+});
+
+describe("attentionCandidates", () => {
+  it("lists everything waiting, urgent first, without the pane you are on", () => {
+    const attention = {
+      shell: { kind: "done", message: "", at: 1 },
+      "claude-b": { kind: "needs-input", message: "", at: 50 },
+    };
+    const approvals = [{ paneId: "claude-a", at: 70 }];
+    const list = attentionCandidates(tabs, attention, {}, "codex", approvals);
+    expect(list.map((c) => [c.paneId, c.rank])).toEqual([["claude-b", 0], ["claude-a", 0], ["shell", 1]]);
+    expect(attentionCandidates(tabs, attention, {}, "shell")).toHaveLength(1);
   });
 });
 

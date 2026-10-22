@@ -1,11 +1,13 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Asterisk, GitBranch, Hexagon, Maximize2, PanelLeft, Plus, Search, X } from "lucide-react";
+import { Asterisk, Bell, GitBranch, Hexagon, Maximize2, PanelLeft, Plus, Search, Settings, X } from "lucide-react";
 import { useTerminalStore } from "../store/terminalStore";
 import { useProjectStore } from "../store/projectStore";
+import { useApprovalStore } from "../store/approvalStore";
 import { openProject } from "../lib/project";
 import { actions } from "../lib/actions";
 import { cn, collectPanes, findPane } from "../lib/layout";
 import { projectTone, shortCommand, tabDisplayName } from "../lib/identity";
+import { attentionCandidates } from "../lib/attention";
 import { useRunningCommand } from "../terminal/useRunningCommand";
 import { IS_MAC, IS_WINDOWS, shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
 import type { ProviderUsage, Tab } from "../types/layout";
@@ -75,6 +77,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
           pressed={isSidebarOpen}
           onClick={actions.toggleSidebar}
         />
+        <AttentionBell />
       </div>
 
       <nav aria-label="Pestañas" className="ml-1.5 flex min-w-0 items-center">
@@ -115,6 +118,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
           <span className="hidden text-[12px] md:inline">Comandos</span>
           <Kbd>{shortcutLabel("palette")}</Kbd>
         </button>
+        <IconButton icon={Settings} label="Ajustes" shortcut={shortcutLabel("settings")} onClick={actions.openSettings} />
       </div>
       {IS_WINDOWS && (
         <div className="ml-2 flex h-full">
@@ -122,6 +126,47 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
         </div>
       )}
     </header>
+  );
+};
+
+/**
+ * Lo que te espera en otros paneles, lo mismo que atiende ⌘J: agentes que
+ * piden permiso o preguntan (acento) y comandos que terminaron o fallaron.
+ */
+const AttentionBell: React.FC = () => {
+  const tabs = useTerminalStore((s) => s.tabs);
+  const activeTabId = useTerminalStore((s) => s.activeTabId);
+  const attention = useTerminalStore((s) => s.attention);
+  const activity = useTerminalStore((s) => s.agentActivity);
+  const approvals = useApprovalStore((s) => s.requests);
+  const current = tabs.find((t) => t.id === activeTabId)?.activePaneId;
+  const pending = attentionCandidates(tabs, attention, activity, current, approvals);
+  const urgent = pending.some((c) => c.rank === 0);
+  const label = pending.length
+    ? `${pending.length} ${pending.length === 1 ? "panel te espera" : "paneles te esperan"}`
+    : "Nadie te espera";
+
+  return (
+    <button
+      type="button"
+      onClick={actions.focusNextAttention}
+      aria-label={label}
+      title={`${label}  ${shortcutLabel("nextAttention")}`}
+      className="relative grid size-7 shrink-0 place-items-center rounded-md text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
+    >
+      <Bell size={15} strokeWidth={1.75} aria-hidden="true" />
+      {pending.length > 0 && (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "absolute -right-0.5 -top-0.5 grid h-[15px] min-w-[15px] place-items-center rounded-full px-1 font-mono text-[9.5px] font-semibold leading-none tabular-nums",
+            urgent ? "bg-accent text-on-accent" : "bg-press text-ink-2",
+          )}
+        >
+          {pending.length}
+        </span>
+      )}
+    </button>
   );
 };
 
