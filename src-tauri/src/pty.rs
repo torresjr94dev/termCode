@@ -5,10 +5,39 @@
 //! no base64. Exit notifications use a regular event.
 
 use crate::agents;
+use parking_lot::Mutex;
 use pty_core::{OutputSink, ProcessInfo, PtyManager, SessionId, SpawnOptions};
 use serde::Serialize;
+use std::collections::HashMap;
 use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, Webview};
+
+/// Qué vista abrió cada sesión. Si esa vista se recarga (F5, el menú
+/// contextual, Vite en desarrollo), sus sesiones se quedan sin nadie que las
+/// lea ni las cierre: la vista nueva restaura la sesión con shells nuevas.
+#[derive(Default)]
+pub struct SessionOwners(Mutex<HashMap<SessionId, String>>);
+
+/// La vista `label` empezó a cargar: sus sesiones anteriores ya no son de nadie.
+pub fn release_webview(app: &AppHandle, label: &str) {
+    let mut orphans = Vec::new();
+    app.state::<SessionOwners>().0.lock().retain(|id, owner| {
+        let orphan = owner == label;
+        if orphan {
+            orphans.push(*id);
+        }
+        !orphan
+    });
+    if orphans.is_empty() {
+        return;
+    }
+    let pty = app.state::<PtyManager>();
+    orphans.iter().for_each(|id| pty.remove(*id));
+    log::info!(
+        "pty: la vista {label} se recargó; {} sesión(es) cerradas",
+        orphans.len()
+    );
+}
 
 struct ChannelSink {
     id: SessionId,
@@ -38,6 +67,7 @@ impl OutputSink for ChannelSink {
         }
         let _ = self.app.emit("pty-exit", ExitPayload { id: self.id, code });
         self.app.state::<PtyManager>().remove(self.id);
+        self.app.state::<SessionOwners>().0.lock().remove(&self.id);
     }
 }
 
@@ -50,7 +80,9 @@ type CmdResult<T> = Result<T, String>;
 #[tauri::command]
 pub async fn pty_spawn(
     app: AppHandle,
+    webview: Webview,
     pty: State<'_, PtyManager>,
+    owners: State<'_, SessionOwners>,
     mut options: SpawnOptions,
     on_data: Channel<InvokeResponseBody>,
     shell_integration: Option<bool>,
@@ -95,6 +127,7 @@ pub async fn pty_spawn(
             }
         })
         .map_err(|e| e.to_string())?;
+    owners.0.lock().insert(id, webview.label().to_owned());
     log::info!("pty {id}: {kind} spawned");
     Ok(id)
 }

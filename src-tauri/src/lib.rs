@@ -17,6 +17,7 @@ mod winlaunch;
 
 use pty_core::PtyManager;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 use usage::UsageHub;
@@ -105,6 +106,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(PtyManager::default())
+        .manage(pty::SessionOwners::default())
         .manage(UsageHub::default())
         .manage(updater::PendingUpdate::default())
         .setup(|app| {
@@ -120,6 +122,13 @@ pub fn run() {
             usage::spawn(app.handle().clone());
             updater::init(app.handle());
             Ok(())
+        })
+        // Una vista que se recarga deja huérfanos sus PTYs: se cierran antes de
+        // que la vista nueva restaure la sesión con shells nuevas.
+        .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Started {
+                pty::release_webview(webview.app_handle(), webview.label());
+            }
         })
         .invoke_handler(tauri::generate_handler![
             pty::pty_spawn,
