@@ -1,4 +1,4 @@
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type IWindowsPty } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -11,7 +11,7 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { IS_TAURI } from "../lib/ipc";
-import { IS_MAC } from "../lib/shortcuts";
+import { IS_MAC, IS_WINDOWS } from "../lib/shortcuts";
 import { DEFAULT_SETTINGS, type Settings } from "../store/settingsStore";
 import type { ProcessInfo } from "../types/layout";
 import { CommandTracker, withShellFacts, type CommandRecord } from "./commands";
@@ -194,6 +194,12 @@ class TerminalManager {
   private progressListeners = new Set<() => void>();
   private settings: Settings = DEFAULT_SETTINGS;
   private home: string | null = null;
+  /**
+   * Con ConPTY, xterm no debe subir historial a la vista al crecer el panel
+   * (ConPTY repinta su pantalla encima y se duplican líneas), y antes de la
+   * build 21376 de Windows tampoco debe reacomodar líneas al cambiar el ancho.
+   */
+  private windowsPty: IWindowsPty | undefined = IS_WINDOWS ? { backend: "conpty" } : undefined;
 
   constructor() {
     void this.listenForExits();
@@ -201,6 +207,15 @@ class TerminalManager {
       void import("@tauri-apps/api/path")
         .then(({ homeDir }) => homeDir())
         .then((home) => (this.home = home))
+        .catch(() => {});
+    }
+    if (IS_TAURI && IS_WINDOWS) {
+      void invoke<number | null>("windows_build")
+        .then((buildNumber) => {
+          if (!buildNumber) return;
+          this.windowsPty = { backend: "conpty", buildNumber };
+          for (const instance of this.instances.values()) instance.term.options.windowsPty = this.windowsPty;
+        })
         .catch(() => {});
     }
   }
@@ -236,6 +251,7 @@ class TerminalManager {
       // Solo se puede fijar al crear: sin esto no hay fondo transparente si luego cambias a Neón.
       allowTransparency: true,
       cursorInactiveStyle: "outline",
+      ...(this.windowsPty ? { windowsPty: this.windowsPty } : {}),
       ...terminalOptions(this.settings),
     });
     term.attachCustomKeyEventHandler((e) => handleClipboardKey(term, e));

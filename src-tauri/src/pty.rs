@@ -141,3 +141,42 @@ pub async fn pty_kill(pty: State<'_, PtyManager>, id: SessionId) -> CmdResult<()
     pty.remove(id);
     Ok(())
 }
+
+/// Build de Windows (p. ej. 19045, 26100): xterm reacomoda líneas al cambiar
+/// el ancho solo si ConPTY también lo hace (build 21376 en adelante).
+#[cfg(windows)]
+#[tauri::command]
+pub fn windows_build() -> Option<u32> {
+    use windows_sys::Win32::System::Registry::{HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW};
+    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let (key, value) = (
+        wide(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion"),
+        wide("CurrentBuildNumber"),
+    );
+    let mut buf = [0u16; 32];
+    let mut size = std::mem::size_of_val(&buf) as u32;
+    // SAFETY: cadenas terminadas en 0; `size` es la capacidad en bytes de `buf`.
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            key.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr().cast(),
+            &mut size,
+        )
+    };
+    if status != 0 {
+        return None;
+    }
+    // `size` incluye el 0 final.
+    let len = (size as usize / 2).saturating_sub(1).min(buf.len());
+    String::from_utf16_lossy(&buf[..len]).trim().parse().ok()
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn windows_build() -> Option<u32> {
+    None
+}

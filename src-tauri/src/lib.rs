@@ -118,6 +118,7 @@ pub fn run() {
             pty::pty_ack,
             pty::pty_info,
             pty::pty_kill,
+            pty::windows_build,
             usage::usage_get,
             usage::usage_refresh,
             agents::agents_info,
