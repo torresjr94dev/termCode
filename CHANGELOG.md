@@ -6,11 +6,16 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ### Añadido
 
+- Windows: la barra de pestañas es la barra de título (sin el marco del sistema), con los botones de ventana de Windows y Mica en Windows 11.
+- Campana en el header con cuántos paneles te esperan; lleva al primero, como `⌘J`.
+- Engrane de Ajustes en el header.
 - Prueba de Rust que corre Windows PowerShell de verdad a través de ConPTY y comprueba las marcas de prompt, comando, salida y carpeta.
 - Las pruebas e2e encuentran Chrome o Edge en Windows.
 
 ### Modificado
 
+- Las pestañas muestran el ícono de lo que corre (shell, Claude Code, Codex) en el color de su proyecto, en vez del número y el punto, y se encogen antes de desbordarse.
+- La tarjeta de bienvenida usa la variante compacta en paneles de menos de 560 px y, si se angosta después de abrirse, se queda con lo esencial.
 - Fuera de macOS, los atajos con puntuación o dígitos (`Ajustes`, tamaño de letra) se reconocen por la tecla física: con Shift pulsado, el carácter depende del teclado.
 - Los paneles y pestañas de Windows muestran `powershell` o el proyecto en vez de `Administrador: C:\Windows\…\powershell.exe`.
 - La tarjeta de bienvenida en un panel angosto muestra un solo atajo fuera de macOS, para que los atajos largos de Windows no la recorten.

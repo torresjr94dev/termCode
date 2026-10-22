@@ -18,7 +18,7 @@ termCode es una terminal para macOS y Windows (Tauri + React + xterm.js) pensada
 ### Agentes
 - **Mission Control** (`⇧⌘A`): todos los agentes abiertos con su estado en vivo (trabajando, te necesita, esperando), modelo, contexto usado y costo de la sesión.
 - **Bandeja de aprobaciones**: los permisos que pide Claude Code aparecen abajo a la derecha, estés donde estés, con el comando o el diff completos. Si estás mirando el panel del agente, pregunta el panel, como siempre.
-- **Ir al que te necesita** (`⌘J`): salta al agente bloqueado que más lleva esperando.
+- **Ir al que te necesita** (`⌘J`): salta al agente bloqueado que más lleva esperando. La campana del header cuenta cuántos paneles te esperan (en acento si alguno está bloqueado).
 - **Reanudar tras reiniciar**: los paneles de agente vuelven como shells con un aviso para retomar la conversación (`claude --resume`, `codex resume --last`). Nunca se relanzan solos, para no gastar cuota.
 - **Revisar cambios**: el diff de todo lo que tocó el agente desde tu último mensaje o en toda la sesión, con *Revertir* por fragmento.
 - **Revisión que vuelve al agente**: comenta líneas del diff y *Enviar revisión* pega los comentarios en el agente (`archivo:línea` + la línea citada). No pulsa Enter: el mensaje lo mandas tú.
@@ -43,7 +43,9 @@ termCode es una terminal para macOS y Windows (Tauri + React + xterm.js) pensada
 
 ### Interfaz
 - Temas **Neón** (por defecto, con el verde del logo), **Fósforo**, **Fósforo verde** y **Papel** (claro).
-- Glass real en macOS: la ventana usa vibrancy y los diálogos son vidrio esmerilado. Con *Reducir transparencia* activado en el sistema, todo se pinta opaco. En Windows la ventana es opaca y usa la barra de título del sistema (con Snap Layouts).
+- Glass real en macOS (vibrancy) y en Windows 11 (Mica): los diálogos son vidrio esmerilado. Con *Reducir transparencia* (macOS) o *Efectos de transparencia* apagados (Windows), todo se pinta opaco; en Windows 10, que no tiene Mica, también.
+- En Windows la barra de pestañas es la barra de título, como en Windows Terminal: sin el marco del sistema, con sus botones de minimizar, maximizar y cerrar. Snap Layouts sale con `Win+Z` o arrastrando la ventana al borde de arriba (no al pasar el ratón sobre maximizar).
+- Pestañas con el ícono de lo que corre (shell, Claude Code, Codex) en el color de su proyecto; con muchas, se encogen como en un navegador.
 - Paleta de comandos (`⌘K`) con todas las acciones, y la hoja de atajos al mantener `⌘` medio segundo.
 - Actualizaciones firmadas desde Ajustes → Acerca de (en las compilaciones que las tienen configuradas).
 
