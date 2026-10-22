@@ -311,3 +311,85 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+    use pty_core::{OutputSink, PtyManager, SpawnOptions};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    struct Sink(mpsc::Sender<Vec<u8>>);
+    impl OutputSink for Sink {
+        fn data(&mut self, bytes: Vec<u8>) -> bool {
+            self.0.send(bytes).is_ok()
+        }
+        fn exit(&mut self, _code: Option<u32>) {}
+    }
+
+    /// PowerShell real detrás de ConPTY: las marcas tienen que atravesar conhost.
+    #[test]
+    fn powershell_emits_prompt_command_and_exit_marks() {
+        let Some(shell) = pty_core::powershell() else {
+            return;
+        };
+        let base = std::env::temp_dir().join(format!("termcode-psint-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let script = base.join(POWERSHELL_FILE);
+        std::fs::write(&script, POWERSHELL).unwrap();
+
+        let mut options = SpawnOptions {
+            cwd: Some(base.clone()),
+            cols: 120,
+            rows: 30,
+            ..Default::default()
+        };
+        crate::winlaunch::prepare_with(&mut options, Some(shell), Some(&script), &[]).unwrap();
+        // Hermético: sin el perfil de quien corre los tests.
+        options.args.insert(0, "-NoProfile".into());
+
+        let mgr = PtyManager::default();
+        let (tx, rx) = mpsc::channel();
+        let id = mgr.spawn(options, |_| Sink(tx)).unwrap();
+
+        let mut out = String::new();
+        let wait_for = |needle: &str, out: &mut String| {
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while !out.contains(needle) && Instant::now() < deadline {
+                if let Ok(chunk) = rx.recv_timeout(Duration::from_millis(200)) {
+                    mgr.ack(id, chunk.len());
+                    let text = String::from_utf8_lossy(&chunk);
+                    // ConPTY pregunta dónde está el cursor y no sigue hasta que
+                    // la terminal contesta (en la app lo hace xterm.js).
+                    if text.contains("\x1b[6n") {
+                        mgr.write(id, b"\x1b[1;1R").unwrap();
+                    }
+                    out.push_str(&text);
+                }
+            }
+            assert!(out.contains(needle), "no apareció {needle:?} en:\n{out:?}");
+        };
+
+        wait_for("\x1b]133;A\x07", &mut out);
+        mgr.write(id, b"Write-Output tc-ok; cmd /c exit 3\r")
+            .unwrap();
+        wait_for("\x1b]133;D;3\x07", &mut out);
+        assert!(
+            out.contains("\x1b]633;E;Write-Output tc-ok\\x3b cmd /c exit 3\x07"),
+            "{out:?}"
+        );
+        assert!(out.contains("\x1b]133;C\x07"), "{out:?}");
+        assert!(out.contains("\x1b]7;file://"), "{out:?}");
+        mgr.write(id, b"Write-Output listo\r").unwrap();
+        wait_for("\x1b]133;D;0\x07", &mut out);
+
+        mgr.remove(id);
+        for _ in 0..20 {
+            if std::fs::remove_dir_all(&base).is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+}

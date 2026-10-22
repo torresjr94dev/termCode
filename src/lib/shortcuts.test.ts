@@ -53,4 +53,19 @@ describe("Windows / Linux", () => {
     expect(matchShortcut(key({ key: "D", ctrlKey: true, shiftKey: true, altKey: true }))).toBe("splitDown");
     expect(shortcutLabel("splitDown")).toBe("Ctrl+Shift+Alt+D");
   });
+
+  it("matches punctuation and digits by physical key, whatever Shift prints", async () => {
+    const { matchShortcut } = await load("Windows NT 10.0");
+    const ctrlShift = (k: string, code: string) => key({ key: k, code, ctrlKey: true, shiftKey: true });
+    // US: Shift+, = <, Shift+0 = ). Español: Shift+, = ;, Shift+0 = =.
+    expect(matchShortcut(ctrlShift("<", "Comma"))).toBe("settings");
+    expect(matchShortcut(ctrlShift(";", "Comma"))).toBe("settings");
+    expect(matchShortcut(ctrlShift(")", "Digit0"))).toBe("fontReset");
+    expect(matchShortcut(ctrlShift("=", "Digit0"))).toBe("fontReset");
+    // US: Shift+= = +. Español: la tecla + (donde US tiene ]) da *, y la - (donde US tiene /) da _.
+    expect(matchShortcut(ctrlShift("+", "Equal"))).toBe("fontBigger");
+    expect(matchShortcut(ctrlShift("*", "BracketRight"))).toBe("fontBigger");
+    expect(matchShortcut(ctrlShift("_", "Minus"))).toBe("fontSmaller");
+    expect(matchShortcut(ctrlShift("_", "Slash"))).toBe("fontSmaller");
+  });
 });

@@ -1,4 +1,4 @@
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type IWindowsPty } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -11,7 +11,7 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { IS_TAURI } from "../lib/ipc";
-import { IS_MAC } from "../lib/shortcuts";
+import { IS_MAC, IS_WINDOWS } from "../lib/shortcuts";
 import { DEFAULT_SETTINGS, type Settings } from "../store/settingsStore";
 import type { ProcessInfo } from "../types/layout";
 import { CommandTracker, withShellFacts, type CommandRecord } from "./commands";
@@ -24,6 +24,10 @@ export const FONT_SIZE = { min: 9, max: 24, default: DEFAULT_SETTINGS.fontSize }
 
 /** Contextos WebGL vivos como máximo; los navegadores cortan alrededor de 16. */
 const MAX_WEBGL_CONTEXTS = 10;
+
+/** Escrituras que se guardan mientras el PTY arranca (con tope: nadie teclea tanto tan rápido). */
+const MAX_PENDING_INPUT = 256;
+const INPUT_COMMANDS = new Set(["pty_write", "pty_write_bytes"]);
 
 const SEARCH_DECORATIONS: ISearchOptions["decorations"] = {
   matchBackground: "#3b3426",
@@ -82,6 +86,8 @@ interface TerminalInstance {
   /** Bytes ya procesados por xterm y aún no confirmados al backend. */
   pendingAck: number;
   ackScheduled: boolean;
+  /** Lo que xterm o el usuario escribieron antes de conocer el id de la sesión. */
+  pendingInput: Array<{ command: string; args: Record<string, unknown> }>;
   /** Shell (no agente): tras `clear` vuelve a dar la bienvenida. */
   isShell: boolean;
   /** La tarjeta de bienvenida visible (una a la vez). */
@@ -128,6 +134,34 @@ const writeOnlyClipboard: IClipboardProvider = {
   writeText: (_selection, text) => navigator.clipboard.writeText(text).catch(() => {}),
 };
 
+/** `c` o `v` del evento, también con layouts que no son latinos (Ctrl+С en cirílico). */
+function letterOf(e: KeyboardEvent): string {
+  const key = e.key.toLowerCase();
+  return /^[a-z]$/.test(key) ? key : e.code.replace(/^Key/, "").toLowerCase();
+}
+
+/**
+ * Fuera de macOS no hay ⌘: copiar y pegar son Ctrl, como en Windows Terminal.
+ * Ctrl+C copia si hay selección (si no, es ^C para la shell), Ctrl+Shift+C
+ * siempre copia, y Ctrl+V / Ctrl+Shift+V pegan por el evento `paste` nativo,
+ * igual que ⌘V en macOS (xterm añade el bracketed paste). AltGr llega como
+ * Ctrl+Alt y escribe caracteres (@, #, [): nunca es un atajo.
+ * Devuelve `false` cuando xterm no debe procesar la tecla.
+ */
+function handleClipboardKey(term: Terminal, e: KeyboardEvent): boolean {
+  if (IS_MAC || e.type !== "keydown" || !e.ctrlKey || e.altKey || e.metaKey || e.getModifierState("AltGraph")) return true;
+  const letter = letterOf(e);
+  if (letter === "c" && (e.shiftKey || term.hasSelection())) {
+    const text = term.getSelection();
+    if (text) void navigator.clipboard.writeText(text).catch(() => {});
+    term.clearSelection();
+    e.preventDefault();
+    return false;
+  }
+  // Sin preventDefault: el navegador dispara `paste` sobre la textarea de xterm.
+  return letter !== "v";
+}
+
 /**
  * Con glass (Neón en la ventana de macOS) el fondo de xterm es transparente:
  * el velo lo pone el panel por CSS, así hay una sola capa sobre el escritorio.
@@ -160,6 +194,12 @@ class TerminalManager {
   private progressListeners = new Set<() => void>();
   private settings: Settings = DEFAULT_SETTINGS;
   private home: string | null = null;
+  /**
+   * Con ConPTY, xterm no debe subir historial a la vista al crecer el panel
+   * (ConPTY repinta su pantalla encima y se duplican líneas), y antes de la
+   * build 21376 de Windows tampoco debe reacomodar líneas al cambiar el ancho.
+   */
+  private windowsPty: IWindowsPty | undefined = IS_WINDOWS ? { backend: "conpty" } : undefined;
 
   constructor() {
     void this.listenForExits();
@@ -167,6 +207,15 @@ class TerminalManager {
       void import("@tauri-apps/api/path")
         .then(({ homeDir }) => homeDir())
         .then((home) => (this.home = home))
+        .catch(() => {});
+    }
+    if (IS_TAURI && IS_WINDOWS) {
+      void invoke<number | null>("windows_build")
+        .then((buildNumber) => {
+          if (!buildNumber) return;
+          this.windowsPty = { backend: "conpty", buildNumber };
+          for (const instance of this.instances.values()) instance.term.options.windowsPty = this.windowsPty;
+        })
         .catch(() => {});
     }
   }
@@ -202,8 +251,10 @@ class TerminalManager {
       // Solo se puede fijar al crear: sin esto no hay fondo transparente si luego cambias a Neón.
       allowTransparency: true,
       cursorInactiveStyle: "outline",
+      ...(this.windowsPty ? { windowsPty: this.windowsPty } : {}),
       ...terminalOptions(this.settings),
     });
+    term.attachCustomKeyEventHandler((e) => handleClipboardKey(term, e));
 
     const fitAddon = new FitAddon();
     const searchAddon = new SearchAddon({ highlightLimit: 2000 });
@@ -232,6 +283,7 @@ class TerminalManager {
       spawnRequested: false,
       pendingAck: 0,
       ackScheduled: false,
+      pendingInput: [],
       isShell: false,
       welcomeCard: null,
       dispose: [],
@@ -460,13 +512,25 @@ class TerminalManager {
         onData: channel,
         shellIntegration: this.settings.shellIntegration,
       });
-      instance.backendSessionId = sessionId;
       this.sessionToInstanceId.set(sessionId, instance.id);
+      // En orden y antes que lo nuevo: hasta tener el id, `send` sigue encolando.
+      while (instance.pendingInput.length) {
+        const { command, args } = instance.pendingInput.shift()!;
+        await invoke(command, { id: sessionId, ...args }).catch((err) => console.warn(`[termCode] ${command}:`, err));
+      }
+      // Se cerró el panel mientras arrancaba: su PTY no tiene quién lo lea.
+      if (this.instances.get(instance.id) !== instance) {
+        this.sessionToInstanceId.delete(sessionId);
+        invoke("pty_kill", { id: sessionId }).catch(() => {});
+        return;
+      }
+      instance.backendSessionId = sessionId;
       // Lo que se procesó antes de conocer el id también se confirma.
       this.flushAck(instance);
       // El tamaño pudo cambiar mientras el PTY arrancaba.
       this.send(instance, "pty_resize", { cols: term.cols, rows: term.rows });
     } catch (err) {
+      instance.pendingInput = [];
       console.error("[termCode] no se pudo iniciar el PTY:", err);
       term.writeln(`\r\n\x1b[31m[termCode] Error al iniciar el PTY: ${String(err)}\x1b[0m\r\n`);
     }
@@ -492,7 +556,15 @@ class TerminalManager {
   }
 
   private send(instance: TerminalInstance, command: string, args: Record<string, unknown>) {
-    if (instance.backendSessionId === null) return;
+    if (instance.backendSessionId === null) {
+      // ConPTY pregunta dónde está el cursor (`ESC[6n`) al arrancar y no muestra
+      // nada hasta que xterm contesta; esa respuesta puede salir antes de que
+      // `pty_spawn` devuelva el id. Perderla dejaba el panel en blanco.
+      if (instance.spawnRequested && INPUT_COMMANDS.has(command) && instance.pendingInput.length < MAX_PENDING_INPUT) {
+        instance.pendingInput.push({ command, args });
+      }
+      return;
+    }
     invoke(command, { id: instance.backendSessionId, ...args }).catch((err) =>
       console.warn(`[termCode] ${command}:`, err),
     );

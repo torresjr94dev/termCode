@@ -23,7 +23,8 @@ vi.mock("./git", async (importOriginal) => {
 const { gitApi } = await import("./git");
 const { useProjectStore } = await import("../store/projectStore");
 const { useUiStore } = await import("../store/uiStore");
-const { closeViewer, confirmDiscard, fileChangedOnDisk, imageMime, openFile, registerUnsaved, saveFile } = await import("./project");
+const { absolutePath, closeViewer, confirmDiscard, fileChangedOnDisk, imageMime, openFile, openFileAbsolute, registerUnsaved, saveFile } =
+  await import("./project");
 
 const project = () => useProjectStore.getState();
 const preview = (text: string, version = "v1") => ({
@@ -44,6 +45,23 @@ beforeEach(() => {
 });
 
 describe("visor de archivos", () => {
+  it("abre rutas absolutas del proyecto, también con la raíz de Windows", async () => {
+    vi.mocked(gitApi.read).mockResolvedValue(preview("x"));
+    useProjectStore.setState({ cwd: "C:\\repo" });
+    expect(absolutePath("src/a.ts")).toBe("C:\\repo\\src\\a.ts");
+    expect(openFileAbsolute("C:\\otro\\a.ts")).toBe(false);
+    expect(openFileAbsolute("C:\\repo")).toBe(false);
+    // PowerShell conserva las mayúsculas que escribiste; el visor usa `/` como git.
+    expect(openFileAbsolute("c:\\REPO\\src\\b.ts", 3)).toBe(true);
+    await vi.waitFor(() => expect(project().viewer).toMatchObject({ path: "src/b.ts" }));
+
+    useProjectStore.setState({ cwd: "/repo", viewer: null });
+    expect(absolutePath("src/a.ts")).toBe("/repo/src/a.ts");
+    expect(openFileAbsolute("/repository/a.ts")).toBe(false);
+    expect(openFileAbsolute("/repo/src/a.ts")).toBe(true);
+    await vi.waitFor(() => expect(project().viewer).toMatchObject({ path: "src/a.ts" }));
+  });
+
   it("reconoce imágenes por extensión", () => {
     expect(imageMime("logo.PNG")).toBe("image/png");
     expect(imageMime("assets/icono.svg")).toBe("image/svg+xml");

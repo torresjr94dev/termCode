@@ -44,6 +44,12 @@ interface Chord {
   alt?: boolean;
   /** Ignora Shift: `+` exige Shift en teclado US pero no en el español. */
   anyShift?: boolean;
+  /**
+   * Fuera de macOS, la tecla física (`KeyboardEvent.code`) en lugar de `key`:
+   * con Shift siempre pulsado, `key` es el símbolo de arriba y depende del
+   * layout (`Ctrl+Shift+0` llega como `)` en US y como `=` en español).
+   */
+  codes?: readonly string[];
 }
 
 export const SHORTCUTS: Record<ShortcutId, Chord> = {
@@ -58,16 +64,17 @@ export const SHORTCUTS: Record<ShortcutId, Chord> = {
   toggleUsage: { key: "u" },
   toggleBroadcast: { key: "i", shift: true },
   find: { key: "f" },
-  fontBigger: { key: ["+", "="], anyShift: true },
-  fontSmaller: { key: ["-", "_"], anyShift: true },
-  fontReset: { key: "0" },
+  // `+` y `-` del teclado español están donde US tiene `]` y `/`.
+  fontBigger: { key: ["+", "="], anyShift: true, codes: ["Equal", "BracketRight", "NumpadAdd"] },
+  fontSmaller: { key: ["-", "_"], anyShift: true, codes: ["Minus", "Slash", "NumpadSubtract"] },
+  fontReset: { key: "0", codes: ["Digit0", "Numpad0"] },
   projectFiles: { key: "e", shift: true },
   projectChanges: { key: "g", shift: true },
   prevCommand: { key: "ArrowUp" },
   nextCommand: { key: "ArrowDown" },
   zoomPane: { key: "Enter", shift: true },
   reopenClosed: { key: "t", shift: true },
-  settings: { key: "," },
+  settings: { key: ",", codes: ["Comma"] },
   overview: { key: "o", shift: true },
   missionControl: { key: "a", shift: true },
   fileFinder: { key: "p" },
@@ -114,6 +121,7 @@ function chordMatches(e: KeyboardEvent, chord: Chord): boolean {
   const wantAlt = IS_MAC ? Boolean(chord.alt) : Boolean(chord.alt || chord.shift);
   if (e.altKey !== wantAlt) return false;
   if (!chord.anyShift && e.shiftKey !== wantShift) return false;
+  if (!IS_MAC && chord.codes) return chord.codes.includes(e.code);
   const keys = typeof chord.key === "string" ? [chord.key] : chord.key;
   return keys.some((key) => (key.length === 1 ? e.key.toLowerCase() === key : e.key === key));
 }

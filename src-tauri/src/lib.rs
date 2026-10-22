@@ -17,6 +17,7 @@ mod winlaunch;
 
 use pty_core::PtyManager;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 use usage::UsageHub;
@@ -60,6 +61,17 @@ pub fn harden_dll_search() {
     }
 }
 
+/// Windows: Ctrl+C vuelve a interrumpir dentro de las shells. "Ignorar
+/// Ctrl+C" se hereda de padre a hijo: si a termCode lo abrió un proceso que lo
+/// ignora (un lanzador o una tarea en segundo plano creada con
+/// `CREATE_NEW_PROCESS_GROUP`), ningún programa de sus paneles se podría cortar.
+#[cfg(windows)]
+pub fn restore_ctrl_c() {
+    use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
+    // SAFETY: sin manejador: solo cambia el atributo (heredable) del proceso.
+    unsafe { SetConsoleCtrlHandler(None, 0) };
+}
+
 /// With `panic = "abort"` a panic takes every session down with it: make sure
 /// it reaches the log file first.
 fn install_panic_logger() {
@@ -94,6 +106,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(PtyManager::default())
+        .manage(pty::SessionOwners::default())
         .manage(UsageHub::default())
         .manage(updater::PendingUpdate::default())
         .setup(|app| {
@@ -110,6 +123,13 @@ pub fn run() {
             updater::init(app.handle());
             Ok(())
         })
+        // Una vista que se recarga deja huérfanos sus PTYs: se cierran antes de
+        // que la vista nueva restaure la sesión con shells nuevas.
+        .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Started {
+                pty::release_webview(webview.app_handle(), webview.label());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             pty::pty_spawn,
             pty::pty_write,
@@ -118,6 +138,7 @@ pub fn run() {
             pty::pty_ack,
             pty::pty_info,
             pty::pty_kill,
+            pty::windows_build,
             usage::usage_get,
             usage::usage_refresh,
             agents::agents_info,

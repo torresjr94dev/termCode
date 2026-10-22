@@ -20,12 +20,27 @@ describe("identidad", () => {
     expect(isGenericTitle("htop", "/Users/jorgetorres")).toBe(false);
   });
 
+  it("reconoce el título que pone ConPTY en Windows", () => {
+    expect(isGenericTitle("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")).toBe(true);
+    expect(isGenericTitle("Administrador: C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")).toBe(true);
+    expect(isGenericTitle("Administrator: C:\\Program Files\\PowerShell\\7\\pwsh.exe")).toBe(true);
+    expect(isGenericTitle("pwsh.exe")).toBe(true);
+    expect(isGenericTitle("C:\\Windows\\system32\\cmd.exe")).toBe(true);
+    expect(isGenericTitle("Windows PowerShell")).toBe(true);
+    expect(isGenericTitle("Soporte", "C:\\Users\\Soporte\\repo")).toBe(true);
+    expect(isGenericTitle("C:\\tools\\htop.exe")).toBe(false);
+    expect(isGenericTitle("npm: C:\\repo")).toBe(false);
+  });
+
   it("usa el proyecto solo cuando el título es genérico y no es un agente", () => {
     const project = { cwd: "/Users/jorge/termCode/src", name: "termCode", root: "/Users/jorge/termCode" };
     expect(paneDisplayName(pane("zsh"), project)).toBe("termCode");
     expect(paneDisplayName(pane("pnpm dev"), project)).toBe("pnpm dev");
     expect(paneDisplayName(pane("Claude Code", "claude"), project)).toBe("Claude Code");
     expect(paneDisplayName(pane("zsh"))).toBe("zsh");
+    expect(paneDisplayName(pane("Administrador: C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"))).toBe("powershell");
+    const windows = { cwd: "C:\\Users\\Soporte\\termCode", name: "termCode", root: "C:\\Users\\Soporte\\termCode" };
+    expect(paneDisplayName(pane("C:\\Program Files\\PowerShell\\7\\pwsh.exe"), windows)).toBe("termCode");
   });
 
   it("da un tono estable por proyecto", () => {

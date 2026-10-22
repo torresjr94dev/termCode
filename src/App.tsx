@@ -26,7 +26,7 @@ import { closeViewer, hasUnsavedEdits, openBranchPicker, openProject } from "./l
 import { ipc } from "./lib/ipc";
 import { IS_TAURI, shellQuote } from "./lib/ipc";
 import { collectPanes } from "./lib/layout";
-import { matchShortcut, matchTabIndex, type ShortcutId } from "./lib/shortcuts";
+import { IS_MAC, matchShortcut, matchTabIndex, type ShortcutId } from "./lib/shortcuts";
 
 const SHORTCUT_HANDLERS: Record<Exclude<ShortcutId, "palette">, () => unknown> = {
   newTab: actions.newTab,
@@ -57,6 +57,21 @@ const SHORTCUT_HANDLERS: Record<Exclude<ShortcutId, "palette">, () => unknown> =
 };
 
 const EDITOR_OWNED = new Set<ShortcutId>(["find", "splitRight", "prevCommand", "nextCommand"]);
+
+/**
+ * Teclas con las que WebView2 recarga o imprime la vista (en macOS no hay).
+ * Recargar cierra todas las terminales y agentes. Dentro de xterm, F5 y
+ * Ctrl+R son de la shell (xterm las envía y las consume); Ctrl+Shift+R no, y
+ * está junto a los atajos Ctrl+Shift de termCode.
+ */
+function isBrowserAccelerator(e: KeyboardEvent): boolean {
+  if (IS_MAC || import.meta.env.DEV || e.altKey || e.metaKey) return false;
+  const key = e.key.toLowerCase();
+  if (e.ctrlKey && e.shiftKey && key === "r") return true;
+  const inTerminal = e.target instanceof Element && Boolean(e.target.closest(".xterm"));
+  if (inTerminal) return false;
+  return e.key === "F5" || (e.ctrlKey && !e.shiftKey && (key === "r" || key === "p"));
+}
 
 function focusActivePane() {
   const { tabs, activeTabId } = useTerminalStore.getState();
@@ -164,6 +179,10 @@ export const App: React.FC = () => {
   // Fase de captura: el atajo se consume antes de que xterm lo envíe al PTY.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isBrowserAccelerator(e)) {
+        e.preventDefault();
+        return;
+      }
       const shortcut = matchShortcut(e);
       const tabIndex = shortcut ? null : matchTabIndex(e);
       if (!shortcut && tabIndex === null) return;

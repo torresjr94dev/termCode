@@ -8,6 +8,7 @@ import { gitApi, isStaged, isUnstaged, type GitChange, type StashEntry } from ".
 import { IS_TAURI, ipc, shellQuote } from "./ipc";
 import { settingsNow } from "../store/settingsStore";
 import { collectPanes, findOwnerTab, findPane } from "./layout";
+import { joinPath, relativeInside } from "./paths";
 import { formatReview, type ReviewNote } from "./reviewNotes";
 import { sysLabel } from "./shortcuts";
 
@@ -327,11 +328,16 @@ export async function fileChangedOnDisk(path: string): Promise<boolean | null> {
   }
 }
 
-/** Abre en el visor si el archivo está dentro del proyecto actual. `false` si no. */
+/**
+ * Abre en el visor si el archivo está dentro del proyecto actual. `false` si no.
+ * Las rutas del proyecto son relativas y con `/` (como las da git), también en
+ * Windows, donde la raíz y el enlace llegan como `C:\…`.
+ */
 export function openFileAbsolute(absolute: string, line?: number): boolean {
-  const root = projectRoot()?.replace(/\/$/, "");
-  if (!root || !absolute.startsWith(`${root}/`)) return false;
-  void openFile(absolute.slice(root.length + 1), line);
+  const root = projectRoot();
+  const rel = root ? relativeInside(absolute, root) : null;
+  if (!rel) return false;
+  void openFile(rel.replace(/\\/g, "/"), line);
   return true;
 }
 
@@ -345,7 +351,7 @@ export function pastePath(absolute: string) {
 
 export function absolutePath(rel: string): string | null {
   const root = projectRoot();
-  return root ? `${root.replace(/\/$/, "")}/${rel}` : null;
+  return root ? joinPath(root, rel) : null;
 }
 
 /** Abre un archivo del proyecto en el editor de los ajustes. */
@@ -518,7 +524,7 @@ export function reviewTarget(source: DiffSource): string | null {
   if (!root) return null;
   const inside = agents.find((p) => {
     const cwd = terminalManager.knownCwd(p.id) ?? p.cwd;
-    return cwd === root || Boolean(cwd?.startsWith(`${root}/`));
+    return cwd != null && relativeInside(cwd, root) !== null;
   });
   return inside?.id ?? null;
 }

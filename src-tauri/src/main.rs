@@ -3,7 +3,10 @@
 
 fn main() {
     #[cfg(windows)]
-    termcode_lib::harden_dll_search();
+    {
+        termcode_lib::harden_dll_search();
+        termcode_lib::restore_ctrl_c();
+    }
     // Claude Code invokes this same binary for its statusLine and hooks; those
     // calls must answer fast and never start the GUI.
     if let Some(code) = termcode_lib::agents::run_cli() {
