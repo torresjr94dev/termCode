@@ -4,6 +4,8 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ## [Sin publicar]
 
+## [0.2.0] - 2026-10-22
+
 ### Añadido
 
 - Windows: la barra de pestañas es la barra de título (sin el marco del sistema), con los botones de ventana de Windows y Mica en Windows 11.

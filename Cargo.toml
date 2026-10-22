@@ -3,7 +3,7 @@ resolver = "3"
 members = ["src-tauri", "crates/pty-core"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 authors = ["Jorge Torres"]
