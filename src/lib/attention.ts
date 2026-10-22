@@ -7,25 +7,26 @@ export interface PaneRef {
   paneId: string;
 }
 
-interface Candidate extends PaneRef {
+export interface AttentionCandidate extends PaneRef {
   /** 0 = te necesita (permiso, pregunta), 1 = el resto (terminó, falló, campana). */
   rank: number;
   at: number;
 }
 
 /**
- * ⌘J: a quién atender ahora. Primero los que están bloqueados esperándote
- * (aprobación pendiente o pregunta), luego los que terminaron; dentro de cada
- * grupo, el que más lleva esperando. El panel en el que ya estás no cuenta.
+ * Todo lo que espera que lo atiendas, en el orden de ⌘J: primero los que están
+ * bloqueados esperándote (aprobación pendiente o pregunta), luego los que
+ * terminaron; dentro de cada grupo, el que más lleva esperando. El panel en el
+ * que ya estás no cuenta.
  */
-export function nextAttentionPane(
+export function attentionCandidates(
   tabs: Tab[],
   attention: Record<string, Attention>,
   activity: Record<string, AgentActivity>,
   currentPaneId: string | undefined,
   approvals: ReadonlyArray<{ paneId: string; at: number }> = [],
-): PaneRef | null {
-  const candidates: Candidate[] = [];
+): AttentionCandidate[] {
+  const candidates: AttentionCandidate[] = [];
   for (const tab of tabs) {
     for (const pane of collectPanes(tab.root)) {
       if (pane.id === currentPaneId) continue;
@@ -40,8 +41,12 @@ export function nextAttentionPane(
       }
     }
   }
-  candidates.sort((a, b) => a.rank - b.rank || a.at - b.at);
-  const first = candidates[0];
+  return candidates.sort((a, b) => a.rank - b.rank || a.at - b.at);
+}
+
+/** ⌘J: a quién atender ahora (el primero de `attentionCandidates`). */
+export function nextAttentionPane(...args: Parameters<typeof attentionCandidates>): PaneRef | null {
+  const first = attentionCandidates(...args)[0];
   return first ? { tabId: first.tabId, paneId: first.paneId } : null;
 }
 

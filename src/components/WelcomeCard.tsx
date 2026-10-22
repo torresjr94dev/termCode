@@ -19,6 +19,8 @@ interface WelcomeCardProps {
   user: string | null;
   version: string;
   compact: boolean;
+  /** Por debajo de este ancho la tarjeta completa no cabe en su alto. */
+  fullMinWidth: number;
   view: WelcomeView;
 }
 
@@ -33,13 +35,16 @@ function greeting(now: Date): string {
  * flotando sobre unas líneas en blanco de la terminal. Al dividir o cambiar
  * el tamaño se reacomoda en vez de partirse como lo haría un texto.
  */
-const WelcomeCard: React.FC<WelcomeCardProps> = ({ cwd, home, user, version, compact, view }) => {
+const WelcomeCard: React.FC<WelcomeCardProps> = ({ cwd, home, user, version, compact, fullMinWidth, view }) => {
   const width = useSyncExternalStore(view.onResize, view.width);
   const agents = useTerminalStore((s) => s.agents);
   const usage = useTerminalStore((s) => s.usage);
   const nowMs = useNow(60_000);
   const now = new Date(nowMs);
   const narrow = width < 640;
+  // Completa en un panel que se angostó después de abrirse (p. ej. al dividir):
+  // su alto ya no cambia, así que se queda con lo esencial en una fila.
+  const cramped = !compact && width < fullMinWidth;
 
   const quota = (["claude", "codex"] as const).flatMap((id) => {
     const provider = usage[id];
@@ -95,6 +100,7 @@ const WelcomeCard: React.FC<WelcomeCardProps> = ({ cwd, home, user, version, com
               {agents &&
                 (["claude", "codex"] as const).map((id) => {
                   const installed = Boolean(agents[id]);
+                  if (cramped && !installed) return null;
                   const Icon = id === "claude" ? Asterisk : Hexagon;
                   return (
                     <button
@@ -114,16 +120,17 @@ const WelcomeCard: React.FC<WelcomeCardProps> = ({ cwd, home, user, version, com
                     </button>
                   );
                 })}
-              {quota.map((q) => (
-                <span
-                  key={q.id}
-                  title={`${q.name}: ${Math.round(q.value)} % de la sesión de 5 h`}
-                  className="flex h-7 items-center gap-1.5 rounded-full bg-hover pl-1.5 pr-2.5 font-mono text-[11.5px] tabular-nums text-ink-2"
-                >
-                  <Ring value={q.value} inner={q.elapsed} size={18} stroke={2.25} tone={toneFor(q.value)} />
-                  {q.name} {Math.round(q.value)}%
-                </span>
-              ))}
+              {!cramped &&
+                quota.map((q) => (
+                  <span
+                    key={q.id}
+                    title={`${q.name}: ${Math.round(q.value)} % de la sesión de 5 h`}
+                    className="flex h-7 items-center gap-1.5 rounded-full bg-hover pl-1.5 pr-2.5 font-mono text-[11.5px] tabular-nums text-ink-2"
+                  >
+                    <Ring value={q.value} inner={q.elapsed} size={18} stroke={2.25} tone={toneFor(q.value)} />
+                    {q.name} {Math.round(q.value)}%
+                  </span>
+                ))}
               {cwd && !narrow && (
                 <span className="min-w-0 truncate rounded-full bg-hover px-2.5 font-mono text-[11.5px] leading-7 text-ink-3" title={cwd}>
                   {tildify(cwd, home)}

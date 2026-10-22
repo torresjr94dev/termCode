@@ -6,10 +6,11 @@ import { loadSettings, startSettingsSync } from "./lib/settings";
 import { startUpdateChecks } from "./lib/updates";
 import { useTerminalStore } from "./store/terminalStore";
 import { startBridge } from "./lib/bridge";
-import { IS_MAC } from "./lib/shortcuts";
+import { IS_MAC, IS_WINDOWS } from "./lib/shortcuts";
 import { startProjectTracking } from "./lib/project";
 import { loadSession, startAutosave } from "./lib/persistence";
 import { IS_TAURI } from "./lib/ipc";
+import { invoke } from "@tauri-apps/api/core";
 import { error as logError, info as logInfo } from "@tauri-apps/plugin-log";
 import "@fontsource-variable/jetbrains-mono/wght.css";
 import "@xterm/xterm/css/xterm.css";
@@ -45,6 +46,18 @@ async function windowLabel(): Promise<string> {
   return getCurrentWindow().label;
 }
 
+/**
+ * La ventana principal tiene material detrás: vibrancy en macOS y Mica en
+ * Windows 11 (build 22000+), ambos en tauri.conf. Windows 10 no tiene Mica.
+ */
+async function hasWindowMaterial(isQuick: boolean): Promise<boolean> {
+  if (!IS_TAURI || isQuick) return false;
+  if (IS_MAC) return true;
+  if (!IS_WINDOWS) return false;
+  const build = await invoke<number | null>("windows_build").catch(() => null);
+  return (build ?? 0) >= 22000;
+}
+
 async function boot(root: HTMLElement) {
   forwardErrorsToLog();
   const isQuick = (await windowLabel()) === "quick";
@@ -57,9 +70,10 @@ async function boot(root: HTMLElement) {
   ]);
   if (session) useTerminalStore.getState().hydrate(session);
 
-  // Glass real solo en la ventana principal de macOS: es la única con vibrancy
-  // (tauri.conf.json). En el resto, o con "reducir transparencia", Neón se pinta opaco.
-  if (IS_TAURI && IS_MAC && !isQuick) {
+  // Glass real solo donde hay material detrás. En el resto, o con "reducir
+  // transparencia" (macOS) / "efectos de transparencia" apagados (Windows), Neón
+  // se pinta opaco.
+  if (await hasWindowMaterial(isQuick)) {
     const reduced = window.matchMedia("(prefers-reduced-transparency: reduce)");
     const sync = () => {
       if (reduced.matches) delete document.documentElement.dataset.glass;

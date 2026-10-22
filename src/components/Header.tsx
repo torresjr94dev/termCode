@@ -1,16 +1,19 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Asterisk, GitBranch, Hexagon, Maximize2, PanelLeft, Plus, Search, X } from "lucide-react";
+import { Asterisk, Bell, GitBranch, Hexagon, Maximize2, PanelLeft, Plus, Search, Settings, X } from "lucide-react";
 import { useTerminalStore } from "../store/terminalStore";
 import { useProjectStore } from "../store/projectStore";
+import { useApprovalStore } from "../store/approvalStore";
 import { openProject } from "../lib/project";
 import { actions } from "../lib/actions";
 import { cn, collectPanes, findPane } from "../lib/layout";
-import { projectTone, shortCommand, tabDisplayName } from "../lib/identity";
+import { projectColor, shortCommand, tabDisplayName } from "../lib/identity";
+import { attentionCandidates } from "../lib/attention";
 import { useRunningCommand } from "../terminal/useRunningCommand";
-import { IS_MAC, shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
+import { IS_MAC, IS_WINDOWS, shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
 import type { ProviderUsage, Tab } from "../types/layout";
 import { terminalManager } from "../terminal/TerminalManager";
 import { AgentGlyph, IconButton, Kbd, Lamp, Ring } from "./ui";
+import { WindowControls } from "./WindowControls";
 import { pace } from "../lib/quota";
 import { useNow } from "../lib/useNow";
 
@@ -59,7 +62,9 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
   return (
     <header
       data-tauri-drag-region
-      className="relative z-20 flex h-11 shrink-0 items-center bg-chrome pr-2"
+      // En Windows la ventana no tiene marco: esta es la barra de título y los
+      // botones de ventana van pegados al borde derecho.
+      className={cn("relative z-20 flex h-11 shrink-0 items-center bg-chrome", IS_WINDOWS ? "pr-0" : "pr-2")}
     >
       {/* Hueco para los semáforos de macOS (solo cuando la barra lateral no los aloja) */}
       {IS_MAC && !isSidebarOpen && <div data-tauri-drag-region className="h-full w-[78px] shrink-0" />}
@@ -72,6 +77,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
           pressed={isSidebarOpen}
           onClick={actions.toggleSidebar}
         />
+        <AttentionBell />
       </div>
 
       <nav aria-label="Pestañas" className="ml-1.5 flex min-w-0 items-center">
@@ -112,8 +118,55 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
           <span className="hidden text-[12px] md:inline">Comandos</span>
           <Kbd>{shortcutLabel("palette")}</Kbd>
         </button>
+        <IconButton icon={Settings} label="Ajustes" shortcut={shortcutLabel("settings")} onClick={actions.openSettings} />
       </div>
+      {IS_WINDOWS && (
+        <div className="ml-2 flex h-full">
+          <WindowControls />
+        </div>
+      )}
     </header>
+  );
+};
+
+/**
+ * Lo que te espera en otros paneles, lo mismo que atiende ⌘J: agentes que
+ * piden permiso o preguntan (acento) y comandos que terminaron o fallaron.
+ */
+const AttentionBell: React.FC = () => {
+  const tabs = useTerminalStore((s) => s.tabs);
+  const activeTabId = useTerminalStore((s) => s.activeTabId);
+  const attention = useTerminalStore((s) => s.attention);
+  const activity = useTerminalStore((s) => s.agentActivity);
+  const approvals = useApprovalStore((s) => s.requests);
+  const current = tabs.find((t) => t.id === activeTabId)?.activePaneId;
+  const pending = attentionCandidates(tabs, attention, activity, current, approvals);
+  const urgent = pending.some((c) => c.rank === 0);
+  const label = pending.length
+    ? `${pending.length} ${pending.length === 1 ? "panel te espera" : "paneles te esperan"}`
+    : "Nadie te espera";
+
+  return (
+    <button
+      type="button"
+      onClick={actions.focusNextAttention}
+      aria-label={label}
+      title={`${label}  ${shortcutLabel("nextAttention")}`}
+      className="relative grid size-7 shrink-0 place-items-center rounded-md text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
+    >
+      <Bell size={15} strokeWidth={1.75} aria-hidden="true" />
+      {pending.length > 0 && (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "absolute -right-0.5 -top-0.5 grid h-[15px] min-w-[15px] place-items-center rounded-full px-1 font-mono text-[9.5px] font-semibold leading-none tabular-nums",
+            urgent ? "bg-accent text-on-accent" : "bg-press text-ink-2",
+          )}
+        >
+          {pending.length}
+        </span>
+      )}
+    </button>
   );
 };
 
@@ -264,7 +317,9 @@ const TabItem: React.FC<TabItemProps> = ({
       }}
       className={cn(
         // Cápsula de vidrio solo para la activa; el resto, texto que se ilumina al pasar.
-        "group relative flex h-[30px] shrink-0 items-center rounded-[10px] transition-[background-color,color] duration-150",
+        // Como en un navegador, con muchas pestañas se encogen (el nombre se corta)
+        // antes de que la tira se desborde y esconda la activa.
+        "group relative flex h-[30px] min-w-[64px] shrink items-center rounded-[10px] transition-[background-color,color] duration-150",
         isActive ? "glass-pill z-10 text-ink" : "text-ink-3 hover:bg-hover hover:text-ink-2",
         isDragged && "opacity-50",
       )}
@@ -303,21 +358,16 @@ const TabItem: React.FC<TabItemProps> = ({
           {needsAttention ? (
             <Lamp state="attention" />
           ) : (
-            <span className={cn("font-mono text-[10.5px] tabular-nums", isActive ? "text-accent" : "text-ink-3/80")}>{index + 1}</span>
+            // La forma dice qué corre (shell, Claude, Codex); el color, de qué
+            // proyecto es: el mismo tono en todas las pestañas del mismo repo.
+            <span
+              className={cn("flex shrink-0", !project && "text-ink-3", !isActive && "opacity-70")}
+              style={project ? { color: projectColor(project.root ?? project.cwd) } : undefined}
+            >
+              <AgentGlyph agentType={agentType ?? null} />
+            </span>
           )}
-          {agentType ? (
-            <AgentGlyph agentType={agentType} className="shrink-0 opacity-80" />
-          ) : (
-            // Punto del proyecto: mismo color en todas las pestañas del mismo repo.
-            project && (
-              <span
-                aria-hidden="true"
-                title={project.name}
-                className={cn("size-[7px] shrink-0 rounded-full", projectTone(project.root ?? project.cwd), !isActive && "opacity-60")}
-              />
-            )
-          )}
-          <span className="max-w-[180px] truncate text-[12.5px] font-medium">{label}</span>
+          <span className="min-w-0 max-w-[180px] truncate text-[12.5px] font-medium">{label}</span>
           {runningHint && <span className="max-w-[110px] shrink-0 truncate font-mono text-[11px] text-ink-3">{runningHint}</span>}
           {tab.zoomedPaneId && (
             <Maximize2 size={11} strokeWidth={2} aria-label="Panel maximizado" className="shrink-0 text-accent" />

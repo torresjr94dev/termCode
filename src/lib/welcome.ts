@@ -11,6 +11,12 @@ import { basename } from "./paths";
 export const CARD_HEIGHT = { full: 156, compact: 64 } as const;
 
 /**
+ * Ancho mínimo del panel (px) para la tarjeta completa. Más angosta, la fila
+ * de agentes y cuotas ocupa tres líneas y no cabe en su alto fijo: se recorta.
+ */
+export const FULL_MIN_WIDTH = 560;
+
+/**
  * Qué bienvenida cabe en un panel de este tamaño. La tarjeta no ocupa más
  * de ~45 % del alto (la shell necesita espacio para trabajar); con lector de
  * pantalla, solo una línea de texto (el resto sería ruido leído en voz alta).
@@ -18,19 +24,19 @@ export const CARD_HEIGHT = { full: 156, compact: 64 } as const;
 export function pickWelcome(
   mode: "full" | "compact" | "off",
   screenReader: boolean,
-  size: { cols: number; height: number },
+  size: { cols: number; height: number; width: number },
 ): "full" | "compact" | "line" | null {
   if (mode === "off") return null;
   if (screenReader) return size.cols >= 32 ? "line" : null;
   if (size.cols < 40) return null;
   const room = size.height * 0.45;
-  if (mode === "full" && room >= CARD_HEIGHT.full) return "full";
+  if (mode === "full" && room >= CARD_HEIGHT.full && size.width >= FULL_MIN_WIDTH) return "full";
   if (room >= CARD_HEIGHT.compact) return "compact";
   return null;
 }
 
 /** Datos reales para la bienvenida de un panel. Nada inventado: lo que no se sabe, no sale. */
-export function renderWelcome(paneId: string, size: { cols: number; rows: number; height: number }): WelcomeContent | null {
+export function renderWelcome(paneId: string, size: { cols: number; rows: number; height: number; width: number }): WelcomeContent | null {
   const settings = settingsNow();
   const variant = pickWelcome(settings.welcomeBanner, settings.screenReader, size);
   if (!variant) return null;
@@ -51,6 +57,7 @@ export function renderWelcome(paneId: string, size: { cols: number; rows: number
         user: home ? basename(home) : null,
         version,
         compact: variant === "compact",
+        fullMinWidth: FULL_MIN_WIDTH,
         view,
       }),
   };

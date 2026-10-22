@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isGenericTitle, paneDisplayName, projectTone, shortCommand } from "./identity";
+import { isGenericTitle, paneDisplayName, projectColor, projectTone, shortCommand } from "./identity";
 import type { PaneNode } from "../types/layout";
 
 const pane = (title: string, agentType: PaneNode["agentType"] = null): PaneNode => ({
@@ -47,6 +47,8 @@ describe("identidad", () => {
     expect(projectTone("/Users/jorge/termCode")).toBe(projectTone("/Users/jorge/termCode"));
     const tones = new Set(["a", "b", "c", "d", "e", "f", "g", "h"].map((k) => projectTone(`/repo/${k}`)));
     expect(tones.size).toBeGreaterThan(2);
+    // El color de texto es el mismo tono que el fondo.
+    expect(projectColor("/repo/a")).toBe(`var(--color-proj-${projectTone("/repo/a").slice("bg-proj-".length)})`);
   });
 
   it("acorta comandos largos", () => {
