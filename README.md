@@ -51,6 +51,8 @@ termCode es una terminal para macOS y Windows (Tauri + React + xterm.js) pensada
 
 En macOS el modificador es `⌘`; en Windows, `Ctrl+Shift`, y donde macOS suma `⇧` o `⌥`, Windows suma `Alt` (`⇧⌘D` es `Ctrl+Shift+Alt+D`). Todos están en la paleta (`⌘K` / `Ctrl+Shift+K`), escritos con las teclas de tu sistema.
 
+En Windows, como en Windows Terminal, `Ctrl+C` copia si hay texto seleccionado (si no, interrumpe el programa) y `Ctrl+V` pega; `Ctrl+Shift+C` y `Ctrl+Shift+V` también funcionan. Las imágenes se pegan en Claude Code con `Alt+V`.
+
 | Atajo | Acción | Atajo | Acción |
 |---|---|---|---|
 | `⌘K` | Paleta de comandos | `⇧⌘A` | Mission Control |
@@ -70,6 +72,11 @@ En macOS el modificador es `⌘`; en Windows, `Ctrl+Shift`, y donde macOS suma `
 - macOS, o Windows 10 1809 o posterior (la primera versión con ConPTY). En Windows hace falta WebView2, que ya viene en Windows 11 y que el instalador descarga si falta.
 - [Node.js](https://nodejs.org) 22 o superior y [pnpm](https://pnpm.io) 12.
 - [Rust](https://rustup.rs) estable con edición 2024 (1.85 o superior).
+- En Windows, además: [Visual Studio Build Tools 2022](https://visualstudio.microsoft.com/visual-cpp-build-tools/) con *Desarrollo para el escritorio con C++* y Rust con la toolchain MSVC (`rustup default stable-msvc`), igual que en CI. Con la toolchain GNU (`x86_64-pc-windows-gnu`) no compila: faltan `dlltool` y un compilador de C. Las Build Tools se instalan con:
+
+  ```powershell
+  winget install --id Microsoft.VisualStudio.2022.BuildTools --exact --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.Windows11SDK.26100"
+  ```
 - Opcional: [Claude Code](https://code.claude.com/docs) (`npm install -g @anthropic-ai/claude-code`), [Codex CLI](https://github.com/openai/codex) (`npm install -g @openai/codex`) y [GitHub CLI](https://cli.github.com) (`gh`) para PRs y CI.
 
 ## Desarrollo
@@ -87,7 +94,7 @@ pnpm tauri dev      # la app de escritorio con recarga en caliente
 | `cargo clippy --workspace --all-targets -- -D warnings` | Lint de Rust, igual que en CI |
 | `pnpm tauri build` | App empaquetada (`.app` y `.dmg` en macOS; `.exe` de NSIS y `.msi` en Windows) |
 
-Las e2e no necesitan dependencias: `e2e/run.mjs` levanta Vite, abre Chrome por CDP y simula el backend reemplazando funciones de la página. Si fallan, dejan capturas en `e2e/artifacts/`.
+Las e2e no necesitan dependencias: `e2e/run.mjs` levanta Vite, abre Chrome por CDP y simula el backend reemplazando funciones de la página. Si fallan, dejan capturas en `e2e/artifacts/`. En Windows usan Chrome o, si no está, Edge (`CHROME_PATH` elige otro).
 
 ### Estructura
 
@@ -117,7 +124,10 @@ e2e/                 Pruebas de punta a punta
 - **Shell**: PowerShell 7 (`pwsh`) si está instalado; si no, Windows PowerShell 5.1. La integración se carga después de tu perfil y no lo modifica. Funciona con la política de ejecución por defecto (`Restricted`) porque no se ejecuta como archivo `.ps1`. Necesita PSReadLine (viene con Windows) para las marcas de comando; sin él quedan el prompt y la carpeta.
 - **Agentes**: se lanzan sin `cmd.exe`, que interpretaría `%`, `&` o comillas de tu prompt. termCode busca el ejecutable real (el instalador nativo de Claude Code deja `claude.exe` en `%USERPROFILE%\.local\bin`; los shims `.cmd` de npm, pnpm y yarn se siguen hasta su `.exe` o su script de Node) y PowerShell lo inicia con los argumentos ya citados. Si un shim no se puede seguir, solo se lanza con texto que `cmd.exe` no pueda malinterpretar.
 - **Claude Code**: los hooks usan la forma exec (sin shell). El statusLine lo corre Git Bash si está instalado y, si no, PowerShell; termCode escribe la ruta de forma que valga para los dos.
-- **Pendiente de probar en un Windows real**: todo lo anterior está cubierto por tests y por el lint de Windows en CI, pero el comportamiento en ejecución (ConPTY, la named pipe de las aprobaciones, la integración con PowerShell) no se ha probado a mano todavía. Reporta lo que falle.
+- **Probado en Windows 11 (build 26200)**: shells y divisiones con ConPTY, la integración con Windows PowerShell 5.1 (un test de Rust la corre de verdad a través de ConPTY), Claude Code dentro de termCode con sus hooks y statusLine, la bandeja de aprobaciones y el MCP por la named pipe, copiar y pegar, y la limpieza de sesiones al recargar la vista.
+- **Ctrl+C**: termCode restaura Ctrl+C al arrancar. Ignorarlo se hereda de padre a hijo, así que si lo abría un proceso que lo ignora (un lanzador o una tarea en segundo plano), ningún programa de sus paneles se podía interrumpir.
+- **Recargar la vista** (`F5`, `Ctrl+R`, `Ctrl+Shift+R`) cierra todas las terminales y agentes: termCode bloquea esas teclas e `Imprimir` (`Ctrl+P`) fuera de la terminal, y si la vista se recarga de todos modos (el menú contextual de WebView2), cierra las sesiones que dejó en vez de dejarlas huérfanas.
+- **Pendiente**: el proceso en primer plano y su carpeta (`pty_info`) no se leen en Windows; la carpeta llega por la integración con PowerShell. Las e2e en Windows cuelgan Chrome headless cuando se divide un panel justo después de cerrar un diálogo (solo sin backend y con un user agent que no es de Mac; la app real no lo reproduce); en CI corren en macOS.
 
 ## Privacidad y seguridad
 
