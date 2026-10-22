@@ -43,6 +43,13 @@ function findChrome() {
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
   const mac = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
   if (process.platform === "darwin" && existsSync(mac)) return mac;
+  // Windows no tiene `which`; Edge es Chromium y siempre viene instalado.
+  if (process.platform === "win32") {
+    const roots = [process.env.ProgramFiles, process.env["ProgramFiles(x86)"], process.env.LOCALAPPDATA].filter(Boolean);
+    const candidates = roots.flatMap((root) => [join(root, "Google/Chrome/Application/chrome.exe"), join(root, "Microsoft/Edge/Application/msedge.exe")]);
+    const found = candidates.find((path) => existsSync(path));
+    if (found) return found;
+  }
   for (const name of ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"]) {
     const which = spawnSync("which", [name], { encoding: "utf8" });
     if (which.status === 0 && which.stdout.trim()) return which.stdout.trim();
