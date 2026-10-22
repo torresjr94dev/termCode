@@ -6,8 +6,18 @@ import type { PaneProject } from "../store/terminalStore";
 import type { PaneNode, Tab } from "../types/layout";
 import { findPane } from "./layout";
 
-const SHELLS = /^-?(zsh|bash|fish|sh|dash|ksh|tcsh|nu|pwsh|login|terminal)$/i;
+const SHELLS = /^-?(zsh|bash|fish|sh|dash|ksh|tcsh|nu|pwsh|powershell|windows powershell|cmd|login|terminal)$/i;
 const USER_AT_HOST = /^[\w.-]+@[\w.-]+/;
+
+/**
+ * En Windows, ConPTY titula la consola con la ruta del ejecutable
+ * (`C:\…\pwsh.exe`) y, si está elevada, con `Administrador: ` delante (el
+ * prefijo va en el idioma del sistema): queda `pwsh`.
+ */
+function programName(title: string): string {
+  const path = title.replace(/^[^:\\/]+:\s+(?=[A-Za-z]:[\\/])/, "");
+  return path.replace(/^[A-Za-z]:[\\/](?:.*[\\/])?/, "").replace(/\.exe$/i, "");
+}
 
 /**
  * Los agentes animan su título con glifos de spinner (`✳ Claude Code`,
@@ -18,23 +28,26 @@ export function cleanTitle(title: string): string {
   return title.replace(/^[^\p{L}\p{N}~/.[(@]+/u, "").trim() || title.trim();
 }
 
-/** Usuario dueño de la carpeta (`/Users/x/…`, `/home/x/…`). */
+/** Usuario dueño de la carpeta (`/Users/x/…`, `/home/x/…`, `C:\Users\x\…`). */
 function homeUser(cwd: string | undefined): string | null {
-  const m = cwd?.match(/^\/(?:Users|home)\/([^/]+)/);
+  const m = cwd?.match(/^\/(?:Users|home)\/([^/]+)/) ?? cwd?.match(/^[A-Za-z]:[\\/]Users[\\/]([^\\/]+)/i);
   return m ? m[1] : null;
 }
 
 /** El título no dice nada: nombre de la shell, `usuario@host…` o el propio usuario. */
 export function isGenericTitle(title: string, cwd?: string): boolean {
   const t = title.trim();
-  return !t || SHELLS.test(t) || USER_AT_HOST.test(t) || t === homeUser(cwd);
+  return !t || SHELLS.test(programName(t)) || USER_AT_HOST.test(t) || t === homeUser(cwd);
 }
 
 /** Nombre a mostrar de un panel: el título si dice algo; si no, el proyecto. */
 export function paneDisplayName(pane: PaneNode, project?: PaneProject): string {
   const title = cleanTitle(pane.title);
-  if (pane.agentType || !project) return title;
-  return isGenericTitle(title, project.cwd) ? project.name : title;
+  if (pane.agentType) return title;
+  if (project && isGenericTitle(title, project.cwd)) return project.name;
+  // Sin proyecto, al menos `powershell` y no `Administrador: C:\Windows\…\powershell.exe`.
+  const program = programName(title);
+  return SHELLS.test(program) ? program : title;
 }
 
 /** Tonos cálidos (sin cian): definidos en index.css para cada tema. */

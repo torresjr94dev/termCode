@@ -8,7 +8,7 @@ import { actions, AGENTS } from "../lib/actions";
 import { cn } from "../lib/layout";
 import { formatAgo, formatUsd } from "../lib/format";
 import { useNow } from "../lib/useNow";
-import { cleanTitle } from "../lib/identity";
+import { paneDisplayName } from "../lib/identity";
 import { shortcutLabel } from "../lib/shortcuts";
 import { FindBar } from "./FindBar";
 import { CommandGutter } from "./CommandGutter";
@@ -85,7 +85,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
         >
           <Lamp state={hasAttention ? "attention" : isActive ? "on" : "off"} />
           <AgentGlyph agentType={pane.agentType} className="shrink-0 opacity-80" />
-          <span className="min-w-0 truncate text-[12.5px] font-medium">{cleanTitle(pane.title)}</span>
+          <span className="min-w-0 truncate text-[12.5px] font-medium">{paneDisplayName(pane)}</span>
 
           {status && <AgentReadout model={status.model} context={status.contextPercent} cost={status.costUsd} />}
           {isZoomed && (
