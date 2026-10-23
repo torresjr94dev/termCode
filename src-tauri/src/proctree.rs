@@ -35,15 +35,23 @@ fn children(pid: i32) -> Vec<i32> {
     pids
 }
 
+/// Cada hilo tiene su lista: un hijo cuelga del hilo que lo creó, y los
+/// programas multihilo (Go, tokio, `cargo`, los workers de Node) no lanzan solo
+/// desde el principal.
 #[cfg(target_os = "linux")]
 fn children(pid: i32) -> Vec<i32> {
-    std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children"))
-        .map(|s| {
-            s.split_whitespace()
+    let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) else {
+        return Vec::new();
+    };
+    tasks
+        .flatten()
+        .filter_map(|task| std::fs::read_to_string(task.path().join("children")).ok())
+        .flat_map(|list| {
+            list.split_whitespace()
                 .filter_map(|p| p.parse().ok())
-                .collect()
+                .collect::<Vec<i32>>()
         })
-        .unwrap_or_default()
+        .collect()
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]

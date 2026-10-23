@@ -79,6 +79,20 @@ pub fn restore_ctrl_c() {
     unsafe { SetConsoleCtrlHandler(None, 0) };
 }
 
+/// Linux: con el driver propietario de NVIDIA, el renderizador DMA-BUF de
+/// WebKitGTK deja la ventana en blanco (tauri-apps/tauri#9394). Solo ahí se
+/// apaga; en el resto es el camino rápido. Si ya la definiste, manda la tuya.
+#[cfg(target_os = "linux")]
+pub fn avoid_blank_webview() {
+    const VAR: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+    if std::env::var_os(VAR).is_none()
+        && std::path::Path::new("/proc/driver/nvidia/version").exists()
+    {
+        // SAFETY: al empezar `main`, antes de que exista cualquier otro hilo.
+        unsafe { std::env::set_var(VAR, "1") };
+    }
+}
+
 /// With `panic = "abort"` a panic takes every session down with it: make sure
 /// it reaches the log file first.
 fn install_panic_logger() {
@@ -237,47 +251,66 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    /// `tauri.windows.conf.json` reemplaza la lista de ventanas entera (JSON
-    /// Merge Patch no mezcla arrays): fuera de la apariencia, que es propia de
-    /// cada sistema (vibrancy y barra superpuesta en macOS; Mica y sin marco en
-    /// Windows), debe ser la misma ventana.
-    #[test]
-    fn windows_window_config_matches_the_main_one() {
-        let parse = |text: &str| serde_json::from_str::<serde_json::Value>(text).unwrap();
+    use serde_json::Value;
+
+    /// Lo que cada sistema pone a su manera: vibrancy y barra superpuesta en
+    /// macOS; Mica y sin marco en Windows; marco del sistema y opaca en Linux.
+    const APPEARANCE: [&str; 6] = [
+        "titleBarStyle",
+        "hiddenTitle",
+        "transparent",
+        "windowEffects",
+        "trafficLightPosition",
+        "decorations",
+    ];
+
+    /// La ventana principal de un `tauri.<os>.conf.json`. Ese archivo reemplaza
+    /// la lista de ventanas entera (JSON Merge Patch no mezcla arrays): fuera de
+    /// la apariencia, debe ser la misma ventana que la de `tauri.conf.json`.
+    fn platform_window(text: &str) -> serde_json::Map<String, Value> {
+        let parse = |text: &str| serde_json::from_str::<Value>(text).unwrap();
         let main = parse(include_str!("../tauri.conf.json"));
-        let windows = parse(include_str!("../tauri.windows.conf.json"));
-        let (main, windows) = (&main["app"]["windows"], &windows["app"]["windows"]);
+        let platform = parse(text);
+        let (main, platform) = (&main["app"]["windows"], &platform["app"]["windows"]);
         assert_eq!(
             main.as_array().map(Vec::len),
-            windows.as_array().map(Vec::len)
+            platform.as_array().map(Vec::len)
         );
-        let without = |window: &serde_json::Value, keys: &[&str]| {
+        let without = |window: &Value| {
             let mut map = window.as_object().cloned().unwrap_or_default();
-            keys.iter().for_each(|k| {
+            APPEARANCE.iter().for_each(|k| {
                 map.remove(*k);
             });
             map
         };
-        let appearance = [
-            "titleBarStyle",
-            "hiddenTitle",
-            "transparent",
-            "windowEffects",
-            "trafficLightPosition",
-            "decorations",
-        ];
-        assert_eq!(
-            without(&main[0], &appearance),
-            without(&windows[0], &appearance)
-        );
+        assert_eq!(without(&main[0]), without(&platform[0]));
+        platform[0].as_object().cloned().unwrap_or_default()
+    }
+
+    #[test]
+    fn windows_window_config_matches_the_main_one() {
+        let window = platform_window(include_str!("../tauri.windows.conf.json"));
         // Sin marco: la barra de pestañas es la de título y trae sus botones.
-        assert_eq!(windows[0]["decorations"], false);
+        assert_eq!(window["decorations"], false);
         // Transparente solo para que se vea Mica; donde no hay Mica (Windows 10)
         // la vista se pinta opaca, así que nunca se ve el escritorio.
-        assert_eq!(windows[0]["transparent"], true);
+        assert_eq!(window["transparent"], true);
         assert_eq!(
-            windows[0]["windowEffects"]["effects"],
+            window["windowEffects"]["effects"],
             serde_json::json!(["mica"])
         );
+    }
+
+    #[test]
+    fn linux_window_config_matches_the_main_one() {
+        let window = platform_window(include_str!("../tauri.linux.conf.json"));
+        // Los valores por defecto: marco del sistema (GTK o el del compositor) y
+        // opaca. En Linux no hay material detrás que mostrar, y una ventana
+        // transparente en WebKitGTK sale negra sin compositor.
+        let set: Vec<_> = APPEARANCE
+            .iter()
+            .filter(|k| window.contains_key(**k))
+            .collect();
+        assert!(set.is_empty(), "apariencia fijada en Linux: {set:?}");
     }
 }
