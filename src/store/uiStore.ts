@@ -7,6 +7,8 @@ export interface ConfirmRequest {
   onConfirm: () => void;
   /** Se llama si se cancela (Esc, botón o clic fuera). */
   onCancel?: () => void;
+  /** Decisiones de confianza: el foco empieza en Cancelar (un Enter de más no aprueba nada). */
+  safeDefault?: boolean;
 }
 
 export interface Toast {
@@ -21,6 +23,10 @@ interface UiState {
   isOverviewOpen: boolean;
   isMissionOpen: boolean;
   isFinderOpen: boolean;
+  /** Detalle del sistema (CPU, GPU, memoria, procesos) sobre la barra de estado. */
+  isSystemOpen: boolean;
+  /** Diálogo de servidor SSH: nuevo o editar uno guardado. */
+  sshDialog: { id?: string } | null;
   /** ⌘ mantenido: se muestran los atajos sobre la interfaz. */
   showHints: boolean;
   confirm: ConfirmRequest | null;
@@ -35,6 +41,8 @@ interface UiState {
   setOverviewOpen: (open: boolean) => void;
   setMissionOpen: (open: boolean) => void;
   setFinderOpen: (open: boolean) => void;
+  setSystemOpen: (open: boolean) => void;
+  setSshDialog: (dialog: { id?: string } | null) => void;
   setShowHints: (show: boolean) => void;
   askConfirm: (request: ConfirmRequest) => void;
   resolveConfirm: (accepted: boolean) => void;
@@ -53,6 +61,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   isOverviewOpen: false,
   isMissionOpen: false,
   isFinderOpen: false,
+  isSystemOpen: false,
+  sshDialog: null,
   showHints: false,
   confirm: null,
   toast: null,
@@ -64,6 +74,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   setOverviewOpen: (open) => set({ isOverviewOpen: open }),
   setMissionOpen: (open) => set({ isMissionOpen: open }),
   setFinderOpen: (open) => set({ isFinderOpen: open }),
+  setSystemOpen: (open) => set({ isSystemOpen: open }),
+  setSshDialog: (dialog) => set({ sshDialog: dialog }),
   setShowHints: (show) => {
     if (get().showHints !== show) set({ showHints: show });
   },

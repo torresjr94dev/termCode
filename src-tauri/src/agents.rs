@@ -348,11 +348,12 @@ fn model_name(status: &Value) -> Option<String> {
 }
 
 /// Field names have changed across Claude Code versions: accept both the
-/// precomputed percentage and the raw token counts.
+/// precomputed percentage and the raw token counts. Always 0–100 and never
+/// `-0` (Claude can report it, and `{:.0}` would print "-0%").
 fn context_percent(status: &Value) -> Option<f64> {
     let cw = status.get("context_window")?;
     if let Some(p) = cw.get("used_percentage").and_then(Value::as_f64) {
-        return Some(p);
+        return Some(p.clamp(0.0, 100.0) + 0.0);
     }
     let size = cw.get("context_window_size").and_then(Value::as_f64)?;
     let usage = cw.get("current_usage")?;
@@ -385,7 +386,7 @@ fn render_statusline(status: &Value) -> String {
         parts.push(model);
     }
     if let Some(ctx) = context_percent(status) {
-        parts.push(format!("ctx {ctx:.0}%"));
+        parts.push(format!("ctx {}%", ctx.round() as u8));
     }
     if let Some(session) = usage::claude::windows_from_statusline(status)
         .and_then(|w| w.into_iter().find(|w| w.kind == "session"))
@@ -954,6 +955,16 @@ mod tests {
             "nada que una shell interprete"
         );
         assert!(!valid_session_id(&"a".repeat(129)));
+    }
+
+    #[test]
+    fn context_is_never_negative_zero_or_out_of_range() {
+        let ctx =
+            |p: f64| render_statusline(&json!({ "context_window": { "used_percentage": p } }));
+        assert_eq!(ctx(-0.0), "ctx 0%");
+        assert_eq!(ctx(-3.0), "ctx 0%");
+        assert_eq!(ctx(140.0), "ctx 100%");
+        assert_eq!(ctx(41.6), "ctx 42%");
     }
 
     #[test]

@@ -2,15 +2,22 @@
 
 pub mod agents;
 mod approvals;
+mod cloud;
+mod codex_status;
 mod editor;
 mod fs;
 mod git;
 mod local_ipc;
 mod mcp;
+mod ports;
 mod proc;
+mod proctree;
 mod pty;
 mod quick;
 mod shell_integration;
+mod shells;
+mod ssh;
+mod sysmon;
 mod updater;
 mod usage;
 mod winlaunch;
@@ -108,6 +115,7 @@ pub fn run() {
         .manage(PtyManager::default())
         .manage(pty::SessionOwners::default())
         .manage(UsageHub::default())
+        .manage(sysmon::SysMon::default())
         .manage(updater::PendingUpdate::default())
         .setup(|app| {
             agents::reset_bridge_dir();
@@ -139,6 +147,15 @@ pub fn run() {
             pty::pty_info,
             pty::pty_kill,
             pty::windows_build,
+            ports::pty_ports,
+            sysmon::system_stats,
+            shells::shells_available,
+            ssh::ssh_hosts,
+            sysmon::system_processes,
+            sysmon::process_terminate,
+            sysmon::pty_children,
+            codex_status::codex_status,
+            cloud::fs_cloud_provider,
             usage::usage_get,
             usage::usage_refresh,
             agents::agents_info,

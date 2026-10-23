@@ -6,6 +6,8 @@ import type {
   AgentStatus,
   AgentsInfo,
   PaneNode,
+  PaneShell,
+  ShellInfo,
   SplitDirection,
   Tab,
   UsageSnapshot,
@@ -20,6 +22,10 @@ export interface PaneSpec {
   title?: string;
   cwd?: string;
   command?: string;
+  /** Otra shell que la tuya (zsh, bash, fish, pwsh…). */
+  shell?: PaneShell;
+  /** Servidor SSH al que se conecta el panel (su nombre). */
+  ssh?: string;
   agentType?: AgentKind | null;
   /** Bienvenida antes del primer prompt. Por defecto, toda shell nueva (pestaña, división, rápida). */
   welcome?: boolean;
@@ -44,6 +50,8 @@ export interface PersistedSession {
   tabs: Tab[];
   activeTabId: string;
   isSidebarOpen: boolean;
+  /** Panel de proyecto abierto o plegado en su riel (falta en sesiones de versiones anteriores). */
+  isProjectOpen?: boolean;
 }
 
 /** Lo necesario para reabrir algo cerrado (⌘⇧T): la shell ya murió, la carpeta no. */
@@ -53,6 +61,8 @@ export interface ClosedEntry {
 }
 
 const MAX_CLOSED = 12;
+/** Alto inicial de la shell acoplada: el agente sigue siendo lo principal. */
+const DRAWER_RATIO = 0.35;
 
 const loadingProvider = {
   status: "loading",
@@ -74,6 +84,8 @@ function newPane(spec: PaneSpec = {}): PaneNode {
     title: spec.title ?? "zsh",
     cwd: spec.cwd,
     command: spec.command,
+    ...(spec.shell && !spec.command ? { shell: spec.shell } : {}),
+    ...(spec.ssh ? { ssh: spec.ssh } : {}),
     agentType: spec.agentType ?? null,
     // Las shells nuevas dan la bienvenida; los agentes no (su TUI ocupa el panel).
     ...(!spec.command && spec.welcome !== false ? { welcome: true } : {}),
@@ -83,6 +95,20 @@ function newPane(spec: PaneSpec = {}): PaneNode {
 function newTab(spec: PaneSpec = {}, title = "Terminal"): Tab {
   const pane = newPane(spec);
   return { id: genId("tab"), title, root: pane, activePaneId: pane.id };
+}
+
+/** Terminales de las shells acopladas de esos paneles (mueren con su panel). */
+function drawerIds(panes: Array<PaneNode | undefined>): string[] {
+  return panes.flatMap((p) => (p?.drawer ? [p.drawer.id] : []));
+}
+
+/** El panel que lleva esa shell acoplada, si lo hay. */
+export function findDrawerOwner(tabs: Tab[], drawerId: string): PaneNode | undefined {
+  for (const tab of tabs) {
+    const pane = collectPanes(tab.root).find((p) => p.drawer?.id === drawerId);
+    if (pane) return pane;
+  }
+  return undefined;
 }
 
 function omit<T extends object>(record: Record<string, T>, keys: string[]): Record<string, T> {
@@ -101,10 +127,14 @@ interface TerminalState {
   usage: UsageSnapshot;
   closed: ClosedEntry[];
   agents: AgentsInfo | null;
+  /** Shells instaladas (null hasta preguntar al sistema). */
+  shells: ShellInfo[] | null;
   agentStatus: Record<string, AgentStatus>;
   agentActivity: Record<string, AgentActivity>;
   /** Carpeta y proyecto (repo o carpeta) de cada panel, según la shell (OSC 7). */
   paneProject: Record<string, PaneProject>;
+  /** Puertos TCP en escucha de cada panel o shell acoplada (servidores de desarrollo). */
+  panePorts: Record<string, number[]>;
   attention: Record<string, Attention>;
 
   createTab: (spec?: PaneSpec) => void;
@@ -126,12 +156,19 @@ interface TerminalState {
   popClosed: () => ClosedEntry | undefined;
   setUsage: (usage: UsageSnapshot) => void;
   setAgents: (agents: AgentsInfo) => void;
+  setShells: (shells: ShellInfo[]) => void;
   setAgentStatus: (status: AgentStatus) => void;
   setAgentActivity: (activity: AgentActivity) => void;
   setPaneProject: (paneId: string, project: PaneProject) => void;
+  setPanePorts: (ports: Record<string, number[]>) => void;
   setAttention: (paneId: string, attention: Attention | null) => void;
   /** El agente del panel reportó su sesión: se guarda con el layout para poder reanudarla. */
   setAgentSession: (paneId: string, session: AgentSessionRef) => void;
+  /** Abre, pliega o despliega la shell acoplada del panel (la crea la primera vez). */
+  toggleDrawer: (paneId: string, open?: boolean) => void;
+  setDrawerRatio: (paneId: string, ratio: number) => void;
+  /** Cierra la shell acoplada (y su proceso). */
+  closeDrawer: (paneId: string) => void;
   /** Cambia un panel por otro nuevo (otro proceso) en el mismo sitio. Devuelve el id nuevo. */
   replacePane: (paneId: string, spec: PaneSpec) => string | null;
   dismissResumable: (paneId: string) => void;
@@ -149,9 +186,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   closed: [],
   usage: { claude: { ...loadingProvider, windows: [] }, codex: { ...loadingProvider, windows: [] } },
   agents: null,
+  shells: null,
   agentStatus: {},
   agentActivity: {},
   paneProject: {},
+  panePorts: {},
   attention: {},
 
   createTab: (spec) => {
@@ -164,8 +203,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const index = tabs.findIndex((t) => t.id === tabId);
     if (index === -1) return;
 
-    const paneIds = collectPanes(tabs[index].root).map((p) => p.id);
-    paneIds.forEach((id) => terminalManager.kill(id));
+    const panes = collectPanes(tabs[index].root);
+    const paneIds = panes.map((p) => p.id);
+    [...paneIds, ...drawerIds(panes)].forEach((id) => terminalManager.kill(id));
 
     if (tabs.length === 1) {
       // Nunca quedarse sin pestañas: se reemplaza por una nueva.
@@ -228,6 +268,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
 
     terminalManager.kill(paneId);
+    drawerIds([findPane(owner.root, paneId)]).forEach((id) => terminalManager.kill(id));
     const activePaneId =
       owner.activePaneId === paneId ? (collectPanes(root)[0]?.id ?? "") : owner.activePaneId;
     const zoomedPaneId = owner.zoomedPaneId === paneId || root.type === "pane" ? null : owner.zoomedPaneId;
@@ -314,10 +355,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   setUsage: (usage) => set({ usage }),
   setAgents: (agents) => set({ agents }),
+  setShells: (shells) => set({ shells }),
 
   setAgentStatus: (status) => {
     if (!findOwnerTab(get().tabs, status.paneId)) return;
     set((state) => ({ agentStatus: { ...state.agentStatus, [status.paneId]: status } }));
+  },
+
+  setPanePorts: (ports) => {
+    // Cada 4 s llega lo mismo: sin cambios no hay re-render.
+    if (JSON.stringify(ports) !== JSON.stringify(get().panePorts)) set({ panePorts: ports });
   },
 
   setAgentActivity: (activity) => {
@@ -355,11 +402,44 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set({ tabs: tabs.map((t) => (t.id === owner.id ? { ...t, root } : t)) });
   },
 
+  toggleDrawer: (paneId, open) => {
+    const { tabs } = get();
+    const owner = findOwnerTab(tabs, paneId);
+    const pane = owner ? findPane(owner.root, paneId) : undefined;
+    if (!owner || !pane) return;
+    const drawer = pane.drawer
+      ? { ...pane.drawer, open: open ?? !pane.drawer.open }
+      : { id: genId("drawer"), open: true, ratio: DRAWER_RATIO };
+    const root = replacePane(owner.root, paneId, (p) => ({ ...p, drawer }));
+    set({ tabs: tabs.map((t) => (t.id === owner.id ? { ...t, root } : t)) });
+  },
+
+  setDrawerRatio: (paneId, ratio) => {
+    const { tabs } = get();
+    const owner = findOwnerTab(tabs, paneId);
+    const pane = owner ? findPane(owner.root, paneId) : undefined;
+    if (!owner || !pane?.drawer) return;
+    const clamped = Math.min(Math.max(ratio, 0.15), 0.75);
+    const root = replacePane(owner.root, paneId, (p) => ({ ...p, drawer: p.drawer && { ...p.drawer, ratio: clamped } }));
+    set({ tabs: tabs.map((t) => (t.id === owner.id ? { ...t, root } : t)) });
+  },
+
+  closeDrawer: (paneId) => {
+    const { tabs } = get();
+    const owner = findOwnerTab(tabs, paneId);
+    const pane = owner ? findPane(owner.root, paneId) : undefined;
+    if (!owner || !pane?.drawer) return;
+    terminalManager.kill(pane.drawer.id);
+    const root = replacePane(owner.root, paneId, ({ drawer: _drawer, ...rest }) => rest);
+    set({ tabs: tabs.map((t) => (t.id === owner.id ? { ...t, root } : t)) });
+  },
+
   replacePane: (paneId, spec) => {
     const { tabs } = get();
     const owner = findOwnerTab(tabs, paneId);
     if (!owner) return null;
     const fresh = newPane(spec);
+    drawerIds([findPane(owner.root, paneId)]).forEach((id) => terminalManager.kill(id));
     const root = replacePane(owner.root, paneId, () => fresh);
     terminalManager.kill(paneId);
     set((state) => ({

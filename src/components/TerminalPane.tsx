@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { Columns2, History, Maximize2, Minimize2, Rows2, X } from "lucide-react";
+import { Columns2, History, Maximize2, Minimize2, Rows2, SquareTerminal, X } from "lucide-react";
 import type { PaneNode, ResumableAgent } from "../types/layout";
 import { terminalManager } from "../terminal/TerminalManager";
 import { useTerminalStore } from "../store/terminalStore";
@@ -9,9 +9,13 @@ import { cn } from "../lib/layout";
 import { formatAgo, formatUsd } from "../lib/format";
 import { useNow } from "../lib/useNow";
 import { paneDisplayName } from "../lib/identity";
+import { tildify } from "../lib/paths";
 import { shortcutLabel } from "../lib/shortcuts";
 import { FindBar } from "./FindBar";
 import { CommandGutter } from "./CommandGutter";
+import { DockedShell } from "./DockedShell";
+import { PortChips } from "./PortChips";
+import { ShellStartup, useWatchedShell } from "./ShellStartup";
 import { useSettingsStore } from "../store/settingsStore";
 import { AgentGlyph, IconButton, Lamp, Ring } from "./ui";
 
@@ -26,6 +30,7 @@ interface TerminalPaneProps {
 
 export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSplit, isZoomed = false }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
   const setActivePane = useTerminalStore((s) => s.setActivePane);
   const status = useTerminalStore((s) => s.agentStatus[pane.id]);
   const hasAttention = useTerminalStore((s) => pane.id in s.attention);
@@ -33,9 +38,12 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
   const isDropTarget = useUiStore((s) => s.dropPaneId === pane.id);
   const dimInactive = useSettingsStore((s) => s.settings.dimInactivePanes);
   const toggleZoom = useTerminalStore((s) => s.toggleZoom);
+  const project = useTerminalStore((s) => s.paneProject[pane.id]);
+  const cwd = project?.cwd ?? pane.cwd;
+  const watchedShell = useWatchedShell(pane);
 
   // El spawn solo usa cwd/command la primera vez: cambios posteriores no relanzan nada.
-  const spawnSpec = useRef({ cwd: pane.cwd, command: pane.command, welcome: pane.welcome });
+  const spawnSpec = useRef({ cwd: pane.cwd, command: pane.command, shell: pane.shell, welcome: pane.welcome });
   useEffect(() => {
     if (containerRef.current) terminalManager.attach(pane.id, containerRef.current, spawnSpec.current);
   }, [pane.id]);
@@ -78,16 +86,39 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
           onMouseDown={(e) => {
             if (!(e.target as HTMLElement).closest("button")) setActivePane(pane.id);
           }}
+          // @container: lo secundario (ruta, modelo, costo) se va según el ancho del panel, nunca se encima.
           className={cn(
-            "group flex h-8 shrink-0 items-center gap-2 border-b border-line pl-3 pr-1.5 transition-colors duration-150",
+            "@container group relative flex h-8 shrink-0 items-center gap-2 border-b border-line pl-3 pr-1.5 transition-colors duration-150",
             isActive ? "text-ink" : "text-ink-3",
           )}
         >
           <Lamp state={hasAttention ? "attention" : isActive ? "on" : "off"} />
           <AgentGlyph agentType={pane.agentType} className="shrink-0 opacity-80" />
-          <span className="min-w-0 truncate text-[12.5px] font-medium">{paneDisplayName(pane)}</span>
+          {/* El nombre es lo que se recorta (con un mínimo legible); el contexto y la terminal, nunca. */}
+          <span className="min-w-[2.5rem] truncate text-[12.5px] font-medium">{paneDisplayName(pane, project)}</span>
+          {cwd && (
+            <span title={cwd} className="hidden min-w-0 shrink-[2] truncate font-mono text-[11px] text-ink-3 @2xl:inline">
+              {tildify(cwd, terminalManager.getHome())}
+            </span>
+          )}
 
           {status && <AgentReadout model={status.model} context={status.contextPercent} cost={status.costUsd} />}
+          <PortChips paneId={pane.id} responsive />
+          {pane.agentType && (
+            <button
+              type="button"
+              aria-pressed={Boolean(pane.drawer?.open)}
+              title={`Terminal en la carpeta del agente, sin dividir  ${shortcutLabel("agentShell")}`}
+              onClick={() => actions.toggleAgentShell(pane.id)}
+              className={cn(
+                "flex h-[20px] shrink-0 items-center gap-1 rounded-full border px-2 font-mono text-[10.5px] transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-accent",
+                pane.drawer?.open ? "border-accent/40 text-accent" : "border-line text-ink-3 hover:border-line-strong hover:text-ink-2",
+              )}
+            >
+              <SquareTerminal size={11} strokeWidth={2} aria-hidden="true" />
+              <span className="hidden @sm:inline">terminal</span>
+            </button>
+          )}
           {isZoomed && (
             <span className="shrink-0 rounded-full border border-accent/40 px-2 font-mono text-[10.5px] leading-[18px] text-accent">
               maximizado
@@ -95,7 +126,8 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
           )}
           <span className="flex-1" />
 
-          <div className="flex items-center opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover:opacity-100">
+          {/* Flotan al pasar el cursor: invisibles no le quitan espacio al resto de la cabecera. */}
+          <div className="pointer-events-none absolute inset-y-0 right-1.5 flex items-center rounded-md bg-canvas pl-2 opacity-0 shadow-[-12px_0_12px_var(--color-canvas)] transition-opacity duration-150 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
             {(isSplit || isZoomed) && (
               <IconButton
                 size="sm"
@@ -133,26 +165,33 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
 
       {pane.resumable && <ResumeBanner paneId={pane.id} resumable={pane.resumable} />}
 
-      <div className="relative min-h-0 w-full flex-1">
+      <div ref={bodyRef} className="flex min-h-0 w-full flex-1 flex-col">
         <div
-          ref={containerRef}
-          className={cn(
-            "absolute inset-0 overflow-hidden transition-opacity duration-150",
-            dimmed && "opacity-55",
-          )}
-        />
-        <CommandGutter paneId={pane.id} />
-        {isFindOpen && <FindBar paneId={pane.id} />}
-        {isDropTarget && (
+          className="relative min-h-0 w-full"
+          style={{ flex: pane.drawer?.open ? `${1 - pane.drawer.ratio} 1 0px` : "1 1 0px" }}
+        >
           <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-1 grid place-items-center rounded-md border border-dashed border-accent/70 bg-accent/5"
-          >
-            <span className="rounded-md bg-raised px-3 py-1.5 text-[12px] text-ink-2 shadow-lg">
-              Soltar para pegar la ruta
-            </span>
-          </div>
-        )}
+            ref={containerRef}
+            className={cn(
+              "absolute inset-0 overflow-hidden transition-opacity duration-150",
+              dimmed && "opacity-55",
+            )}
+          />
+          <CommandGutter paneId={pane.id} />
+          {watchedShell && <ShellStartup id={pane.id} shellName={watchedShell} />}
+          {isFindOpen && <FindBar paneId={pane.id} />}
+          {isDropTarget && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-1 grid place-items-center rounded-md border border-dashed border-accent/70 bg-accent/5"
+            >
+              <span className="rounded-md bg-raised px-3 py-1.5 text-[12px] text-ink-2 shadow-lg">
+                Soltar para pegar la ruta
+              </span>
+            </div>
+          )}
+        </div>
+        {pane.drawer && <DockedShell pane={pane} drawer={pane.drawer} hostRef={bodyRef} />}
       </div>
     </section>
   );
@@ -196,22 +235,24 @@ const ResumeBanner: React.FC<{ paneId: string; resumable: ResumableAgent }> = ({
   );
 };
 
-/** Lo que el statusLine de Claude reporta para este panel: modelo, contexto (anillo) y costo. */
+/** Modelo, contexto (el anillo se llena con lo usado; el texto dice lo que queda) y costo del agente del panel. */
 const AgentReadout: React.FC<{ model: string | null; context: number | null; cost: number | null }> = ({
   model,
   context,
   cost,
 }) => (
-  <span className="flex min-w-0 shrink items-center gap-1.5 font-mono text-[11px] tabular-nums text-ink-3">
-    {model && <span className="min-w-0 truncate rounded-full bg-hover px-2 leading-[18px] text-ink-2">{model}</span>}
+  <span className="flex shrink-0 items-center gap-1.5 font-mono text-[11px] tabular-nums text-ink-3">
+    {model && <span className="hidden max-w-[160px] truncate rounded-full bg-hover px-2 leading-[18px] text-ink-2 @xl:inline">{model}</span>}
     {context !== null && (
-      <span title={`Contexto usado: ${Math.round(context)} %`} className="flex shrink-0 items-center gap-1 rounded-full bg-hover pl-1 pr-2 leading-[18px]">
+      <span title={`Contexto: ${Math.round(context)} % usado, queda ${Math.round(100 - context)} %`} className="flex shrink-0 items-center gap-1 rounded-full bg-hover pl-1 pr-2 leading-[18px]">
         <Ring value={context} size={13} stroke={2} />
-        <span className={context >= 90 ? "text-signal" : context >= 75 ? "text-warn" : undefined}>{Math.round(context)}%</span>
+        <span className={context >= 90 ? "text-signal" : context >= 75 ? "text-warn" : undefined}>
+          {Math.round(100 - context)}%<span className="hidden @xs:inline"> libre</span>
+        </span>
       </span>
     )}
     {cost !== null && (
-      <span title="Costo de la sesión" className="shrink-0 rounded-full bg-hover px-2 leading-[18px]">
+      <span title="Costo de la sesión" className="hidden shrink-0 rounded-full bg-hover px-2 leading-[18px] @md:inline">
         {formatUsd(cost)}
       </span>
     )}

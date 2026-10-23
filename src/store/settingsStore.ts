@@ -20,6 +20,8 @@ export interface Settings {
   cursorStyle: "block" | "bar" | "underline";
   cursorBlink: boolean;
   scrollback: number;
+  /** Al reabrir, cada terminal vuelve con lo que tenía (últimas líneas, guardadas en tu equipo). */
+  restoreScrollback: boolean;
   dimInactivePanes: boolean;
   /** Marcas de prompt/comando/salida (zsh). */
   shellIntegration: boolean;
@@ -41,6 +43,8 @@ export interface Settings {
   /** Bienvenida al abrir una pestaña de shell: la más grande que quepa, compacta o nada. */
   welcomeBanner: "full" | "compact" | "off";
   screenReader: boolean;
+  /** Ruta de la shell de las pestañas nuevas; vacío = la del sistema. */
+  defaultShell: string;
   /** Mantener ⌘ sola muestra la hoja de atajos (macOS). */
   holdHints: boolean;
   onboardingDone: boolean;
@@ -56,6 +60,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cursorStyle: "block",
   cursorBlink: true,
   scrollback: 10_000,
+  restoreScrollback: true,
   dimInactivePanes: true,
   shellIntegration: true,
   confirmClose: true,
@@ -71,6 +76,7 @@ export const DEFAULT_SETTINGS: Settings = {
   agentsReadPanes: true,
   approvalsInApp: true,
   welcomeBanner: "full",
+  defaultShell: "",
   screenReader: false,
   holdHints: true,
   onboardingDone: false,
@@ -102,6 +108,7 @@ export function sanitize(input: unknown): Settings {
     cursorStyle: pick("cursorStyle", oneOf("block", "bar", "underline")),
     cursorBlink: pick("cursorBlink", isBool),
     scrollback: Math.round(clamp(pick("scrollback", isNum), LIMITS.scrollback)),
+    restoreScrollback: pick("restoreScrollback", isBool),
     dimInactivePanes: pick("dimInactivePanes", isBool),
     shellIntegration: pick("shellIntegration", isBool),
     confirmClose: pick("confirmClose", isBool),
@@ -116,6 +123,7 @@ export function sanitize(input: unknown): Settings {
     agentsReadPanes: pick("agentsReadPanes", isBool),
     approvalsInApp: pick("approvalsInApp", isBool),
     welcomeBanner: pick("welcomeBanner", oneOf("full", "compact", "off")),
+    defaultShell: pick("defaultShell", (v) => typeof v === "string" && v.length < 4096),
     screenReader: pick("screenReader", isBool),
     holdHints: pick("holdHints", isBool),
     onboardingDone: pick("onboardingDone", isBool),

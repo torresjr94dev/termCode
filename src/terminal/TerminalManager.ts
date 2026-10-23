@@ -7,17 +7,18 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { ImageAddon } from "@xterm/addon-image";
 import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard";
 import { ProgressAddon, type IProgressState } from "@xterm/addon-progress";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { IS_TAURI } from "../lib/ipc";
 import { IS_MAC, IS_WINDOWS } from "../lib/shortcuts";
 import { DEFAULT_SETTINGS, type Settings } from "../store/settingsStore";
-import type { ProcessInfo } from "../types/layout";
+import type { AgentStatus, PaneShell, ProcessInfo } from "../types/layout";
 import { CommandTracker, withShellFacts, type CommandRecord } from "./commands";
 import { fileLinkProvider, type FileLinkTarget } from "./links";
 import { sanitizePaste } from "./paste";
-import { indexAfterClear } from "./clear";
+import { initialClearState, welcomeCut, type ClearState } from "./clear";
 import { XTERM_THEMES } from "./themes";
 
 export const FONT_SIZE = { min: 9, max: 24, default: DEFAULT_SETTINGS.fontSize } as const;
@@ -42,6 +43,8 @@ export interface SpawnSpec {
   cwd?: string;
   /** Línea de comandos que corre la shell de login (agentes). */
   command?: string;
+  /** Otra shell que la del sistema (la elegida al abrir la pestaña). */
+  shell?: PaneShell;
   /** Escribir la bienvenida antes de arrancar la shell (pestañas nuevas). */
   welcome?: boolean;
 }
@@ -78,6 +81,7 @@ interface TerminalInstance {
   term: Terminal;
   fitAddon: FitAddon;
   searchAddon: SearchAddon;
+  serializeAddon: SerializeAddon;
   tracker: CommandTracker;
   progress: IProgressState;
   container: HTMLElement | null;
@@ -92,6 +96,12 @@ interface TerminalInstance {
   isShell: boolean;
   /** La tarjeta de bienvenida visible (una a la vez). */
   welcomeCard: { dispose: () => void } | null;
+  /** Dónde va la tarjeta tras un `clear` (se sigue en los bytes, en orden). */
+  clear: ClearState;
+  /** Llegó salida desde la última vez que se guardó su contenido (para no serializarlo de balde). */
+  dirty: boolean;
+  /** Cuándo arrancó su PTY (para medir cuánto tarda la shell en dar su primer prompt). */
+  spawnedAt: number | null;
   dispose: Array<() => void>;
 }
 
@@ -190,6 +200,8 @@ class TerminalManager {
   private sessionToInstanceId = new Map<number, string>();
   private webgl = new Map<string, WebglAddon>();
   private hooks: StoreHooks | null = null;
+  /** Lo que cada panel restaurado tenía en pantalla: se escribe antes de su shell. */
+  private restoreQueue = new Map<string, { text: string; at: number }>();
   private sizeListeners = new Set<() => void>();
   private progressListeners = new Set<() => void>();
   private settings: Settings = DEFAULT_SETTINGS;
@@ -251,6 +263,11 @@ class TerminalManager {
       // Solo se puede fijar al crear: sin esto no hay fondo transparente si luego cambias a Neón.
       allowTransparency: true,
       cursorInactiveStyle: "outline",
+      // Ctrl+L (ESC[2J) limpia la vista, no el historial: lo que había en pantalla sube
+      // al scrollback, como en Terminal.app e iTerm2 (sin esto, una pantalla de salida
+      // desaparecía). `clear` sigue borrando todo con ESC[3J. ConPTY repinta con ESC[2J
+      // al redimensionar: en Windows duplicaría pantallas en el historial.
+      scrollOnEraseInDisplay: !IS_WINDOWS,
       ...(this.windowsPty ? { windowsPty: this.windowsPty } : {}),
       ...terminalOptions(this.settings),
     });
@@ -259,7 +276,9 @@ class TerminalManager {
     const fitAddon = new FitAddon();
     const searchAddon = new SearchAddon({ highlightLimit: 2000 });
     const progressAddon = new ProgressAddon();
+    const serializeAddon = new SerializeAddon();
     term.loadAddon(fitAddon);
+    term.loadAddon(serializeAddon);
     term.loadAddon(searchAddon);
     term.loadAddon(new Unicode11Addon());
     term.loadAddon(new WebLinksAddon(openWebLink));
@@ -273,6 +292,7 @@ class TerminalManager {
       term,
       fitAddon,
       searchAddon,
+      serializeAddon,
       tracker: new CommandTracker(
         term,
         (record) => this.hooks?.onCommandFinished(id, record),
@@ -286,6 +306,9 @@ class TerminalManager {
       pendingInput: [],
       isShell: false,
       welcomeCard: null,
+      clear: initialClearState(),
+      dirty: false,
+      spawnedAt: null,
       dispose: [],
     };
     instance.dispose.push(instance.tracker.attach());
@@ -371,7 +394,10 @@ class TerminalManager {
     if (!instance.spawnRequested) {
       instance.spawnRequested = true;
       instance.isShell = !spec.command;
-      if (spec.welcome) void this.welcomeThenSpawn(instance, spec);
+      const restored = this.restoreQueue.get(id);
+      this.restoreQueue.delete(id);
+      if (restored) void this.restoreThenSpawn(instance, spec, restored);
+      else if (spec.welcome) void this.welcomeThenSpawn(instance, spec);
       else void this.spawn(instance, spec);
     }
   }
@@ -390,6 +416,56 @@ class TerminalManager {
     await this.spawn(instance, spec);
   }
 
+  /**
+   * Lo que el panel tenía en pantalla en la sesión anterior, y una línea
+   * tenue que lo separa de la shell nueva. Nunca pasa por el PTY: la shell y
+   * los agentes que leen paneles no lo ven como salida suya.
+   */
+  private async restoreThenSpawn(instance: TerminalInstance, spec: SpawnSpec, restored: { text: string; at: number }) {
+    const when = new Date(restored.at).toLocaleString("es-MX", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    await new Promise<void>((resolve) => instance.term.write(restored.text, resolve));
+    instance.term.write(`\x1b[0m\r\n\x1b[2m── sesión anterior · ${when} ──\x1b[0m\r\n`);
+    if (this.instances.get(instance.id) !== instance) return;
+    await this.spawn(instance, spec);
+  }
+
+  /** Paneles que al abrirse deben volver con su contenido anterior (los de la sesión restaurada). */
+  public setRestore(entries: Record<string, { text: string; at: number }>) {
+    this.restoreQueue = new Map(Object.entries(entries));
+  }
+
+  /** Paneles con salida nueva desde la última vez que se preguntó (y se dan por vistos). */
+  public takeDirty(ids: string[]): string[] {
+    const dirty: string[] = [];
+    for (const id of ids) {
+      const instance = this.instances.get(id);
+      if (!instance?.dirty) continue;
+      instance.dirty = false;
+      dirty.push(id);
+    }
+    return dirty;
+  }
+
+  /**
+   * Lo que hay en pantalla de un panel, con colores, para restaurarlo al
+   * reabrir: las últimas `lines` líneas del búfer normal (no el de vim o
+   * Codex). Las líneas en blanco de arriba (la bienvenida) no se guardan.
+   */
+  public serialize(id: string, lines: number): string | null {
+    const instance = this.instances.get(id);
+    if (!instance?.term.element) return null;
+    try {
+      const text = instance.serializeAddon
+        .serialize({ scrollback: lines, excludeModes: true, excludeAltBuffer: true })
+        .replace(/^(?:\s*\r?\n)+/, "")
+        .trimEnd();
+      return text || null;
+    } catch (err) {
+      console.warn("[termCode] serialize:", err);
+      return null;
+    }
+  }
+
   /** Pone la bienvenida en la posición actual del cursor (al abrir el panel o tras `clear`). */
   private showWelcome(instance: TerminalInstance): Promise<void> {
     try {
@@ -406,19 +482,23 @@ class TerminalManager {
   }
 
   /**
-   * Salida de la shell hacia xterm. Si es un `clear` (borra el historial) en
-   * una shell, la tarjeta vuelve justo después del borrado y antes del prompt:
-   * misma pantalla limpia de cuando abriste el panel, sin saltos.
+   * Salida de la shell hacia xterm. Tras un `clear` que escribiste, la
+   * tarjeta vuelve justo después del borrado y antes del prompt: misma
+   * pantalla limpia de cuando abriste el panel, sin saltos. El `ESC[3J`
+   * de más borra la pantalla que `ESC[2J` subió al historial (macOS manda
+   * `ESC[3J` primero): `clear` deja el historial vacío y Ctrl+L lo conserva.
    */
   private receive(instance: TerminalInstance, bytes: Uint8Array) {
     const { term } = instance;
+    instance.dirty = true;
     const ack = (n: number) => () => this.queueAck(instance, n);
-    const cut = instance.isShell && term.buffer.active.type === "normal" ? indexAfterClear(bytes) : -1;
+    const cut = instance.isShell && term.buffer.active.type === "normal" ? welcomeCut(bytes, instance.clear) : -1;
     if (cut < 0) {
       term.write(bytes, ack(bytes.byteLength));
       return;
     }
     term.write(bytes.subarray(0, cut), ack(cut));
+    term.write("\x1b[3J");
     // `showWelcome` encola sus líneas en xterm ya: el resto de la salida va detrás, en orden.
     void this.showWelcome(instance);
     term.write(bytes.subarray(cut), ack(bytes.byteLength - cut));
@@ -502,9 +582,9 @@ class TerminalManager {
     try {
       const sessionId = await invoke<number>("pty_spawn", {
         options: {
-          program: null,
+          program: spec.command ? null : (spec.shell?.path ?? null),
           command: spec.command ?? null,
-          args: [],
+          args: spec.command ? [] : (spec.shell?.args ?? []),
           cwd: spec.cwd ?? null,
           env: [["TERMCODE_PANE_ID", instance.id]],
           cols: Math.max(term.cols || 80, 20),
@@ -526,6 +606,7 @@ class TerminalManager {
         return;
       }
       instance.backendSessionId = sessionId;
+      instance.spawnedAt = Date.now();
       // Lo que se procesó antes de conocer el id también se confirma.
       this.flushAck(instance);
       // El tamaño pudo cambiar mientras el PTY arrancaba.
@@ -704,6 +785,59 @@ class TerminalManager {
     }
   }
 
+  /** Modelo y contexto del Codex que corre en el panel (lo lee del rollout que tiene abierto). */
+  public async codexStatus(id: string): Promise<AgentStatus | null> {
+    const sessionId = this.instances.get(id)?.backendSessionId;
+    if (sessionId === null || sessionId === undefined) return null;
+    try {
+      return await invoke<AgentStatus | null>("codex_status", { id: sessionId, paneId: id });
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Arranque de la shell: desde cuándo corre y si ya dio su primer prompt
+   * (con la integración). null si no es una shell o aún no tiene PTY.
+   */
+  public startup(id: string): { spawnedAt: number; ready: boolean } | null {
+    const instance = this.instances.get(id);
+    if (!instance?.isShell || instance.spawnedAt === null) return null;
+    return { spawnedAt: instance.spawnedAt, ready: instance.tracker.integrated };
+  }
+
+  /** Lo que corre bajo la shell del panel (sin la shell). */
+  public async children(id: string): Promise<Array<{ pid: number; name: string; command: string }>> {
+    const session = this.instances.get(id)?.backendSessionId;
+    if (session === null || session === undefined) return [];
+    try {
+      return await invoke("pty_children", { id: session });
+    } catch {
+      return [];
+    }
+  }
+
+  /** Puertos TCP en escucha de cada panel (de todo lo que corre bajo su shell). */
+  public async ports(ids: string[]): Promise<Record<string, number[]>> {
+    const bySession = new Map<number, string>();
+    for (const id of ids) {
+      const session = this.instances.get(id)?.backendSessionId;
+      if (session !== null && session !== undefined) bySession.set(session, id);
+    }
+    if (!bySession.size) return {};
+    try {
+      const found = await invoke<Array<{ id: number; ports: number[] }>>("pty_ports", { ids: [...bySession.keys()] });
+      const out: Record<string, number[]> = {};
+      for (const { id, ports } of found) {
+        const pane = bySession.get(id);
+        if (pane && ports.length) out[pane] = ports;
+      }
+      return out;
+    } catch {
+      return {};
+    }
+  }
+
   /** Carpeta de inicio del usuario (para mostrar rutas como `~/…`). */
   public getHome(): string | null {
     return this.home;
@@ -732,6 +866,25 @@ class TerminalManager {
     if (!clean) return;
     const data = instance.term.modes.bracketedPasteMode ? `\x1b[200~${clean}\x1b[201~` : clean;
     this.send(instance, "pty_write", { data });
+  }
+
+  /**
+   * Como `run`, pero espera a que la shell esté lista (su primer prompt, con
+   * la integración; si no la hay, un momento): lo escrito antes de que cargue
+   * tu .zshrc podría perderse.
+   */
+  public runWhenReady(id: string, line: string, timeoutMs = 6000) {
+    const started = Date.now();
+    const tick = () => {
+      const instance = this.instances.get(id);
+      const waited = Date.now() - started;
+      if (instance && instance.backendSessionId !== null && (instance.tracker.integrated || waited > 2500)) {
+        this.run(id, line);
+        return;
+      }
+      if (waited < timeoutMs) setTimeout(tick, 100);
+    };
+    tick();
   }
 
   /** Escribe y ejecuta (Enter) una línea en la shell del panel. */

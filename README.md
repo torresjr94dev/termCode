@@ -24,10 +24,33 @@ termCode es una terminal para macOS y Windows (Tauri + React + xterm.js) pensada
 - **Revisión que vuelve al agente**: comenta líneas del diff y *Enviar revisión* pega los comentarios en el agente (`archivo:línea` + la línea citada). No pulsa Enter: el mensaje lo mandas tú.
 - **Carrera de agentes**: la misma tarea a varios agentes, cada uno en su worktree. Opcionalmente un *juez* (p. ej. `pnpm test`) corre en cada worktree al terminar cada turno, de uno en uno; luego aplicas el ganador y descartas el resto.
 - **Los agentes leen tus otros paneles**: herramientas MCP de solo lectura (`list_panes`, `read_pane`) para "mira el error del servidor de desarrollo".
+- **Contexto de cada agente**: cuánto le queda, en su sesión de la barra lateral, en su panel y en la barra de estado. El de Claude llega por su statusLine; el de Codex se lee del rollout que su proceso tiene abierto (macOS y Linux).
+- **Terminal del agente** (`⌘L`): una shell acoplada abajo del agente, en su carpeta, sin dividir el panel; se pliega y la shell sigue viva.
+- **Explicar este error**: en un comando que falló (✗), un clic manda el comando y el final de su salida al agente.
 - **Consumo**: la ventana de 5 h en un anillo doble (lo usado contra el tiempo transcurrido) con la proyección de tu ritmo ("se agota a las 15:42"), barras por semana y la actividad de tokens por hora de las últimas 24 h.
 
 ### Terminal
 - Paneles divisibles, maximizables y reordenables. La sesión (pestañas, divisiones y carpetas) se restaura al volver a abrir.
+- `Ctrl+L` limpia la vista sin perder la salida: lo que estaba en pantalla sube al historial, como en Terminal.app e iTerm2 (`clear` borra todo).
+- **Salida en el visor**: la salida completa de un comando (clic en el comando de la barra de estado o en su marca) se lee entera y se busca con `⌘F`.
+- **Elige tu shell**: el menú junto al `+` lista las instaladas (zsh, bash, fish, nu, PowerShell…); la predeterminada se cambia en Ajustes. La integración (marcas de comando, carpeta en vivo) es de zsh y PowerShell.
+- **Puertos**: cada panel muestra los puertos en escucha de lo que corre en él (`:3000 ↗`) y los abre en el navegador (macOS y Linux).
+- **Restaurar contenido**: al reabrir, cada terminal vuelve con sus últimas 1000 líneas.
+- **SSH**: los `Host` de tu `~/.ssh/config` y los servidores que agregues, a un clic en la barra lateral.
+- **Workspaces** (`.termcode.json` en la raíz del repo): los paneles del proyecto ya armados. Formato:
+
+  ```json
+  {
+    "name": "Mi proyecto",
+    "panes": [
+      { "title": "dev", "run": "npm run dev" },
+      { "title": "tests", "run": "npm test -- --watch", "split": "right" },
+      { "agent": "claude", "split": "down" }
+    ]
+  }
+  ```
+
+  Hasta 6 paneles; `run` es un comando de una línea que se escribe en la shell del panel, `agent` abre Claude o Codex, `cwd` es una subcarpeta del repo y `split` (`right`/`down`) es respecto al panel anterior.
 - Integración con zsh (macOS) y PowerShell (Windows): marcas de comando con estado y duración, `⌘↑`/`⌘↓` entre comandos, aviso cuando termina un comando largo, carpeta en vivo.
 - `⌘`-clic (`Ctrl`-clic en Windows) en rutas (`src/app.ts:42`, `C:\repo\app.ts:42`) para abrirlas en tu editor (Cursor, VS Code, Zed, Sublime) o en el visor de termCode.
 - Imágenes en línea (sixel e iTerm2), búsqueda, barras de progreso (OSC 9;4) y broadcast a todos los paneles.
@@ -40,8 +63,12 @@ termCode es una terminal para macOS y Windows (Tauri + React + xterm.js) pensada
 - Historial, ramas (`⇧⌘B`), stash, resolución de conflictos bloque a bloque.
 - Pull requests y estado de CI con `gh`.
 - Buscador de archivos (`⌘P`), explorador y visor/editor (CodeMirror) con imágenes.
+- El explorador sigue a la terminal: marca la carpeta donde está y se despliega hasta ahí. Doble clic en una carpeta (o en una miga de pan) hace `cd` en el panel activo; si ahí corre un agente u otro programa, abre una pestaña nueva en esa carpeta en vez de teclear encima.
 
 ### Interfaz
+- **Detalle del sistema**: clic en CPU/GPU/RAM de la barra de estado para ver el uso por núcleo, la carga, la memoria disponible y los procesos que más usan (y terminar uno tuyo).
+- **Barra lateral**: cada sesión dice su carpeta y rama, el último comando con su resultado y el contexto libre de los agentes. Debajo, tus carpetas recientes y fijadas (un clic hace `cd`; al pasar el cursor, abren una shell, Claude o Codex ahí) y el **monitor del sistema**: CPU y GPU con su tendencia, RAM con la presión de memoria de macOS y swap, y los procesos que más memoria usan. Solo mide mientras se ve; con la barra lateral oculta, CPU, GPU y RAM van en la barra de estado.
+- **Panel de proyecto** abierto de entrada; plegado (`⇧⌘E`) queda como un riel con Archivos, Cambios e Historial a un clic.
 - Temas **Neón** (por defecto, con el verde del logo), **Fósforo**, **Fósforo verde** y **Papel** (claro).
 - Glass real en macOS (vibrancy) y en Windows 11 (Mica): los diálogos son vidrio esmerilado. Con *Reducir transparencia* (macOS) o *Efectos de transparencia* apagados (Windows), todo se pinta opaco; en Windows 10, que no tiene Mica, también.
 - En Windows la barra de pestañas es la barra de título, como en Windows Terminal: sin el marco del sistema, con sus botones de minimizar, maximizar y cerrar. Snap Layouts sale con `Win+Z` o arrastrando la ventana al borde de arriba (no al pasar el ratón sobre maximizar).
@@ -73,7 +100,7 @@ En Windows, como en Windows Terminal, `Ctrl+C` copia si hay texto seleccionado (
 
 - macOS, o Windows 10 1809 o posterior (la primera versión con ConPTY). En Windows hace falta WebView2, que ya viene en Windows 11 y que el instalador descarga si falta.
 - [Node.js](https://nodejs.org) 22 o superior y [pnpm](https://pnpm.io) 12.
-- [Rust](https://rustup.rs) estable con edición 2024 (1.85 o superior).
+- [Rust](https://rustup.rs) estable con edición 2024 (1.88 o superior).
 - En Windows, además: [Visual Studio Build Tools 2022](https://visualstudio.microsoft.com/visual-cpp-build-tools/) con *Desarrollo para el escritorio con C++* y Rust con la toolchain MSVC (`rustup default stable-msvc`), igual que en CI. Con la toolchain GNU (`x86_64-pc-windows-gnu`) no compila: faltan `dlltool` y un compilador de C. Las Build Tools se instalan con:
 
   ```powershell
@@ -87,6 +114,8 @@ En Windows, como en Windows Terminal, `Ctrl+C` copia si hay texto seleccionado (
 pnpm install
 pnpm tauri dev      # la app de escritorio con recarga en caliente
 ```
+
+> No clones el repo dentro de una carpeta sincronizada con iCloud Drive (Documentos o Escritorio con «Optimizar almacenamiento»). macOS borra la copia local de archivos de `node_modules`, `target` y `.git` que no usas, y `tsc`, `cargo` y `git` se quedan esperando a que se descarguen. Si ya pasó, `rm -rf node_modules && pnpm install` los recupera del store de pnpm.
 
 | Comando | Qué hace |
 |---|---|
@@ -112,6 +141,12 @@ src-tauri/           Backend (Rust, Tauri 2)
   src/mcp.rs         Servidor MCP de solo lectura y socket local
   src/git/           Estado, diffs, ramas, worktrees, PRs, CI, mensajes con IA
   src/usage/         Cuotas y tokens de Claude y Codex
+  src/codex_status.rs Contexto de Codex por panel (el rollout que tiene abierto)
+  src/sysmon.rs      Monitor del sistema: CPU, RAM, GPU (IOKit) y procesos
+  src/ports.rs       Puertos en escucha de cada panel (un lsof para todos)
+  src/shells.rs      Shells instaladas
+  src/ssh.rs         Hosts de ~/.ssh/config
+  src/cloud.rs       ¿La carpeta está en iCloud Drive u otra nube?
 crates/pty-core/     PTYs con backpressure (el proceso se frena antes de saturar la vista)
 e2e/                 Pruebas de punta a punta
 ```
@@ -129,7 +164,7 @@ e2e/                 Pruebas de punta a punta
 - **Probado en Windows 11 (build 26200)**: shells y divisiones con ConPTY, la integración con Windows PowerShell 5.1 (un test de Rust la corre de verdad a través de ConPTY), Claude Code dentro de termCode con sus hooks y statusLine, la bandeja de aprobaciones y el MCP por la named pipe, copiar y pegar, y la limpieza de sesiones al recargar la vista.
 - **Ctrl+C**: termCode restaura Ctrl+C al arrancar. Ignorarlo se hereda de padre a hijo, así que si lo abría un proceso que lo ignora (un lanzador o una tarea en segundo plano), ningún programa de sus paneles se podía interrumpir.
 - **Recargar la vista** (`F5`, `Ctrl+R`, `Ctrl+Shift+R`) cierra todas las terminales y agentes: termCode bloquea esas teclas e `Imprimir` (`Ctrl+P`) fuera de la terminal, y si la vista se recarga de todos modos (el menú contextual de WebView2), cierra las sesiones que dejó en vez de dejarlas huérfanas.
-- **Pendiente**: el proceso en primer plano y su carpeta (`pty_info`) no se leen en Windows; la carpeta llega por la integración con PowerShell. Las e2e en Windows cuelgan Chrome headless cuando se divide un panel justo después de cerrar un diálogo (solo sin backend y con un user agent que no es de Mac; la app real no lo reproduce); en CI corren en macOS.
+- **Pendiente**: el proceso en primer plano y su carpeta (`pty_info`) no se leen en Windows, ni los puertos en escucha de cada panel ni el contexto de Codex; la carpeta llega por la integración con PowerShell. Las e2e en Windows cuelgan Chrome headless cuando se divide un panel justo después de cerrar un diálogo (solo sin backend y con un user agent que no es de Mac; la app real no lo reproduce); en CI corren en macOS.
 
 ## Privacidad y seguridad
 
@@ -138,6 +173,9 @@ e2e/                 Pruebas de punta a punta
 - **Tokens y actividad**: se cuentan leyendo localmente los registros de Claude Code (`~/.claude/projects`) y de Codex (`~/.codex`). No sale nada a la red.
 - **Aprobaciones**: ante cualquier fallo (app cerrada, tiempo agotado, respuesta inválida), Claude pregunta en su panel. Nunca se aprueba nada por omisión y nunca se recorta lo que apruebas.
 - **MCP y aprobaciones**: el canal local es un socket Unix con permisos `0600` (macOS) o una named pipe que solo abre tu usuario y rechaza clientes remotos (Windows). El MCP es de solo lectura y se desactiva en Ajustes → Agentes.
+- **Contenido restaurado**: las últimas 1000 líneas de cada terminal se guardan en `buffers.json`, en la carpeta de datos de la app (solo tu usuario), para restaurarlas al reabrir. Lo que imprimiste (también un `cat .env`) queda ahí: desactívalo en Ajustes → Terminal si eso te preocupa.
+- **SSH**: termCode no pide ni guarda contraseñas; la autenticación es de `ssh` (tu agente, tus llaves, el llavero). Los servidores se validan antes de guardarse y se lanzan con `ssh -- destino`, así que nada se lee como una opción de ssh.
+- **Workspaces**: un `.termcode.json` viene del repo y ejecuta comandos. La primera vez, y cada vez que su contenido cambia (se compara su SHA-256), termCode muestra los comandos exactos y pide confianza con el foco en Cancelar. Se rechaza el archivo entero si un comando tiene saltos de línea o caracteres de control, o si una carpeta sale del repo.
 - **Pegar en un agente** (revisiones, salidas): se quitan los caracteres de control, para que un texto con `ESC[201~` no pueda salirse del pegado y ejecutar comandos.
 - **Portapapeles**: los programas pueden escribir en él (OSC 52), nunca leerlo.
 - **Commits con IA**: `claude -p` con Haiku, sin herramientas (`--tools ""`), sin tu `CLAUDE.md` global y sin guardar transcripciones. Solo se ejecuta cuando pulsas el botón.

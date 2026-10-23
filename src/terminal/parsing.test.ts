@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { decodeCommandLine, decodeCwd, withShellFacts, type CommandRecord } from "./commands";
 import { findPaths, resolvePath } from "./links";
 import { sanitizePaste } from "./paste";
-import { indexAfterClear } from "./clear";
+import { initialClearState, isClearCommand, welcomeCut } from "./clear";
 
 describe("shell integration payloads", () => {
   it("decodes escaped command lines", () => {
@@ -114,14 +114,42 @@ describe("sanitizePaste", () => {
   });
 });
 
-describe("indexAfterClear", () => {
+describe("welcomeCut", () => {
   const bytes = (s: string) => new TextEncoder().encode(s);
-  it("finds where `clear` ends so the card goes before the next prompt", () => {
-    const out = bytes("\x1b[H\x1b[2J\x1b[3J% ");
-    expect(indexAfterClear(out)).toBe(out.length - 2);
+  const run = (cmd: string) => `\x1b]633;E;${cmd}\x07\x1b]133;C\x07`;
+  const prompt = "\x1b]133;D;0\x07\x1b]133;A\x07% ";
+
+  it("puts the card after the erase in macOS order (ESC[3J first)", () => {
+    const state = initialClearState();
+    const out = bytes(`${run("clear")}\x1b[3J\x1b[H\x1b[2J${prompt}`);
+    expect(welcomeCut(out, state)).toBe(out.length - prompt.length);
   });
-  it("ignores Ctrl+L (no scrollback wipe) and plain output", () => {
-    expect(indexAfterClear(bytes("\x1b[H\x1b[2J% "))).toBe(-1);
-    expect(indexAfterClear(bytes("3J y [3J sin escape"))).toBe(-1);
+
+  it("and in Linux order (ESC[3J last)", () => {
+    const out = bytes(`${run("clear")}\x1b[H\x1b[2J\x1b[3J${prompt}`);
+    expect(welcomeCut(out, initialClearState())).toBe(out.length - prompt.length);
+  });
+
+  it("follows the sequence across chunks", () => {
+    const state = initialClearState();
+    expect(welcomeCut(bytes(run("/usr/bin/clear")), state)).toBe(-1);
+    expect(welcomeCut(bytes("\x1b[3J"), state)).toBe(-1);
+    expect(welcomeCut(bytes(`\x1b[H\x1b[2J${prompt}`), state)).toBe(7);
+  });
+
+  it("never covers what a program prints after clearing (vite, tsc -w, jest)", () => {
+    const state = initialClearState();
+    expect(welcomeCut(bytes(`${run("npm run dev")}\x1b[2J\x1b[3J\x1b[H  VITE v6 ready\r\n`), state)).toBe(-1);
+    expect(welcomeCut(bytes(`${run("tsc -w")}\x1b[3J\x1b[H\x1b[2JStarting compilation`), state)).toBe(-1);
+  });
+
+  it("ignores Ctrl+L and clears outside a command", () => {
+    expect(welcomeCut(bytes("\x1b[H\x1b[2J% "), initialClearState())).toBe(-1);
+    expect(welcomeCut(bytes(`${prompt}\x1b[3J\x1b[H\x1b[2J`), initialClearState())).toBe(-1);
+  });
+
+  it("recognizes what you type to clear", () => {
+    for (const c of ["clear", "clear -x", "/usr/bin/clear", "command clear", "reset", "tput clear", "cls"]) expect(isClearCommand(c)).toBe(true);
+    for (const c of ["clearance", "npm run clear-cache", "echo clear", "tput cols"]) expect(isClearCommand(c)).toBe(false);
   });
 });

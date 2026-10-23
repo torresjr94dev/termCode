@@ -32,7 +32,8 @@ export type ShortcutId =
   | "missionControl"
   | "fileFinder"
   | "switchBranch"
-  | "nextAttention";
+  | "nextAttention"
+  | "agentShell";
 
 interface Chord {
   /**
@@ -80,6 +81,7 @@ export const SHORTCUTS: Record<ShortcutId, Chord> = {
   fileFinder: { key: "p" },
   switchBranch: { key: "b", shift: true },
   nextAttention: { key: "j" },
+  agentShell: { key: "l" },
 };
 
 export const IS_MAC =

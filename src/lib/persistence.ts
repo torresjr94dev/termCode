@@ -1,8 +1,9 @@
 import { LazyStore } from "@tauri-apps/plugin-store";
 import { warn as logWarn } from "@tauri-apps/plugin-log";
 import { useTerminalStore, type PersistedSession } from "../store/terminalStore";
+import { useProjectStore } from "../store/projectStore";
 import { terminalManager } from "../terminal/TerminalManager";
-import type { LayoutNode, ResumableAgent, Tab } from "../types/layout";
+import type { LayoutNode, PaneShell, ResumableAgent, Tab } from "../types/layout";
 import { basename } from "./layout";
 import { IS_TAURI } from "./ipc";
 import { isSafeSessionId } from "./resume";
@@ -45,6 +46,15 @@ export function sanitizeResumable(value: unknown): ResumableAgent | undefined {
   };
 }
 
+/** Una shell guardada solo vuelve si tiene forma de shell: ruta absoluta y argumentos de texto. */
+export function sanitizeShell(value: unknown): PaneShell | undefined {
+  const shell = value as Partial<PaneShell> | null;
+  if (!shell || typeof shell.name !== "string" || typeof shell.path !== "string") return undefined;
+  if (!/^(\/|[A-Za-z]:[\\/])/.test(shell.path) || shell.path.length > 4096) return undefined;
+  const args = Array.isArray(shell.args) && shell.args.every((a) => typeof a === "string" && a.length < 256) ? shell.args.slice(0, 8) : [];
+  return { name: shell.name.slice(0, 40), path: shell.path, args };
+}
+
 /**
  * Los agentes no se relanzan solos (gastarían cuota sin que lo pidas):
  * vuelven como shells en la misma carpeta, con lo necesario para reanudarlos
@@ -53,7 +63,10 @@ export function sanitizeResumable(value: unknown): ResumableAgent | undefined {
 export function asShells(node: LayoutNode): LayoutNode {
   if (node.type === "split") return { ...node, first: asShells(node.first), second: asShells(node.second) };
   // `welcome` es de la primera vez que se abrió: restaurar no vuelve a mostrarla.
-  const { agentSession, resumable, welcome: _welcome, ...pane } = node;
+  // La shell acoplada era del agente: al volver como shell, el panel ya es una terminal.
+  const { agentSession, resumable, welcome: _welcome, shell: savedShell, drawer: _drawer, ...rest } = node;
+  const shell = sanitizeShell(savedShell);
+  const pane = shell ? { ...rest, shell } : rest;
   if (!pane.agentType && !pane.command) {
     // Un aviso de reanudar que no se usó sigue ahí tras otro reinicio.
     const kept = sanitizeResumable(resumable);
@@ -87,7 +100,13 @@ export async function loadSession(timeoutMs = 800): Promise<PersistedSession | n
     if (!saved || saved.version !== 1 || !Array.isArray(saved.tabs)) return null;
     const tabs = saved.tabs.filter(isTab).map((tab) => ({ ...tab, root: asShells(tab.root), zoomedPaneId: null }));
     if (!tabs.length) return null;
-    return { version: 1, tabs, activeTabId: saved.activeTabId, isSidebarOpen: Boolean(saved.isSidebarOpen) };
+    return {
+      version: 1,
+      tabs,
+      activeTabId: saved.activeTabId,
+      isSidebarOpen: Boolean(saved.isSidebarOpen),
+      ...(typeof saved.isProjectOpen === "boolean" ? { isProjectOpen: saved.isProjectOpen } : {}),
+    };
   } catch (err) {
     console.warn("[termCode] no se pudo leer la sesión guardada:", err);
     return null;
@@ -112,6 +131,7 @@ async function save() {
       tabs: await Promise.all(tabs.map(async (tab) => ({ ...tab, root: await withLiveCwd(tab.root) }))),
       activeTabId,
       isSidebarOpen,
+      isProjectOpen: useProjectStore.getState().isOpen,
     };
     await store.set(KEY, session);
     await store.save();
@@ -136,12 +156,16 @@ export function startAutosave(): () => void {
       schedule();
     }
   });
+  const unsubscribeProject = useProjectStore.subscribe((s, prev) => {
+    if (s.isOpen !== prev.isOpen) schedule();
+  });
   const interval = setInterval(() => void save(), SAVE_EVERY_MS);
   // Primer guardado poco después de arrancar: los PTY ya tienen cwd real.
   const initial = setTimeout(() => void save(), 3000);
   return () => {
     clearTimeout(initial);
     unsubscribe();
+    unsubscribeProject();
     clearTimeout(timer);
     clearInterval(interval);
   };

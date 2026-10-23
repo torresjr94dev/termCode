@@ -121,11 +121,15 @@ export class CommandTracker {
   private on133(data: string): boolean {
     const [kind, arg] = data.split(";");
     switch (kind) {
-      case "A":
+      case "A": {
+        const first = !this.integrated;
         this.integrated = true;
         this.lastPrompt?.dispose();
         this.lastPrompt = this.term.registerMarker(0);
+        // El primer prompt: la shell terminó de arrancar (quien espera ese momento se entera).
+        if (first) this.changed();
         return true;
+      }
       case "C": {
         const start = this.term.registerMarker(0);
         if (!start) return true;

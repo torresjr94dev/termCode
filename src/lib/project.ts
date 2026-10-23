@@ -36,25 +36,47 @@ function activePaneId(): string | undefined {
 /* ------------------------------------------------------------------ */
 
 let syncing = false;
+/** Alguien pidió sincronizar mientras otra sincronización corría: se repite al terminar con el panel de ahora. */
+let syncAgain = false;
+/** Si git no contesta la raíz del repo en este tiempo, el panel sigue sin él (se reintenta en el siguiente sondeo). */
+const REPO_LOOKUP_MS = 4000;
 
+/**
+ * El panel sigue al panel activo de la terminal. Cambiar de carpeta nunca
+ * espera a `git status`: en un repo lento (p. ej. en iCloud) eso tardaba
+ * hasta 20 s y, mientras, los clics en otros paneles no cambiaban nada.
+ */
 async function syncContext() {
-  if (syncing || !IS_TAURI) return;
+  if (!IS_TAURI) return;
+  if (syncing) {
+    syncAgain = true;
+    return;
+  }
   syncing = true;
   try {
     const paneId = activePaneId();
-    // OSC 7 (integración con la shell) es instantáneo; si no hay, se pregunta al proceso.
+    // OSC 7 (integración con la shell) es instantáneo; si no hay (agentes), se pregunta al proceso.
     const known = paneId ? terminalManager.knownCwd(paneId) : null;
     const cwd = known ?? (paneId ? (await terminalManager.info(paneId))?.cwd : null) ?? null;
     if (cwd && cwd !== project().cwd) {
       const previousRoot = projectRoot();
-      const repo = await gitApi.repo(cwd).catch(() => null);
+      const repo = await Promise.race([
+        gitApi.repo(cwd).catch(() => null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), REPO_LOOKUP_MS)),
+      ]);
+      // Mientras git contestaba, pudiste ir a otro panel: lo de esta carpeta ya no vale.
+      if (activePaneId() !== paneId) {
+        syncAgain = true;
+        return;
+      }
       const sameRepo = repo?.root === project().repo?.root;
       if (!sameRepo) exitAmend();
-      project().set({ cwd, repo, ...(sameRepo ? {} : initialRepoState) });
+      project().set({ cwd, repo, ...(sameRepo ? {} : { ...initialRepoState, statusTrouble: null }) });
       if (!sameRepo && repo) {
         void refreshPr();
         void refreshCi(true);
         void refreshStashes();
+        void detectCloud(repo.root);
       }
       // Otra raíz (otro repo, o sin repo y otra carpeta): el árbol empieza de cero.
       if (projectRoot() !== previousRoot) {
@@ -64,11 +86,15 @@ async function syncContext() {
         if (isOpen && tab === "history" && repo) void loadLog(true);
       }
     }
-    await refreshStatus();
-    void refreshCi();
   } finally {
     syncing = false;
+    if (syncAgain) {
+      syncAgain = false;
+      void syncContext();
+    }
   }
+  void refreshStatus();
+  void refreshCi();
 }
 
 /** Re-sincroniza ahora (p. ej. tras un `cd` que avisó la shell). */
@@ -76,11 +102,32 @@ export function syncNow() {
   void syncContext();
 }
 
-export async function refreshStatus() {
+/** Repos donde `git status` no terminó: no se le vuelve a preguntar hasta `until`. */
+const stalled = new Map<string, { failures: number; until: number }>();
+/** Una consulta de estado a la vez por repo (git ya tarda; apilarlas solo lo empeora). */
+let statusInFlight: string | null = null;
+const STALL_BASE_MS = 30_000;
+const STALL_MAX_MS = 10 * 60_000;
+
+const isTimeout = (err: unknown) => /tardó demasiado/.test(errorText(err));
+
+/** ¿El repo vive en iCloud Drive (u otra nube)? Explica por qué git puede no contestar. */
+async function detectCloud(root: string) {
+  const provider = await ipc.cloudProvider(root);
+  if (project().repo?.root === root) project().set({ cloudProvider: provider });
+}
+
+export async function refreshStatus({ force = false } = {}) {
   const root = project().repo?.root;
-  if (!root) return;
+  if (!root || statusInFlight === root) return;
+  const stall = stalled.get(root);
+  if (stall && !force && Date.now() < stall.until) return;
+  statusInFlight = root;
   try {
     const status = await gitApi.status(root);
+    stalled.delete(root);
+    if (project().repo?.root !== root) return;
+    if (project().statusTrouble) project().set({ statusTrouble: null });
     const { amend, amendBase } = project();
     if (amend && amendBase && status.head && !amendBase.sha.startsWith(status.head)) {
       exitAmend();
@@ -95,10 +142,28 @@ export async function refreshStatus() {
       if (current) void refreshStashes();
     }
   } catch (err) {
+    if (isTimeout(err)) {
+      // git se quedó esperando (p. ej. a que iCloud baje un archivo): se espera cada vez
+      // más antes de reintentar, y el aviso va en el panel, no en el log cada 20 s.
+      const failures = (stall?.failures ?? 0) + 1;
+      stalled.set(root, { failures, until: Date.now() + Math.min(STALL_BASE_MS * 2 ** (failures - 1), STALL_MAX_MS) });
+      if (failures === 1) void logWarn(`[webview] git status no terminó en ${root}; se reintenta con espera creciente`).catch(() => {});
+      if (project().repo?.root === root) project().set({ statusTrouble: { root, at: Date.now() } });
+      return;
+    }
     // El repo pudo desaparecer (rama borrada, carpeta movida): se re-descubre.
     void logWarn(`[webview] git status falló: ${errorText(err)}`).catch(() => {});
     project().set({ cwd: null });
+  } finally {
+    if (statusInFlight === root) statusInFlight = null;
   }
+}
+
+/** «Reintentar» del aviso: sin esperar al siguiente intento programado. */
+export function retryStatus() {
+  const root = project().repo?.root;
+  if (root) stalled.delete(root);
+  void refreshStatus({ force: true });
 }
 
 async function refreshPr() {
@@ -829,7 +894,8 @@ export async function refreshCi(force = false) {
 function afterHeadMove() {
   exitAmend();
   const { viewer, tree, isOpen, tab } = project();
-  if (viewer && viewer.kind !== "file") project().set({ viewer: null });
+  // La salida de un comando no depende de HEAD: se queda abierta.
+  if (viewer && viewer.kind !== "file" && viewer.kind !== "output") project().set({ viewer: null });
   project().set({ logHead: null, openCommit: null });
   if (isOpen && tab === "history") void loadLog(true);
   for (const [dir, node] of Object.entries(tree)) if (Array.isArray(node)) void loadDir(dir);

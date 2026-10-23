@@ -31,6 +31,7 @@ const GROUPS: Array<{ title: string; items: Array<[ShortcutId | ShortcutId[], st
     title: "Agentes",
     items: [
       ["nextAttention", "Al que te necesita"],
+      ["agentShell", "Terminal del agente"],
       ["missionControl", "Mission Control"],
       ["toggleUsage", "Cuota de uso"],
       ["toggleBroadcast", "Escribir en todos"],

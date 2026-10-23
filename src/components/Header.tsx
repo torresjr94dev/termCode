@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Asterisk, Bell, GitBranch, Hexagon, Maximize2, PanelLeft, Plus, Search, Settings, X } from "lucide-react";
+import { Asterisk, Bell, Check, ChevronDown, GitBranch, Hexagon, Maximize2, PanelLeft, Plus, Search, Settings, X } from "lucide-react";
 import { useTerminalStore } from "../store/terminalStore";
 import { useProjectStore } from "../store/projectStore";
 import { useApprovalStore } from "../store/approvalStore";
 import { openProject } from "../lib/project";
 import { actions } from "../lib/actions";
-import { cn, collectPanes, findPane } from "../lib/layout";
+import { basename, cn, collectPanes, findPane } from "../lib/layout";
 import { projectColor, shortCommand, tabDisplayName } from "../lib/identity";
 import { attentionCandidates } from "../lib/attention";
 import { useRunningCommand } from "../terminal/useRunningCommand";
@@ -16,6 +16,8 @@ import { AgentGlyph, IconButton, Kbd, Lamp, Ring } from "./ui";
 import { WindowControls } from "./WindowControls";
 import { pace } from "../lib/quota";
 import { useNow } from "../lib/useNow";
+import { useSettingsStore } from "../store/settingsStore";
+import { tildify } from "../lib/paths";
 
 interface HeaderProps {
   onOpenPalette: () => void;
@@ -100,6 +102,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
 
         <div className="flex items-center pl-1">
           <IconButton icon={Plus} label="Nueva pestaña" shortcut={shortcutLabel("newTab")} onClick={actions.newTab} />
+          <ShellMenu />
         </div>
       </nav>
 
@@ -296,7 +299,12 @@ const TabItem: React.FC<TabItemProps> = ({
   const running = useRunningCommand(tab.activePaneId);
   // Si el nombre ya es el comando (p. ej. el título que puso vim), no se repite.
   const runningHint = running && !label.startsWith(running.split(" ")[0]) ? shortCommand(running, 2) : null;
-  const agentType = findPane(tab.root, tab.activePaneId)?.agentType;
+  const pane = findPane(tab.root, tab.activePaneId);
+  const agentType = pane?.agentType;
+  // Dónde está parada (dos «Claude Code» dejan de verse iguales); si el nombre ya es la carpeta, no se repite.
+  const cwd = project?.cwd ?? pane?.cwd;
+  const folder = cwd ? basename(cwd) : null;
+  const folderHint = !runningHint && folder && folder !== label ? folder : null;
   const hint = tabShortcutLabel(index);
   const progress = useTabProgress(tab.activePaneId);
 
@@ -347,7 +355,7 @@ const TabItem: React.FC<TabItemProps> = ({
         <button
           type="button"
           aria-current={isActive ? "page" : undefined}
-          title={`${label}${project ? ` · ${project.cwd}` : ""}${running ? ` · corriendo: ${running}` : ""}${hint ? `  ${hint}` : ""} · doble clic para renombrar`}
+          title={`${label}${cwd ? ` · ${cwd}` : ""}${running ? ` · corriendo: ${running}` : ""}${hint ? `  ${hint}` : ""} · doble clic para renombrar`}
           onClick={onSelect}
           onDoubleClick={() => setEditing(true)}
           onAuxClick={(e) => {
@@ -369,6 +377,7 @@ const TabItem: React.FC<TabItemProps> = ({
           )}
           <span className="min-w-0 max-w-[180px] truncate text-[12.5px] font-medium">{label}</span>
           {runningHint && <span className="max-w-[110px] shrink-0 truncate font-mono text-[11px] text-ink-3">{runningHint}</span>}
+          {folderHint && <span className="min-w-0 max-w-[110px] shrink-[2] truncate font-mono text-[11px] text-ink-3">{folderHint}</span>}
           {tab.zoomedPaneId && (
             <Maximize2 size={11} strokeWidth={2} aria-label="Panel maximizado" className="shrink-0 text-accent" />
           )}
@@ -410,5 +419,85 @@ const TabItem: React.FC<TabItemProps> = ({
         </span>
       )}
     </li>
+  );
+};
+
+/**
+ * Elegir con qué shell abrir la pestaña nueva (las que hay instaladas). La
+ * marcada es la de las pestañas nuevas (Ajustes → Terminal).
+ */
+const ShellMenu: React.FC = () => {
+  const shells = useTerminalStore((s) => s.shells);
+  const preferred = useSettingsStore((s) => s.settings.defaultShell);
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!root.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  if (!shells || shells.length < 2) return null;
+  const isPreferred = (path: string, isDefault: boolean) => (preferred ? preferred === path : isDefault);
+
+  return (
+    <div ref={root} className="relative">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Pestaña nueva con otra shell"
+        title="Pestaña nueva con otra shell"
+        onClick={() => setOpen(!open)}
+        className={cn(
+          "grid h-7 w-4 place-items-center rounded-md text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-accent",
+          open && "bg-press text-ink",
+        )}
+      >
+        <ChevronDown size={11} strokeWidth={2.25} aria-hidden="true" />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          aria-label="Shells instaladas"
+          className="absolute left-0 top-9 z-40 w-72 animate-pop-in overflow-hidden rounded-lg border border-[var(--glass-border)] p-1 glass"
+        >
+          <p className="px-2 pb-1 pt-1.5 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-ink-3">Pestaña nueva con</p>
+          {shells.map((shell) => (
+            <button
+              key={shell.path}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                void actions.newTabWith(shell);
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1.5 text-[12.5px] text-ink">
+                  {shell.name}
+                  {shell.default && <span className="rounded-full bg-hover px-1.5 text-[10px] leading-4 text-ink-3">del sistema</span>}
+                </span>
+                <span className="block truncate font-mono text-[10.5px] text-ink-3">{tildify(shell.path, terminalManager.getHome())}</span>
+              </span>
+              {isPreferred(shell.path, shell.default) && (
+                <Check size={13} strokeWidth={2} aria-label="La de las pestañas nuevas" className="shrink-0 text-accent" />
+              )}
+            </button>
+          ))}
+          <p className="border-t border-line px-2 py-1.5 text-[11px] text-ink-3">La marcada se usa al pulsar +. Cámbiala en Ajustes → Terminal.</p>
+        </div>
+      )}
+    </div>
   );
 };

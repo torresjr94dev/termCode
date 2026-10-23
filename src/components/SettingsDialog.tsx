@@ -58,6 +58,7 @@ const SettingsPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
   const setOpen = useUiStore((s) => s.setSettingsOpen);
   const askConfirm = useUiStore((s) => s.askConfirm);
   const editors = useTerminalStore((s) => s.agents?.editors ?? NO_EDITORS);
+  const shells = useTerminalStore((s) => s.shells);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
   const fonts = useMemo(
@@ -183,6 +184,24 @@ const SettingsPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
               hint={`Marcas de comando, ${shortcutLabel("prevCommand")}/${shortcutLabel("nextCommand")}, avisos y carpeta en vivo. Aplica a terminales nuevas.`}
               checked={settings.shellIntegration}
               onChange={set("shellIntegration")}
+            />
+            {shells && shells.length > 1 && (
+              <Row label="Shell de las pestañas nuevas" hint="Las divisiones usan la de su panel. Solo zsh trae la integración (marcas de comando, carpeta en vivo)">
+                <Select
+                  value={settings.defaultShell && shells.some((sh) => sh.path === settings.defaultShell) ? settings.defaultShell : ""}
+                  onChange={set("defaultShell")}
+                  options={[
+                    { value: "", label: `La del sistema (${shells.find((sh) => sh.default)?.name ?? "predeterminada"})` },
+                    ...shells.filter((sh) => !sh.default).map((sh) => ({ value: sh.path, label: `${sh.name} · ${sh.path}` })),
+                  ]}
+                />
+              </Row>
+            )}
+            <Toggle
+              label="Restaurar lo que había en cada terminal"
+              hint="Al reabrir termCode, cada panel vuelve con sus últimas 1000 líneas. Se guardan solo en tu equipo; desactívalo si imprimes secretos en la terminal"
+              checked={settings.restoreScrollback}
+              onChange={set("restoreScrollback")}
             />
             <Row label="Historial" hint="Líneas que se guardan por panel">
               <Stepper value={settings.scrollback} {...LIMITS.scrollback} step={1000} onChange={set("scrollback")} format={(v) => v.toLocaleString("es-MX")} />

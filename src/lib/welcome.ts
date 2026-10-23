@@ -58,6 +58,7 @@ export function renderWelcome(paneId: string, size: { cols: number; rows: number
         version,
         compact: variant === "compact",
         fullMinWidth: FULL_MIN_WIDTH,
+        compactHeight: CARD_HEIGHT.compact,
         view,
       }),
   };
