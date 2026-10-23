@@ -5,7 +5,6 @@
 use crate::proctree::descendants;
 use pty_core::{PtyManager, SessionId};
 use std::collections::{BTreeSet, HashMap};
-use std::time::Duration;
 use tauri::State;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -90,7 +89,7 @@ fn listening(pids: &[i32]) -> Vec<(i32, u16)> {
         "-F",
         "pn",
     ]);
-    match crate::proc::run(cmd, None, Duration::from_secs(3), 256 * 1024) {
+    match crate::proc::run(cmd, None, std::time::Duration::from_secs(3), 256 * 1024) {
         Ok(out) => parse_lsof(&out.stdout_str()),
         Err(err) => {
             log::debug!("ports: lsof: {err}");

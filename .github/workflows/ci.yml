@@ -75,11 +75,13 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
-      # Umbrales holgados (los runners varían): atrapan regresiones graves, no ruido.
+      # Umbrales holgados: atrapan regresiones graves, no ruido. Con el mismo código,
+      # macos-latest midió 13–36 MB/s y un p99 de eco de 0.2–25 ms (oct 2026);
+      # los topes van por debajo y por encima de lo peor visto, con margen.
       - name: Benchmark del PTY
         shell: bash
         run: |
-          cargo run --release -p pty-core --example bench -- --mib 128 --json --min-mbps 15 --max-p99-ms 25 | tee bench.json
+          cargo run --release -p pty-core --example bench -- --mib 128 --json --min-mbps 8 --max-p99-ms 50 | tee bench.json
           {
             echo "### Benchmark de pty-core"
             echo
