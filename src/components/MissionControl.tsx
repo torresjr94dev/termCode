@@ -168,8 +168,9 @@ const AgentCard: React.FC<{ pane: PaneNode; tab: Tab; now: number; onGo: () => v
 
       <div className="flex items-center gap-3 px-4 pt-3">
         {status?.contextPercent != null ? (
-          <Ring value={status.contextPercent} size={40} stroke={3.5} label={`Contexto usado: ${Math.round(status.contextPercent)} %`}>
-            <span className="font-mono text-[10.5px] font-semibold tabular-nums text-ink">{Math.round(status.contextPercent)}</span>
+          // El arco se llena con lo usado; el número es lo que queda (lo mismo que dice el resto de la app).
+          <Ring value={status.contextPercent} size={40} stroke={3.5} label={`Contexto: queda ${Math.round(100 - status.contextPercent)} %`}>
+            <span className="font-mono text-[10.5px] font-semibold tabular-nums text-ink">{Math.round(100 - status.contextPercent)}</span>
           </Ring>
         ) : (
           <Ring value={0} size={40} stroke={3.5} tone="muted" />

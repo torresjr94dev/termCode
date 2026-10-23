@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Copy, CornerDownLeft, RotateCcw, Send, TextQuote } from "lucide-react";
+import { Copy, CornerDownLeft, Maximize2, RotateCcw, Send, Sparkles, TextQuote } from "lucide-react";
 import { terminalManager } from "../terminal/TerminalManager";
 import type { CommandRecord } from "../terminal/commands";
 import { actions } from "../lib/actions";
+import { explainFailure, openOutput } from "../lib/output";
 import { formatDuration } from "../lib/format";
 import { cn } from "../lib/layout";
 import { useUiStore } from "../store/uiStore";
@@ -125,7 +126,24 @@ const CommandCard: React.FC<{ paneId: string; placed: Placed; onClose: () => voi
   };
   const output = () => terminalManager.getTracker(paneId)?.output(record) ?? "";
 
-  const items: Array<{ icon: typeof Copy; label: string; run: () => void; disabled?: boolean }> = [
+  const items: Array<{ icon: typeof Copy; label: string; run: () => void; disabled?: boolean; hidden?: boolean }> = [
+    {
+      icon: Sparkles,
+      label: "Explicar este error",
+      run: () => {
+        explainFailure(paneId, record);
+        onClose();
+      },
+      hidden: state !== "failed",
+    },
+    {
+      icon: Maximize2,
+      label: "Ver salida completa",
+      run: () => {
+        openOutput(paneId, record);
+        onClose();
+      },
+    },
     { icon: Copy, label: "Copiar comando", run: () => void copy(record.command, "Comando"), disabled: !record.command },
     { icon: TextQuote, label: "Copiar salida", run: () => void copy(output(), "Salida") },
     {
@@ -165,7 +183,7 @@ const CommandCard: React.FC<{ paneId: string; placed: Placed; onClose: () => voi
         </p>
       </div>
       <ul className="p-1">
-        {items.map(({ icon: Icon, label, run, disabled }) => (
+        {items.filter((item) => !item.hidden).map(({ icon: Icon, label, run, disabled }) => (
           <li key={label}>
             <button
               type="button"

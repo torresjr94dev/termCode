@@ -4,6 +4,40 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ## [Sin publicar]
 
+### Añadido
+
+- La salida completa de un comando en el visor (clic en el comando de la barra de estado, en su marca del margen o desde la paleta): se lee entera y se busca con ⌘F.
+- «Explicar este error»: en un comando que falló, manda el comando, su carpeta y el final de su salida al agente (o abre Claude junto al panel con ese mensaje).
+- Terminal acoplada al agente (`⌘L` o el botón «terminal» de su cabecera): una shell en la carpeta del agente, abajo, sin dividir el panel; se pliega sin perder la shell.
+- Elegir shell: menú junto al `+` de las pestañas con las shells instaladas (zsh, bash, fish, nu, PowerShell…), la predeterminada en Ajustes, y las divisiones heredan la de su panel.
+- Servidores SSH en la barra lateral: los `Host` de tu `~/.ssh/config` y los que agregues (nombre, host, puerto, usuario, llave). Un clic abre una pestaña conectada. Nunca se guardan contraseñas.
+- Puertos en escucha de cada panel (`:3000 ↗`), que abren su página en el navegador (macOS y Linux).
+- Al reabrir termCode, cada terminal vuelve con sus últimas 1000 líneas (desactivable en Ajustes).
+- Workspaces por repo (`.termcode.json`): los paneles del proyecto (servidor, tests, agente) en una pestaña. La primera vez, y cada vez que el archivo cambia, muestra los comandos exactos y pide confianza.
+- Detalle del sistema al hacer clic en CPU/GPU/RAM de la barra de estado: uso por núcleo, carga, memoria disponible y swap, y los procesos que más usan (por memoria o CPU), con la opción de terminar uno tuyo.
+- El panel de proyecto avisa cuando `git status` no responde y, si el repo está en iCloud Drive (u otra nube), dice por qué.
+- Monitor del sistema en la barra lateral: CPU y GPU con su tendencia de 2 minutos, RAM con la presión de memoria de macOS y swap, y los procesos que más memoria usan. Con la barra lateral oculta, CPU, GPU y RAM van en la barra de estado. Solo mide mientras se ve.
+- Carpetas recientes y fijadas en la barra lateral: un clic hace `cd` en la terminal activa; al pasar el cursor, abren una shell, Claude Code o Codex ahí.
+- Contexto de Codex por panel (modelo y cuánto queda), leído del rollout que el propio proceso de Codex tiene abierto, con la misma cuenta que muestra Codex.
+- La barra de estado dice cuánto contexto le queda al agente del panel activo.
+- Explorador de archivos: doble clic en una carpeta hace `cd` en la terminal activa, migas de pan clicables, botón para subir y la carpeta actual marcada; el árbol se despliega hasta donde está la terminal.
+
+### Modificado
+
+- Cada sesión de la barra lateral muestra su carpeta (y la rama del repo), el último comando con su resultado y, en los agentes, una barra con el contexto libre. Las pestañas y la cabecera de cada panel también dicen en qué carpeta están.
+- El panel de proyecto empieza abierto en Archivos; plegado queda como un riel con sus vistas, y su estado se guarda con la sesión.
+- El lanzador de la barra lateral ocupa una sola fila; las secciones Carpetas y Sistema se pliegan y lo recuerdan.
+- Rust 1.88 o superior (por `sysinfo`).
+
+### Corregido
+
+- La tarjeta de bienvenida tapaba las primeras líneas de la salida: el `clear` de macOS manda `ESC[3J` antes de borrar la pantalla y la tarjeta se ponía antes del borrado; además aparecía cuando un programa (Vite, `tsc -w`, jest) limpiaba la pantalla. Ahora va solo tras un `clear` que escribiste, después del borrado.
+- El panel de proyecto no cambiaba de carpeta al pasar a un panel de agente mientras un `git status` lento seguía en curso: cambiar de carpeta ya no espera a git, y un repo que no responde se reintenta con espera creciente en vez de cada 2,5 s.
+- La tarjeta de bienvenida de un panel que se angosta (al dividir) pasa a la compacta, igual que la del panel nuevo, en vez de apretar logo y botones.
+- Las acciones de las carpetas de la barra lateral se encimaban con la ruta.
+- Con el visor abierto, cambiar de pestaña devolvía el teclado a la terminal de abajo (Esc dejaba de cerrar el visor).
+- Limpiar la pantalla con `Ctrl+L` (o cualquier `ESC[2J` sin `ESC[3J`) borraba la última pantalla de salida en vez de subirla al historial: un traceback largo quedaba con un hueco al hacer scroll. Ahora se conserva, como en Terminal.app e iTerm2 (`clear` sigue borrando todo).
+
 ## [0.2.0] - 2026-10-22
 
 ### Añadido

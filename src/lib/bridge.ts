@@ -4,7 +4,8 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 import { invoke } from "@tauri-apps/api/core";
-import { useTerminalStore } from "../store/terminalStore";
+import { findDrawerOwner, useTerminalStore } from "../store/terminalStore";
+import { useSidebarStore } from "../store/sidebarStore";
 import { useUiStore } from "../store/uiStore";
 import { settingsNow } from "../store/settingsStore";
 import { terminalManager } from "../terminal/TerminalManager";
@@ -23,6 +24,10 @@ import { basename } from "./paths";
 const state = () => useTerminalStore.getState();
 /** Paneles que ya avisaron de su integración (una línea de log por panel). */
 const integrated = new Set<string>();
+/** Codex no tiene statusLine: su contexto se lee del rollout cada pocos segundos. */
+const CODEX_POLL_MS = 3000;
+/** Puertos en escucha de los paneles (una sola consulta para todos). */
+const PORTS_POLL_MS = 4000;
 
 let notificationsAllowed: boolean | null = null;
 
@@ -134,6 +139,32 @@ async function resolveProject(paneId: string, cwd: string) {
   }
 }
 
+/**
+ * Modelo y contexto de cada panel de Codex. Solo se escribe en el store si
+ * algo cambió: el sondeo no re-renderiza la interfaz cada 3 s.
+ */
+async function pollCodex() {
+  if (document.visibilityState !== "visible") return;
+  const panes = state().tabs.flatMap((t) => collectPanes(t.root)).filter((p) => p.agentType === "codex");
+  await Promise.all(
+    panes.map(async (pane) => {
+      const status = await terminalManager.codexStatus(pane.id);
+      if (!status) return;
+      const current = state().agentStatus[pane.id];
+      if (current?.model === status.model && current?.contextPercent === status.contextPercent) return;
+      state().setAgentStatus(status);
+    }),
+  );
+}
+
+/** Puertos de todos los paneles y sus shells acopladas, solo con la ventana a la vista. */
+async function pollPorts() {
+  if (document.visibilityState !== "visible") return;
+  const panes = state().tabs.flatMap((t) => collectPanes(t.root));
+  const ids = [...panes.map((p) => p.id), ...panes.flatMap((p) => (p.drawer ? [p.drawer.id] : []))];
+  state().setPanePorts(await terminalManager.ports(ids));
+}
+
 /** La atención se considera vista cuando el panel está al frente y la ventana enfocada. */
 function clearSeenAttention() {
   const { tabs, activeTabId, attention } = state();
@@ -149,7 +180,12 @@ function clearSeenAttention() {
 export function startBridge({ isMainWindow }: { isMainWindow: boolean }): () => void {
   terminalManager.setStoreHooks({
     isBroadcastEnabled: () => state().isBroadcastEnabled,
-    onExit: (paneId) => state().closePane(paneId),
+    // `exit` en la shell acoplada cierra solo esa shell, no el agente.
+    onExit: (paneId) => {
+      const owner = findDrawerOwner(state().tabs, paneId);
+      if (owner) state().closeDrawer(owner.id);
+      else state().closePane(paneId);
+    },
     onTitle: (paneId, title) => {
       const clean = cleanTitle(title);
       if (clean) state().updatePaneTitle(paneId, clean);
@@ -158,6 +194,8 @@ export function startBridge({ isMainWindow }: { isMainWindow: boolean }): () => 
     onCommandFinished,
     onCwd: (paneId, cwd) => {
       void resolveProject(paneId, cwd);
+      // Carpetas recientes de la barra lateral (la terminal rápida no las guarda).
+      if (isMainWindow) useSidebarStore.getState().visit(cwd, terminalManager.getHome());
       if (!integrated.has(paneId)) {
         integrated.add(paneId);
         if (IS_TAURI) void logInfo(`[webview] integración con la shell activa (${paneId.slice(0, 12)}…, ${cwd})`).catch(() => {});
@@ -209,9 +247,15 @@ export function startBridge({ isMainWindow }: { isMainWindow: boolean }): () => 
 
   void ipc.usageGet().then((usage) => usage && state().setUsage(usage));
   void ipc.agentsInfo().then((agents) => agents && state().setAgents(agents));
+  void ipc.shells().then((shells) => shells && state().setShells(shells));
+  if (isMainWindow) void ipc.sshHosts().then((hosts) => hosts && useSidebarStore.getState().setSshHosts(hosts));
   const stopApprovals = isMainWindow ? startApprovals({ isLookingAt, raiseAttention }) : () => {};
+  const codexTimer = IS_TAURI ? setInterval(() => void pollCodex(), CODEX_POLL_MS) : undefined;
+  const portsTimer = IS_TAURI && isMainWindow ? setInterval(() => void pollPorts(), PORTS_POLL_MS) : undefined;
 
   return () => {
+    clearInterval(codexTimer);
+    clearInterval(portsTimer);
     stopApprovals();
     unsubscribeStore();
     window.removeEventListener("focus", clearSeenAttention);

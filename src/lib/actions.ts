@@ -5,9 +5,10 @@ import { DEFAULT_SETTINGS, settingsNow, useSettingsStore } from "../store/settin
 import { basename, collectPanes, findOwnerTab, findPane } from "./layout";
 import { ipc, shellQuote } from "./ipc";
 import { agentCommand, type AgentCommandOptions } from "./resume";
+import { cdKeystrokes } from "./cd";
 import { nextAttentionPane } from "./attention";
 import { useApprovalStore } from "../store/approvalStore";
-import type { AgentKind, SplitDirection } from "../types/layout";
+import type { AgentKind, PaneShell, ShellInfo, SplitDirection } from "../types/layout";
 
 export type { AgentKind };
 
@@ -71,11 +72,21 @@ export function agentSpec(
   return { title: title ?? AGENTS[agent].title, agentType: agent, command, cwd };
 }
 
+/** La shell de las pestañas nuevas según Ajustes (undefined = la del sistema). */
+function defaultShell(): PaneShell | undefined {
+  const path = settingsNow().defaultShell;
+  const found = path ? state().shells?.find((s) => s.path === path) : undefined;
+  return found && !found.default ? { name: found.name, path: found.path, args: found.args } : undefined;
+}
+
 async function split(direction: SplitDirection, spec: PaneSpec = {}) {
   const target = activePaneId();
   if (!target) return;
   const cwd = spec.cwd ?? (await cwdOf(target));
-  state().splitPane(target, direction, { ...spec, cwd });
+  // Una división de una pestaña de bash también es bash (salvo que sea un agente).
+  const tab = activeTab();
+  const shell = spec.command ? undefined : (spec.shell ?? (tab ? findPane(tab.root, target)?.shell : undefined));
+  state().splitPane(target, direction, { ...spec, cwd, ...(shell ? { shell } : {}) });
 }
 
 /** Recuerda carpeta y título de lo que se cierra, para ⌘⇧T. */
@@ -135,7 +146,13 @@ function guardQuota(agent: AgentKind, launch: () => void) {
 export const actions = {
   newTab: async () => {
     const cwd = await cwdOf(activePaneId());
-    state().createTab({ cwd });
+    state().createTab({ cwd, shell: defaultShell() });
+  },
+
+  /** Pestaña nueva con una shell concreta (la predeterminada se abre como siempre). */
+  newTabWith: async (shell: ShellInfo) => {
+    const cwd = await cwdOf(activePaneId());
+    state().createTab({ cwd, ...(shell.default ? {} : { shell: { name: shell.name, path: shell.path, args: shell.args } }) });
   },
 
   closePane: (paneId = activePaneId()) => {
@@ -153,17 +170,63 @@ export const actions = {
   splitRight: () => split("horizontal"),
   splitDown: () => split("vertical"),
 
-  /** El agente a la derecha del panel activo, en su mismo directorio. */
-  openAgentInSplit: async (agent: AgentKind) => {
+  /** El agente a la derecha del panel activo, en su mismo directorio (con un primer mensaje, si lo hay). */
+  openAgentInSplit: async (agent: AgentKind, prompt?: string) => {
     if (!agentAvailable(agent)) return;
     const cwd = await cwdOf(activePaneId());
-    guardQuota(agent, () => void split("horizontal", agentSpec(agent, cwd)));
+    guardQuota(agent, () => void split("horizontal", agentSpec(agent, cwd, undefined, prompt)));
   },
 
   openAgentInTab: async (agent: AgentKind) => {
     if (!agentAvailable(agent)) return;
     const cwd = await cwdOf(activePaneId());
     guardQuota(agent, () => state().createTab(agentSpec(agent, cwd)));
+  },
+
+  /**
+   * Conecta por SSH en una pestaña (o junto al panel). Corre en tu shell de
+   * login: al salir de ssh, el panel sigue siendo una terminal local.
+   */
+  connectSsh: (name: string, command: string | null, where: "tab" | "split" = "tab") => {
+    if (!command) {
+      ui().showToast(`${name}: datos de conexión no válidos.`, "error");
+      return;
+    }
+    const spec: PaneSpec = { title: `ssh · ${name}`, command, ssh: name };
+    if (where === "split") void split("horizontal", spec);
+    else state().createTab(spec);
+  },
+
+  /** Shell o agente en pestaña nueva, en una carpeta concreta (p. ej. una reciente). */
+  openHere: (kind: "shell" | AgentKind, cwd: string) => {
+    if (kind === "shell") {
+      state().createTab({ cwd, shell: defaultShell() });
+      return;
+    }
+    if (!agentAvailable(kind)) return;
+    guardQuota(kind, () => state().createTab(agentSpec(kind, cwd)));
+  },
+
+  /**
+   * Lleva el panel activo a `path` con `cd`. Solo se teclea en una shell
+   * libre: en un agente, o con algo corriendo, las teclas irían a ese
+   * programa. Entonces la carpeta se abre en una pestaña nueva, y se avisa.
+   */
+  cdTo: async (path: string) => {
+    const tab = activeTab();
+    const pane = tab ? findPane(tab.root, tab.activePaneId) : undefined;
+    if (!pane) {
+      state().createTab({ cwd: path });
+      return;
+    }
+    const info = pane.agentType || pane.command ? null : await terminalManager.info(pane.id);
+    if (!info || info.busy) {
+      state().createTab({ cwd: path });
+      const why = pane.agentType ? `${AGENTS[pane.agentType].title} está en el panel activo` : info?.busy ? `${info.foregroundName ?? "Un programa"} sigue corriendo` : "La terminal aún no arranca";
+      ui().showToast(`${why}: ${basename(path)} se abrió en una pestaña nueva.`);
+      return;
+    }
+    terminalManager.run(pane.id, cdKeystrokes(path));
   },
 
   /** Worktree nuevo (rama propia) + agente dentro: varios agentes sin pisarse. */
@@ -311,6 +374,27 @@ export const actions = {
       return;
     }
     terminalManager.jumpToCommand(paneId, direction);
+  },
+
+  /**
+   * ⌘L: la terminal acoplada del agente (en su carpeta, sin dividir). La
+   * primera vez se crea; después se pliega y despliega. El teclado va a donde
+   * quedó a la vista.
+   */
+  toggleAgentShell: (paneId = activePaneId()) => {
+    const tab = paneId ? findOwnerTab(state().tabs, paneId) : undefined;
+    const pane = tab && paneId ? findPane(tab.root, paneId) : undefined;
+    if (!pane) return;
+    if (!pane.agentType) {
+      ui().showToast("La terminal acoplada es para paneles de agente; para otra shell aquí, divide el panel.");
+      return;
+    }
+    const opening = !pane.drawer?.open;
+    state().toggleDrawer(pane.id, opening);
+    requestAnimationFrame(() => {
+      const fresh = findPane(findOwnerTab(state().tabs, pane.id)?.root ?? pane, pane.id);
+      terminalManager.focus(opening && fresh?.drawer ? fresh.drawer.id : pane.id);
+    });
   },
 
   toggleZoom: () => state().toggleZoom(),

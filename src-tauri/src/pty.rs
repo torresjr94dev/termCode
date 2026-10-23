@@ -98,11 +98,14 @@ pub async fn pty_spawn(
         agents::ENV_STATE_DIR.to_owned(),
         agents::state_dir().to_string_lossy().into_owned(),
     ));
+    // La integración va con la shell que se abre: la tuya (también la que queda tras
+    // un agente) o la elegida para la pestaña (solo si es zsh).
     #[cfg(unix)]
-    if shell_integration.unwrap_or(true) && options.program.is_none() {
+    if shell_integration.unwrap_or(true) {
+        let shell = options.program.clone().unwrap_or_else(pty_core::user_shell);
         options
             .env
-            .extend(crate::shell_integration::env_for(&pty_core::user_shell()));
+            .extend(crate::shell_integration::env_for(&shell));
     }
     // Windows: PowerShell con la integración y el agente dentro, sin cmd.exe.
     #[cfg(windows)]

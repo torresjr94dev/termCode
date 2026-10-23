@@ -17,7 +17,7 @@ use std::time::{Duration, SystemTime};
 
 const WINDOW_MS: i64 = 24 * 60 * 60 * 1000;
 
-fn codex_home() -> Option<PathBuf> {
+pub(crate) fn codex_home() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("CODEX_HOME").filter(|d| !d.is_empty()) {
         return Some(PathBuf::from(dir));
     }

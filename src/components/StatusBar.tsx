@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Radio } from "lucide-react";
+import { Radio, Sparkles } from "lucide-react";
 import { useTerminalStore } from "../store/terminalStore";
 import { useApprovalStore } from "../store/approvalStore";
 import { useUiStore } from "../store/uiStore";
@@ -11,9 +11,13 @@ import { formatDuration, formatUsd } from "../lib/format";
 import { paneDisplayName } from "../lib/identity";
 import { useNow } from "../lib/useNow";
 import { shortcutLabel } from "../lib/shortcuts";
-import { Lamp } from "./ui";
+import { Lamp, toneFor } from "./ui";
+import { SystemReadout } from "./SystemMonitor";
+import { PortChips } from "./PortChips";
+import { explainFailure, openOutput } from "../lib/output";
+import type { PaneNode } from "../types/layout";
 
-/** Solo datos reales. Nada de latencias ni RAM inventadas. */
+/** Solo datos reales: nada de latencias ni RAM inventadas (la del sistema es medida). */
 export const StatusBar: React.FC = () => {
   const tabs = useTerminalStore((s) => s.tabs);
   const activeTabId = useTerminalStore((s) => s.activeTabId);
@@ -53,6 +57,8 @@ export const StatusBar: React.FC = () => {
                 panel {paneIndex + 1}/{panes.length}
               </span>
             )}
+            {activePane.agentType && <AgentContext pane={activePane} />}
+            <PortChips paneId={activePane.id} max={2} />
           </span>
         )}
       </div>
@@ -65,9 +71,36 @@ export const StatusBar: React.FC = () => {
           </span>
         )}
         <AgentsStatus />
+        <SystemReadout />
         {tabs.length > 1 && <span title={`Pestaña ${tabIndex + 1} de ${tabs.length}`}>{tabIndex + 1}/{tabs.length}</span>}
       </div>
     </footer>
+  );
+};
+
+/** Modelo y contexto que le queda al agente del panel activo (Claude por su statusLine, Codex por su rollout). */
+const AgentContext: React.FC<{ pane: PaneNode }> = ({ pane }) => {
+  const status = useTerminalStore((s) => s.agentStatus[pane.id]);
+  if (!status) return null;
+  const used = status.contextPercent;
+  const tone = used === null ? null : toneFor(used);
+  return (
+    <span className="flex shrink-0 items-center gap-2 tabular-nums">
+      {status.model && <span className="max-w-[160px] truncate text-ink-2">{status.model}</span>}
+      {used !== null && (
+        <span title={`Contexto: ${Math.round(used)} % usado`} className="flex items-center gap-1.5">
+          <span aria-hidden="true" className="h-[5px] w-12 overflow-hidden rounded-full bg-line">
+            <span
+              className={cn("block h-full rounded-full", tone === "alert" ? "bg-signal" : tone === "warn" ? "bg-warn" : "bg-accent")}
+              style={{ width: `${Math.min(Math.max(used, 0), 100)}%` }}
+            />
+          </span>
+          <span className={tone === "alert" ? "text-signal" : tone === "warn" ? "text-warn" : undefined}>
+            queda {Math.round(100 - used)}% de contexto
+          </span>
+        </span>
+      )}
+    </span>
   );
 };
 
@@ -149,15 +182,35 @@ const CommandStatus: React.FC<{ paneId: string }> = ({ paneId }) => {
   // El reloj se refresca cada segundo: recién empezado un comando, "ahora" puede ser anterior al inicio.
   const duration = formatDuration(Math.max(0, (record.endedAt ?? now) - record.startedAt));
   const ok = record.exitCode === 0;
+  const failed = !running && !ok;
   return (
-    <span
-      title={`${name} · ${running ? "corriendo" : `código ${record.exitCode ?? "?"}`} · ${duration}`}
-      className={cn("flex items-center gap-1.5", running ? "text-accent" : ok ? "text-ink-3" : "text-del")}
-    >
-      <span aria-hidden="true">{running ? "▪" : ok ? "✓" : "✗"}</span>
-      {!running && !ok && <span>{record.exitCode}</span>}
-      <span className="max-w-[220px] truncate text-ink-2">{short || "comando"}</span>
-      <span>{duration}</span>
+    <span className="flex items-center gap-1">
+      {/* Clic: la salida completa en el visor (se lee entera y se busca), sin pelear con el scroll. */}
+      <button
+        type="button"
+        onClick={() => openOutput(paneId, record)}
+        title={`${name} · ${running ? "corriendo" : `código ${record.exitCode ?? "?"}`} · ${duration}\nClic: ver la salida completa`}
+        className={cn(
+          "-mx-1 flex h-[18px] items-center gap-1.5 rounded-sm px-1 transition-colors duration-150 hover:bg-hover",
+          running ? "text-accent" : ok ? "text-ink-3" : "text-del",
+        )}
+      >
+        <span aria-hidden="true">{running ? "▪" : ok ? "✓" : "✗"}</span>
+        {failed && <span>{record.exitCode}</span>}
+        <span className="max-w-[220px] truncate text-ink-2">{short || "comando"}</span>
+        <span>{duration}</span>
+      </button>
+      {failed && (
+        <button
+          type="button"
+          onClick={() => explainFailure(paneId, record)}
+          title="Explicar este error: el comando y su salida al agente"
+          className="flex h-[18px] items-center gap-1 rounded-sm px-1.5 text-del transition-colors duration-150 hover:bg-del/15"
+        >
+          <Sparkles size={11} strokeWidth={2} aria-hidden="true" />
+          Explicar
+        </button>
+      )}
     </span>
   );
 };

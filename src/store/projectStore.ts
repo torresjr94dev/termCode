@@ -53,7 +53,20 @@ export type Viewer =
       error?: string;
     }
   /** Archivo con marcas de conflicto, resuelto bloque a bloque. */
-  | { kind: "conflict"; path: string; text?: string; error?: string };
+  | { kind: "conflict"; path: string; text?: string; error?: string }
+  /** La salida completa de un comando de la terminal (se lee entera y se busca con ⌘F). */
+  | {
+      kind: "output";
+      id: number;
+      paneId: string;
+      command: string;
+      cwd: string | null;
+      exitCode: number | null;
+      running: boolean;
+      durationMs: number;
+      text: string;
+      truncated: boolean;
+    };
 
 export type TreeNode = FsEntry[] | "loading" | { error: string };
 
@@ -94,6 +107,10 @@ interface ProjectState {
   isBranchPickerOpen: boolean;
   /** Comentarios por línea aún sin mandar (sobreviven a cerrar el visor). */
   notes: ReviewNote[];
+  /** `git status` no terminó en este repo (se reintenta con espera creciente). */
+  statusTrouble: { root: string; at: number } | null;
+  /** El repo vive en una nube con File Provider (iCloud Drive, Dropbox…): por qué git puede colgarse. */
+  cloudProvider: string | null;
 
   set: (patch: Partial<ProjectState>) => void;
 }
@@ -111,11 +128,13 @@ export const initialRepoState = {
   tree: {},
   expanded: {},
   viewer: null,
+  cloudProvider: null,
 } satisfies Partial<ProjectState>;
 
 export const useProjectStore = create<ProjectState>((set) => ({
-  isOpen: false,
-  tab: "changes",
+  // Abierto en Archivos: al plegarlo queda un riel a la derecha (ver ProjectPanel).
+  isOpen: true,
+  tab: "files",
   cwd: null,
   repo: null,
   ...initialRepoState,
@@ -127,6 +146,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
   isPrDialogOpen: false,
   isBranchPickerOpen: false,
   notes: [],
+  statusTrouble: null,
   set: (patch) => set(patch),
 }));
 

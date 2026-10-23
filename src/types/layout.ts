@@ -11,6 +11,22 @@ export interface SplitNode {
   second: LayoutNode;
 }
 
+/** Una shell instalada (ver src-tauri/src/shells.rs). */
+export interface ShellInfo {
+  name: string;
+  path: string;
+  args: string[];
+  /** La de siempre: se abre sin `program` y conserva la integración del sistema. */
+  default: boolean;
+}
+
+/** Shell elegida para un panel (la predeterminada no se guarda: es la ausencia de esto). */
+export interface PaneShell {
+  name: string;
+  path: string;
+  args: string[];
+}
+
 export interface PaneNode {
   id: string;
   type: "pane";
@@ -20,6 +36,10 @@ export interface PaneNode {
   cwd?: string;
   /** Command run through the login shell instead of a plain shell (agents). */
   command?: string;
+  /** Shell elegida para este panel (zsh, bash, fish, pwsh…); sin esto, la tuya. */
+  shell?: PaneShell;
+  /** Conexión SSH de este panel (el nombre del servidor). */
+  ssh?: string;
   agentType?: AgentKind | null;
   /** Sesión del agente que corre aquí (la reportan los hooks de Claude Code). */
   agentSession?: AgentSessionRef;
@@ -27,6 +47,17 @@ export interface PaneNode {
   resumable?: ResumableAgent;
   /** Pestaña de shell recién abierta: muestra la bienvenida antes del prompt (no se guarda). */
   welcome?: boolean;
+  /** Shell acoplada abajo del agente, en su carpeta, sin dividir el panel. */
+  drawer?: PaneDrawer;
+}
+
+export interface PaneDrawer {
+  /** Id de su terminal (no es un panel del árbol). */
+  id: string;
+  /** Plegada queda una barra; la shell sigue viva. */
+  open: boolean;
+  /** Alto respecto al panel, 0.15–0.75. */
+  ratio: number;
 }
 
 export interface AgentSessionRef {
@@ -148,6 +179,42 @@ export interface AgentsInfo {
   editors: string[];
   claudeSettingsPath: string | null;
   mcpConfigPath: string | null;
+}
+
+/* ---- Monitor del sistema (ver src-tauri/src/sysmon.rs) ---- */
+
+export interface ProcessUsage {
+  pid: number;
+  name: string;
+  /** Por núcleo, como Monitor de Actividad: puede pasar de 100. */
+  cpuPercent: number;
+  memory: number;
+  /** Es tuyo: se puede terminar sin privilegios. */
+  mine: boolean;
+}
+
+export interface SystemStats {
+  /** Todos los núcleos juntos, 0–100. */
+  cpuPercent: number;
+  cpuCount: number;
+  /** Cada núcleo, 0–100. */
+  cpuCores: number[];
+  /** Carga media de 1, 5 y 15 min (null en Windows). */
+  loadAverage: [number, number, number] | null;
+  uptimeSecs: number;
+  memoryUsed: number;
+  memoryTotal: number;
+  /** Lo que las apps pueden pedir sin que el sistema libere nada. */
+  memoryAvailable: number;
+  swapUsed: number;
+  swapTotal: number;
+  /** Solo macOS. */
+  memoryPressure: "normal" | "warn" | "critical" | null;
+  /** Solo macOS. */
+  gpuPercent: number | null;
+  gpuMemory: number | null;
+  /** De más a menos memoria; vacío si no se pidieron procesos. */
+  top: ProcessUsage[];
 }
 
 export interface ProcessInfo {

@@ -17,7 +17,10 @@ import { Overview } from "./components/Overview";
 import { ShortcutHints } from "./components/ShortcutHints";
 import { Welcome } from "./components/Welcome";
 import { ApprovalTray } from "./components/ApprovalTray";
+import { SystemPopover } from "./components/SystemMonitor";
+import { SshDialog } from "./components/SshDialog";
 import { useTerminalStore } from "./store/terminalStore";
+import { useProjectStore } from "./store/projectStore";
 import { useUiStore } from "./store/uiStore";
 import { settingsNow } from "./store/settingsStore";
 import { terminalManager } from "./terminal/TerminalManager";
@@ -54,6 +57,7 @@ const SHORTCUT_HANDLERS: Record<Exclude<ShortcutId, "palette">, () => unknown> =
   fileFinder: () => useUiStore.getState().setFinderOpen(!useUiStore.getState().isFinderOpen),
   switchBranch: openBranchPicker,
   nextAttention: actions.focusNextAttention,
+  agentShell: () => actions.toggleAgentShell(),
 };
 
 const EDITOR_OWNED = new Set<ShortcutId>(["find", "splitRight", "prevCommand", "nextCommand"]);
@@ -74,6 +78,8 @@ function isBrowserAccelerator(e: KeyboardEvent): boolean {
 }
 
 function focusActivePane() {
+  // El visor tapa las terminales: el teclado se queda en él (Esc lo cierra, ⌘F busca).
+  if (useProjectStore.getState().viewer) return;
   const { tabs, activeTabId } = useTerminalStore.getState();
   const tab = tabs.find((t) => t.id === activeTabId);
   if (tab) terminalManager.focus(tab.activePaneId);
@@ -209,6 +215,11 @@ export const App: React.FC = () => {
 
       // ⌘W con un archivo abierto cierra el archivo, no el panel que está debajo.
       if (shortcut === "closePane" && target?.closest("[data-viewer]")) closeViewer();
+      // ⌘W en la terminal acoplada la cierra a ella, no al agente de arriba.
+      else if (shortcut === "closePane" && target?.closest("[data-drawer]")) {
+        const paneId = target.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
+        if (paneId) useTerminalStore.getState().closeDrawer(paneId);
+      }
       else if (shortcut === "toggleUsage" && useTerminalStore.getState().isUsageDrawerOpen) closeUsage();
       else if (shortcut) void SHORTCUT_HANDLERS[shortcut]();
       else if (tabIndex !== null) actions.goToTab(tabIndex);
@@ -271,6 +282,8 @@ export const App: React.FC = () => {
       <ShortcutHints />
       <Welcome onClosed={focusActivePane} />
       <ApprovalTray />
+      <SystemPopover />
+      <SshDialog onClosed={focusActivePane} />
       <ConfirmDialog onSettled={focusActivePane} />
       <ToastHost />
     </div>

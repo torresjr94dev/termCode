@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ApprovalDecision, ApprovalRequest } from "../store/approvalStore";
-import type { AgentActivity, AgentAttention, AgentSessionEvent, AgentStatus, AgentsInfo, UsageSnapshot } from "../types/layout";
+import type { AgentActivity, AgentAttention, AgentSessionEvent, AgentStatus, AgentsInfo, ProcessUsage, ShellInfo, SystemStats, UsageSnapshot } from "../types/layout";
 
 /** `false` en un navegador normal (p. ej. el harness de pruebas): todo se vuelve no-op. */
 export const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -30,6 +30,21 @@ export const ipc = {
   usageGet: () => call<UsageSnapshot>("usage_get"),
   usageRefresh: () => call<void>("usage_refresh"),
   agentsInfo: () => call<AgentsInfo>("agents_info"),
+  /** Los `Host` concretos de ~/.ssh/config. */
+  sshHosts: () => call<import("./ssh").SshHost[]>("ssh_hosts"),
+  /** Shells instaladas, la predeterminada primero. */
+  shells: () => call<ShellInfo[]>("shells_available"),
+  /** `processes`: también los que más memoria usan (recorre todos los procesos). */
+  systemStats: (processes: boolean) => call<SystemStats>("system_stats", { processes }),
+  /** Los que más usan, por memoria o CPU (detalle del sistema). */
+  systemProcesses: (sort: "memory" | "cpu", limit: number) => call<ProcessUsage[]>("system_processes", { sort, limit }),
+  /** SIGTERM a un proceso tuyo. Lanza un error legible si no se puede. */
+  async processTerminate(pid: number): Promise<void> {
+    if (!IS_TAURI) throw new Error("Solo disponible en la app de escritorio.");
+    await invoke("process_terminate", { pid });
+  },
+  /** `iCloud Drive`, `Dropbox`… si la carpeta está sincronizada con una nube; null si es local. */
+  cloudProvider: (path: string) => call<string | null>("fs_cloud_provider", { path }),
 
   /** Lanza un error legible: el llamador lo muestra al usuario. */
   async worktreeCreate(cwd: string, label: string): Promise<string> {
@@ -65,4 +80,13 @@ export const ipc = {
 /** Comillas POSIX: rutas con espacios o comillas llegan intactas a la shell. */
 export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Comillas de PowerShell: dentro de `'…'` solo la comilla simple se escribe
+ * doble. PowerShell también cierra con las tipográficas (`’`, como en
+ * «Jorge’s MacBook Air»): cada una se duplica tal cual, sin cambiar la ruta.
+ */
+export function powershellQuote(value: string): string {
+  return `'${value.replace(/['‘’‚‛]/g, (quote) => quote + quote)}'`;
 }

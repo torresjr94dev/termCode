@@ -10,7 +10,7 @@
  * funciones de `gitApi` dentro de la página.
  *
  *   pnpm e2e                 # todas
- *   pnpm e2e -- buscador     # solo las que contienen "buscador"
+ *   pnpm e2e -- buscador     # solo las que contienen "buscador" (varias: buscador,paleta)
  *   CHROME_PATH=… pnpm e2e   # otro Chrome/Chromium
  *
  * Al fallar, deja una captura en e2e/artifacts/<prueba>.png.
@@ -276,7 +276,39 @@ function makePage(cdp) {
     writeFileSync(join(ARTIFACTS, `${name}.png`), Buffer.from(data, "base64"));
   };
 
-  return { evaluate, run, waitFor, press, pressMod, shortcut, type, click, screenshot };
+  /** Rueda del ratón real (no un evento sintético de la página) en el centro de un elemento. */
+  const wheel = async (selector, deltaY) => {
+    const box = await evaluate(`(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    })()`);
+    if (!box) throw new Error(`No encontré ${selector} para la rueda`);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: box.x, y: box.y });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: box.x, y: box.y, deltaX: 0, deltaY });
+  };
+
+  /** Doble clic real (dos pulsaciones con clickCount 1 y 2), en el centro del primer elemento que coincide. */
+  const dblclick = async (selector, text) => {
+    const box = await evaluate(`(() => {
+      const els = [...document.querySelectorAll(${JSON.stringify(selector)})];
+      const el = ${text ? `els.find((e) => e.textContent.trim().includes(${JSON.stringify(text)}))` : "els[0]"};
+      if (!el) return null;
+      el.scrollIntoView({ block: "center" });
+      const r = el.getBoundingClientRect();
+      return { x: r.left + Math.min(40, r.width / 2), y: r.top + r.height / 2 };
+    })()`);
+    if (!box) throw new Error(`No encontré ${selector}${text ? ` con «${text}»` : ""} para el doble clic`);
+    const base = { x: box.x, y: box.y, button: "left" };
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: box.x, y: box.y });
+    for (const clickCount of [1, 2]) {
+      await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", clickCount, ...base });
+      await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", clickCount, ...base });
+    }
+  };
+
+  return { evaluate, run, waitFor, press, pressMod, shortcut, type, click, screenshot, wheel, dblclick };
 }
 
 /* ------------------------------------------------------------------ */
@@ -321,6 +353,95 @@ const TESTS = [
       await p.click("button", "Empezar");
       await p.waitFor(`!document.querySelector('[aria-labelledby="welcome-title"]')`, "la bienvenida se cierra");
       await p.waitFor(`document.querySelectorAll(".xterm").length === 1`, "hay una terminal");
+    },
+  },
+  {
+    name: "clear-no-tapa-salida",
+    async run(p) {
+      // El `clear` de macOS manda ESC[3J antes de ESC[H ESC[2J: la tarjeta va tras el borrado,
+      // nunca encima de lo que se imprime después. Y lo que limpia un programa (Vite) no la trae.
+      const r = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        const s = useTerminalStore.getState();
+        const id = s.tabs.find((t) => t.id === s.activeTabId)?.activePaneId;
+        const term = terminalManager.getTerminal(id);
+        const pane = document.querySelector('[data-pane-id="' + id + '"]');
+        const recv = (t) => terminalManager.receiveForTesting(id, t);
+        const settle = async () => { await new Promise((resolve) => term.write("", resolve)); await new Promise((r) => setTimeout(r, 250)); };
+        const prompt = "\\x1b]133;D;0\\x07\\x1b]7;file://h/Users/x/Kiosko\\x07\\x1b]133;A\\x07jorge@mac Kiosko % ";
+        const run = (cmd) => cmd + "\\r\\n\\x1b]633;E;" + cmd + "\\x07\\x1b]133;C\\x07";
+        recv(prompt + run("ls"));
+        for (let i = 0; i < 60; i++) recv("archivo-" + i + ".js\\r\\n");
+        recv(prompt + run("clear") + "\\x1b[3J\\x1b[H\\x1b[2J" + prompt + run("seq 30"));
+        for (let i = 0; i < 30; i++) recv("salida-" + i + "\\r\\n");
+        recv(prompt);
+        await settle();
+        const b = term.buffer.active;
+        const lines = [];
+        for (let y = 0; y < b.length; y++) lines.push(b.getLine(y)?.translateToString(true) ?? "");
+        // La decoración puede haber salido de la vista (xterm no la dibuja): se mide sobre el buffer.
+        const card = terminalManager.instances.get(id).welcomeCard;
+        const screen = pane.querySelector(".xterm-screen").getBoundingClientRect();
+        const cell = screen.height / term.rows;
+        const top = card ? card.marker.line : -1;
+        const height = Math.ceil(156 / cell);
+        const covered = card ? lines.slice(top, top + height).filter((l) => l.trim()) : [];
+        const cleared = { card: Boolean(card), top, covered, oldInHistory: lines.some((l) => l.includes("archivo-")) };
+
+        recv(prompt + run("npm run dev") + "\\x1b[2J\\x1b[3J\\x1b[H  VITE v6 listo\\r\\n");
+        for (let i = 0; i < 5; i++) recv("  ➜ linea " + i + "\\r\\n");
+        await settle();
+        // El ESC[3J de Vite borra el historial (y con él la tarjeta vieja): lo que no debe haber es una nueva.
+        const after = terminalManager.instances.get(id).welcomeCard;
+        return { cleared, viteCard: after !== null && after !== card };`);
+      await p.screenshot("clear-no-tapa-salida");
+      if (!r.cleared.card) throw new Error("clear no puso la tarjeta");
+      if (r.cleared.covered.length) throw new Error(`La tarjeta tapa salida: ${JSON.stringify(r.cleared.covered)}`);
+      if (r.cleared.oldInHistory) throw new Error("clear dejó la pantalla anterior en el historial");
+      if (r.viteCard) throw new Error("Vite trajo otra tarjeta encima de su salida");
+    },
+  },
+  {
+    name: "historial-largo",
+    async run(p) {
+      // Una salida más alta que el panel (un traceback largo) se recorre con la rueda.
+      const before = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        const s = useTerminalStore.getState();
+        const id = s.tabs.find((t) => t.id === s.activeTabId)?.activePaneId;
+        const lines = Array.from({ length: 300 }, (_, i) => "linea " + (i + 1) + " del traceback").join("\\r\\n");
+        terminalManager.receiveForTesting(id, lines + "\\r\\n% ");
+        const term = terminalManager.getTerminal(id);
+        await new Promise((resolve) => term.write("", resolve));
+        await new Promise((r) => setTimeout(r, 100));
+        return { id, baseY: term.buffer.active.baseY, viewportY: term.buffer.active.viewportY, rows: term.rows, length: term.buffer.active.length };`);
+      if (before.baseY < 200) throw new Error(`El historial no guardó las líneas: ${JSON.stringify(before)}`);
+      const pane = `[data-pane-id="${before.id}"] .xterm-screen`;
+      for (let i = 0; i < 6; i++) await p.wheel(pane, -400);
+      await new Promise((r) => setTimeout(r, 300));
+      const after = await p.run(`
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        const term = terminalManager.getTerminal(${JSON.stringify(before.id)});
+        return { viewportY: term.buffer.active.viewportY, baseY: term.buffer.active.baseY };`);
+      await p.screenshot("historial-largo");
+      if (after.viewportY >= before.viewportY) throw new Error(`La rueda no subió por el historial: ${JSON.stringify({ before, after })}`);
+
+      // Ctrl+L en zsh (ESC[H ESC[2J, sin ESC[3J) limpia la vista, no el historial: lo
+      // que estaba en pantalla sube al scrollback, como en Terminal.app e iTerm2.
+      const kept = await p.run(`
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        const id = ${JSON.stringify(before.id)};
+        const term = terminalManager.getTerminal(id);
+        terminalManager.receiveForTesting(id, "\\r\\nfinal del traceback: Invalid username or password.\\r\\n% ");
+        terminalManager.receiveForTesting(id, "\\x1b[H\\x1b[2J% mlx_lm.generate otra vez\\r\\n");
+        await new Promise((resolve) => term.write("", resolve));
+        const buffer = term.buffer.active;
+        const text = [];
+        for (let y = 0; y < buffer.length; y++) text.push(buffer.getLine(y)?.translateToString(true) ?? "");
+        return { last: text.some((l) => l.includes("Invalid username or password.")), tail: text.some((l) => l.includes("linea 300 del traceback")) };`);
+      if (!kept.last || !kept.tail) throw new Error(`Ctrl+L borró la salida en vez de subirla al historial: ${JSON.stringify(kept)}`);
     },
   },
   {
@@ -643,6 +764,304 @@ const TESTS = [
     },
   },
   {
+    name: "barra-lateral",
+    async run(p) {
+      // Sin backend: el sistema, la carpeta del panel y las carpetas recientes se inyectan.
+      await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { useSidebarStore } = await mod("/src/store/sidebarStore.ts");
+        const { useSystemStore } = await mod("/src/lib/system.ts");
+        const s = useTerminalStore.getState();
+        if (!s.isSidebarOpen) s.toggleSidebar();
+        const id = s.tabs.find((t) => t.id === s.activeTabId)?.activePaneId;
+        s.setPaneProject(id, { cwd: "/Users/e2e/dev/termCode/src", name: "termCode", root: "/Users/e2e/dev/termCode" });
+        useSidebarStore.getState().hydrate({ recent: [{ path: "/Users/e2e/dev/termCode", at: 2 }, { path: "/Users/e2e/dev/kiosko", at: 1 }], pinned: ["/Users/e2e/dev/kiosko"], collapsed: {} });
+        const GB = 1024 ** 3;
+        for (let i = 0; i < 30; i++) {
+          useSystemStore.getState().push({ cpuPercent: 20 + (i % 7) * 6, cpuCount: 10, memoryUsed: 11.2 * GB, memoryTotal: 16 * GB, swapUsed: 0, swapTotal: 0, memoryPressure: i > 25 ? "warn" : "normal", gpuPercent: i > 20 ? 85 : 4, gpuMemory: 2 * GB, top: [{ pid: 7, name: "Python", cpuPercent: 98.4, memory: 9.6 * GB }, { pid: 9, name: "termCode", cpuPercent: 3, memory: 0.4 * GB }] });
+        }`);
+      await p.waitFor(`document.querySelector('aside[aria-label="Sesiones"] [aria-current="page"]')?.textContent.includes("termCode / src")`, "la sesión dice en qué carpeta está");
+      await p.waitFor(`document.querySelector('section[aria-label="Carpetas"]')?.textContent.includes("kiosko")`, "las carpetas recientes y fijadas aparecen");
+      await p.waitFor(`document.querySelector('section[aria-label="Sistema"]')?.textContent.includes("presión alta")`, "el sistema muestra CPU, GPU, RAM y su presión");
+      const text = await p.evaluate(`document.querySelector('section[aria-label="Sistema"]').textContent`);
+      if (!/CPU/.test(text) || !/GPU/.test(text) || !/11\.2 \/ 16 GB/.test(text) || !/Python/.test(text)) throw new Error(`Sistema incompleto: ${text}`);
+      await p.screenshot("barra-lateral");
+      // Plegar recuerda el estado y deja de medir (la sección no se monta).
+      await p.click('section[aria-label="Sistema"] button[aria-expanded]');
+      await p.waitFor(`!document.querySelector('section[aria-label="Sistema"]').textContent.includes("RAM")`, "la sección se pliega");
+      await p.click('section[aria-label="Sistema"] button[aria-expanded]');
+      await p.run(`(await mod("/src/store/terminalStore.ts")).useTerminalStore.getState().toggleSidebar();`);
+    },
+  },
+  {
+    name: "proyecto-riel",
+    async run(p) {
+      await p.waitFor(`document.querySelector('aside[aria-label="Proyecto"]')`, "el panel de proyecto empieza abierto");
+      await p.click('aside[aria-label="Proyecto"] button[aria-label="Plegar panel de proyecto"]');
+      await p.waitFor(`document.querySelector('aside[aria-label="Proyecto (plegado)"]')`, "plegado queda el riel");
+      await p.screenshot("proyecto-riel");
+      await p.click('aside[aria-label="Proyecto (plegado)"] button[aria-label="Cambios"]');
+      await p.waitFor(`document.querySelector('aside[aria-label="Proyecto"] [role="tab"][aria-selected="true"]')?.textContent.includes("Cambios")`, "el riel abre la vista elegida");
+      await p.click('aside[aria-label="Proyecto"] [role="tab"]', "Archivos");
+    },
+  },
+  {
+    name: "doble-clic-cd",
+    async run(p) {
+      // Una shell propia: las pruebas anteriores pueden dejar un agente en el panel activo.
+      const tabs = await p.run(`return (await mod("/src/store/terminalStore.ts")).useTerminalStore.getState().tabs.length;`);
+      await p.shortcut("newTab");
+      await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        for (let i = 0; i < 50 && useTerminalStore.getState().tabs.length === ${tabs}; i++) await new Promise((r) => setTimeout(r, 40));`);
+      await p.run(`
+        const { gitApi } = await mod("/src/lib/git.ts");
+        const { useProjectStore } = await mod("/src/store/projectStore.ts");
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        const entry = (name, isDir) => ({ name, path: name, isDir, size: 0, ignored: false });
+        gitApi.list = async (_root, path) => (path === "" ? [entry("src", true), entry("README.md", false)] : []);
+        window.__sent = [];
+        window.__restore = { info: terminalManager.info, run: terminalManager.run };
+        terminalManager.info = async () => ({ shellPid: 1, foregroundPid: 1, foregroundName: "zsh", cwd: "/Users/e2e/repo", busy: false });
+        terminalManager.run = (id, line) => window.__sent.push(line);
+        useProjectStore.setState({ isOpen: true, tab: "files", cwd: "/Users/e2e/repo", repo: { root: "/Users/e2e/repo", name: "repo", remoteUrl: null, webUrl: null, host: "other", defaultBranch: "main" }, tree: {}, expanded: {} });`);
+      await p.waitFor(`[...document.querySelectorAll('[role="tree"] button')].some((b) => b.textContent.includes("src"))`, "el árbol muestra la carpeta");
+      await p.dblclick('[role="tree"] button', "src");
+      const sent = await p.waitFor(`window.__sent.length && window.__sent`, "el doble clic hace cd en la terminal");
+      if (sent[0] !== "\x05\x15cd '/Users/e2e/repo/src'") throw new Error(`cd inesperado: ${JSON.stringify(sent)}`);
+      const expanded = await p.evaluate(`[...document.querySelectorAll('[role="treeitem"]')].find((li) => li.textContent.includes("src"))?.getAttribute("aria-expanded")`);
+      if (expanded !== "true") throw new Error(`El doble clic dejó la carpeta plegada (aria-expanded=${expanded})`);
+
+      // Migas de pan: el tramo de arriba lleva ahí; con algo corriendo, se abre una pestaña en vez de teclear.
+      await p.run(`
+        const { useProjectStore } = await mod("/src/store/projectStore.ts");
+        useProjectStore.setState({ cwd: "/Users/e2e/repo/src" });`);
+      await p.waitFor(`document.querySelector('nav[aria-label="Carpeta de la terminal"]')?.textContent.includes("src")`, "las migas muestran la carpeta");
+      await p.click('nav[aria-label="Carpeta de la terminal"] button', "repo");
+      await p.waitFor(`window.__sent.length === 2`, "la miga hace cd");
+      const tabsBefore = await p.run(`return (await mod("/src/store/terminalStore.ts")).useTerminalStore.getState().tabs.length;`);
+      await p.run(`
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        terminalManager.info = async () => ({ shellPid: 1, foregroundPid: 2, foregroundName: "vim", cwd: "/Users/e2e/repo", busy: true });`);
+      await p.dblclick('[role="tree"] button', "src");
+      await p.waitFor(`document.body.textContent.includes("vim sigue corriendo")`, "avisa que no tecleó encima de vim");
+      const after = await p.run(`return { tabs: (await mod("/src/store/terminalStore.ts")).useTerminalStore.getState().tabs.length, sent: window.__sent.length };`);
+      if (after.tabs !== tabsBefore + 1 || after.sent !== 2) throw new Error(`Con vim corriendo no debía teclear: ${JSON.stringify({ tabsBefore, after })}`);
+      await p.screenshot("doble-clic-cd");
+      await p.run(`
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        Object.assign(terminalManager, window.__restore);
+        const { useProjectStore } = await mod("/src/store/projectStore.ts");
+        useProjectStore.setState({ cwd: null, repo: null, tree: {}, expanded: {} });`);
+      // La pestaña que abrió el aviso de vim y la shell de esta prueba.
+      await p.shortcut("closePane");
+      await p.shortcut("closePane");
+    },
+  },
+  {
+    name: "detalle-sistema",
+    async run(p) {
+      await p.run(`
+        const { useSystemStore } = await mod("/src/lib/system.ts");
+        const GB = 1024 ** 3;
+        for (let i = 0; i < 20; i++) useSystemStore.getState().push({ cpuPercent: 30 + i, cpuCount: 8, cpuCores: [90, 10, 20, 5, 70, 40, 15, 2], loadAverage: [2.1, 1.8, 1.5], uptimeSecs: 93784, memoryUsed: 12 * GB, memoryTotal: 16 * GB, memoryAvailable: 4 * GB, swapUsed: GB, swapTotal: 4 * GB, memoryPressure: "warn", gpuPercent: 55, gpuMemory: 3 * GB, top: [] });`);
+      await p.waitFor(`document.querySelector("[data-system-trigger]")`, "la barra de estado muestra el sistema");
+      await p.click("footer [data-system-trigger]");
+      await p.waitFor(`document.querySelector('[role="dialog"][aria-label="Detalle del sistema"]')`, "el clic abre el detalle");
+      const text = await p.evaluate(`document.querySelector('[aria-label="Detalle del sistema"]').textContent`);
+      for (const want of ["8 núcleos", "encendido hace 1 d 2 h", "carga 2.10 · 1.80 · 1.50", "presión alta", "disponible 4.0 GB"]) {
+        if (!text.includes(want)) throw new Error(`Falta «${want}» en el detalle: ${text}`);
+      }
+      const cores = await p.evaluate(`document.querySelectorAll('[aria-label^="Uso por núcleo"] > span').length`);
+      if (cores !== 8) throw new Error(`Se esperaban 8 núcleos, hay ${cores}`);
+      await p.screenshot("detalle-sistema");
+      await p.press("Escape");
+      await p.waitFor(`!document.querySelector('[aria-label="Detalle del sistema"]')`, "Esc lo cierra");
+    },
+  },
+  {
+    name: "terminal-del-agente",
+    async run(p) {
+      // Un panel de agente (sin backend no corre nada; el layout es lo que se prueba).
+      await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        useTerminalStore.getState().createTab({ title: "Claude Code", agentType: "claude", command: "claude", cwd: "/Users/e2e/repo" });`);
+      await p.waitFor(`[...document.querySelectorAll("button")].some((b) => b.textContent.trim() === "terminal")`, "el agente ofrece su terminal");
+      await p.shortcut("agentShell");
+      await p.waitFor(`document.querySelector('section[aria-label="Terminal acoplada"] .xterm')`, "⌘L abre la terminal acoplada con su xterm");
+      const layout = await p.evaluate(`(() => {
+        const pane = [...document.querySelectorAll("[data-pane-id]")].find((el) => el.offsetParent !== null);
+        const drawer = pane.querySelector('section[aria-label="Terminal acoplada"]').getBoundingClientRect();
+        const agent = pane.querySelector(".xterm").getBoundingClientRect();
+        return { drawerTop: drawer.top, agentBottom: agent.bottom, ratio: drawer.height / pane.getBoundingClientRect().height, panes: document.querySelectorAll("[data-pane-id]").length };
+      })()`);
+      if (layout.agentBottom > layout.drawerTop + 1) throw new Error(`La terminal tapa al agente: ${JSON.stringify(layout)}`);
+      if (layout.ratio < 0.2 || layout.ratio > 0.5) throw new Error(`Alto inesperado de la terminal: ${JSON.stringify(layout)}`);
+      await p.screenshot("terminal-del-agente");
+      // Plegar deja la barra (la shell sigue viva) y no divide el panel.
+      await p.click('section[aria-label="Terminal acoplada"] button[aria-label="Plegar la terminal"]');
+      await p.waitFor(`!document.querySelector('section[aria-label="Terminal acoplada"]') && document.querySelector("[data-drawer] button[aria-label='Mostrar la terminal']")`, "plegada queda la barra");
+      await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        const s = useTerminalStore.getState();
+        const tab = s.tabs.find((t) => t.id === s.activeTabId);
+        const pane = tab.root;
+        if (!terminalManager.getTerminal(pane.drawer.id)) throw new Error("plegar mató la shell acoplada");
+        s.closeTab(tab.id);
+        if (terminalManager.getTerminal(pane.drawer.id)) throw new Error("cerrar el agente dejó viva su shell acoplada");`);
+    },
+  },
+  {
+    name: "salida-en-el-visor",
+    async run(p) {
+      await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        const s = useTerminalStore.getState();
+        const id = s.tabs.find((t) => t.id === s.activeTabId)?.activePaneId;
+        const term = terminalManager.getTerminal(id);
+        const recv = (t) => terminalManager.receiveForTesting(id, t);
+        recv("\\x1b]133;A\\x07% pnpm test\\r\\n\\x1b]633;E;pnpm test\\x07\\x1b]133;C\\x07");
+        for (let i = 0; i < 400; i++) recv("linea " + i + " de la salida\\r\\n");
+        recv("FAIL src/a.test.ts\\r\\n\\x1b]133;D;1\\x07\\x1b]133;A\\x07% ");
+        await new Promise((resolve) => term.write("", resolve));`);
+      await p.waitFor(`[...document.querySelectorAll("footer button")].some((b) => b.textContent.includes("Explicar"))`, "un ✗ ofrece explicarse");
+      await p.click("footer button", "pnpm test");
+      await p.waitFor(`document.querySelector('[data-viewer] .cm-content')`, "la salida se abre en el visor");
+      const viewer = await p.evaluate(`(() => {
+        const v = document.querySelector("[data-viewer]");
+        return { header: v.textContent.slice(0, 200), lines: v.querySelector(".cm-content").cmView?.view?.state.doc.lines ?? null, text: v.textContent };
+      })()`);
+      if (!viewer.header.includes("código 1") || !viewer.text.includes("Explicar este error")) throw new Error(`Encabezado incompleto: ${viewer.header}`);
+      await p.screenshot("salida-en-el-visor");
+      await p.press("Escape");
+      await p.waitFor(`!document.querySelector("[data-viewer]")`, "Esc cierra el visor");
+    },
+  },
+  {
+    name: "servidor-ssh",
+    async run(p) {
+      await p.run(`(await mod("/src/store/uiStore.ts")).useUiStore.getState().setSshDialog({});`);
+      await p.waitFor(`document.querySelector('form[aria-labelledby="ssh-title"]')`, "se abre el diálogo");
+      if (await p.evaluate(`!!document.querySelector('form[aria-labelledby="ssh-title"] input[type="password"]')`)) throw new Error("No debe pedir contraseña");
+      // Un host que ssh leería como opción no se guarda: el error va junto al campo.
+      await p.evaluate(`(() => {
+        const set = (id, value) => { const el = document.getElementById(id); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set; setter.call(el, value); el.dispatchEvent(new Event("input", { bubbles: true })); };
+        set("ssh-name", "Producción");
+        set("ssh-host", "-oProxyCommand=sh");
+        return true;
+      })()`);
+      await p.click('form[aria-labelledby="ssh-title"] button[type="submit"]');
+      await p.waitFor(`document.getElementById("ssh-host-error")`, "el error del host aparece junto al campo");
+      await p.screenshot("servidor-ssh");
+      await p.evaluate(`(() => {
+        const el = document.getElementById("ssh-host"); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+        setter.call(el, "10.0.0.5"); el.dispatchEvent(new Event("input", { bubbles: true })); return true;
+      })()`);
+      await p.click('form[aria-labelledby="ssh-title"] button[type="submit"]');
+      await p.waitFor(`!document.querySelector('form[aria-labelledby="ssh-title"]')`, "se guarda y se cierra");
+      const saved = await p.run(`return (await mod("/src/store/sidebarStore.ts")).useSidebarStore.getState().servers.map((s) => s.host);`);
+      if (JSON.stringify(saved) !== JSON.stringify(["10.0.0.5"])) throw new Error(`Servidores: ${JSON.stringify(saved)}`);
+    },
+  },
+  {
+    name: "workspace-confianza",
+    async run(p) {
+      await p.run(`
+        const { gitApi } = await mod("/src/lib/git.ts");
+        const { useProjectStore } = await mod("/src/store/projectStore.ts");
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        window.__ran = [];
+        window.__restoreRun = terminalManager.runWhenReady;
+        terminalManager.runWhenReady = (id, line) => window.__ran.push(line);
+        gitApi.read = async () => ({ text: JSON.stringify({ name: "Kiosko", panes: [{ title: "dev", run: "npm run dev" }, { run: "npm test", split: "down" }] }), size: 90, truncated: false, binary: false, utf8: true, version: "1", absolute: "/repo/.termcode.json" });
+        useProjectStore.setState({ cwd: "/repo", repo: { root: "/repo", name: "repo", remoteUrl: null, webUrl: null, host: "other", defaultBranch: "main" } });
+        void (await mod("/src/lib/workspace.ts")).openWorkspace();`);
+      await p.waitFor(`document.getElementById("confirm-body")?.textContent.includes("$ npm run dev")`, "pide confianza mostrando los comandos exactos");
+      const focus = await p.evaluate(`document.activeElement?.textContent.trim()`);
+      if (!focus.startsWith("Cancelar")) throw new Error(`El foco debe empezar en Cancelar, está en «${focus}»`);
+      if (await p.evaluate(`window.__ran.length`)) throw new Error("Ejecutó algo antes de aprobar");
+      await p.screenshot("workspace-confianza");
+      await p.click('[role="alertdialog"] button', "Confiar y abrir");
+      await p.waitFor(`window.__ran.length === 2`, "con tu sí, abre los paneles y escribe sus comandos");
+      const ran = await p.evaluate(`window.__ran`);
+      if (ran.join("|") !== "npm run dev|npm test") throw new Error(`Comandos: ${JSON.stringify(ran)}`);
+      const panes = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { collectPanes } = await mod("/src/lib/layout.ts");
+        const s = useTerminalStore.getState();
+        return collectPanes(s.tabs.find((t) => t.id === s.activeTabId).root).length;`);
+      if (panes !== 2) throw new Error(`Se esperaban 2 paneles, hay ${panes}`);
+      await p.run(`
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        terminalManager.runWhenReady = window.__restoreRun;
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const s = useTerminalStore.getState();
+        s.closeTab(s.activeTabId);
+        (await mod("/src/store/projectStore.ts")).useProjectStore.setState({ cwd: null, repo: null, tree: {}, expanded: {} });`);
+    },
+  },
+  {
+    name: "arranque-lento",
+    async run(p) {
+      // Una zsh que no da su prompt: el panel dice cuánto lleva, y se va en cuanto llega el prompt.
+      const id = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        useTerminalStore.getState().setShells([{ name: "zsh", path: "/bin/zsh", args: ["-l"], default: true }]);
+        useTerminalStore.getState().createTab({ cwd: "/Users/e2e" });
+        const s = useTerminalStore.getState();
+        const id = s.tabs.find((t) => t.id === s.activeTabId).activePaneId;
+        for (let i = 0; i < 50 && !terminalManager.instances.get(id); i++) await new Promise((r) => setTimeout(r, 40));
+        const inst = terminalManager.instances.get(id);
+        inst.isShell = true;
+        inst.spawnedAt = Date.now() - 5000;
+        return id;`);
+      await p.waitFor(`document.querySelector('[data-pane-id="${id}"] [role="status"]')?.textContent.includes("zsh lleva")`, "avisa que la shell no arranca", 4000);
+      await p.screenshot("arranque-lento");
+      await p.run(`(await mod("/src/terminal/TerminalManager.ts")).terminalManager.receiveForTesting(${JSON.stringify(id)}, "\\x1b]133;A\\x07% ");`);
+      await p.waitFor(`!document.querySelector('[data-pane-id="${id}"] [role="status"]')`, "el aviso se va con el primer prompt", 3000);
+      await p.shortcut("closePane");
+    },
+  },
+  {
+    name: "cabecera-angosta",
+    async run(p) {
+      // Un agente en un panel angosto: contexto, costo y el botón de terminal nunca se enciman.
+      const id = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const st = useTerminalStore.getState();
+        st.createTab({ title: "Claude Code", agentType: "claude", command: "claude", cwd: "/Users/e2e/un/proyecto/con/ruta/larga" });
+        const s = useTerminalStore.getState();
+        const id = s.tabs.find((t) => t.id === s.activeTabId).activePaneId;
+        s.setAgentStatus({ paneId: id, model: "Opus 5.5 (1M context)", contextPercent: 0, costUsd: 0.01 });
+        s.splitPane(id, "horizontal", {});
+        s.splitPane(id, "horizontal", {});
+        return id;`);
+      await p.waitFor(`document.querySelector('[data-pane-id="${id}"] button[aria-pressed]')`, "el botón de terminal está");
+      const boxes = await p.evaluate(`(() => {
+        const header = document.querySelector('[data-pane-id="${id}"] > div');
+        // Los botones que flotan al pasar el cursor se superponen a propósito: no cuentan.
+        const items = [...header.children].filter((el) => el.offsetParent !== null && getComputedStyle(el).display !== "none" && getComputedStyle(el).position !== "absolute" && el.getBoundingClientRect().width > 0);
+        const box = header.getBoundingClientRect();
+        const rects = items.map((el) => ({ text: (el.innerText ?? "").trim(), left: Math.round(el.getBoundingClientRect().left), right: Math.round(el.getBoundingClientRect().right) }));
+        return { width: Math.round(box.width), right: Math.round(box.right), rects };
+      })()`);
+      const last = boxes.rects[boxes.rects.length - 1];
+      if (last.right > boxes.right) throw new Error(`Se sale de la cabecera en ${boxes.width}px: ${JSON.stringify(boxes)}`);
+      for (let i = 1; i < boxes.rects.length; i++) {
+        if (boxes.rects[i].left < boxes.rects[i - 1].right - 1) throw new Error(`Se enciman en ${boxes.width}px: ${JSON.stringify(boxes.rects)}`);
+      }
+      if (!boxes.rects.some((r) => /\d+%/.test(r.text))) throw new Error(`El contexto debe verse siempre: ${JSON.stringify(boxes.rects)}`);
+      await p.screenshot("cabecera-angosta");
+      await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const s = useTerminalStore.getState();
+        s.closeTab(s.activeTabId);`);
+    },
+  },
+  {
     name: "bienvenida-pestana",
     async run(p) {
       await p.shortcut("newTab");
@@ -675,9 +1094,12 @@ const TESTS = [
         return { widths: cards.map((c) => c.getBoundingClientRect().width), text: cards.map((c) => c.textContent).join("|") };
       })()`);
       if (!after.widths.every((w) => w < widthBefore) || !after.text.includes("termCode")) throw new Error(`Las tarjetas no se reacomodaron: ${JSON.stringify({ widthBefore, after })}`);
+      // La tarjeta que nació completa no se aplasta: pasa a la compacta, igual que la del panel nuevo.
+      const heights = await p.evaluate(`[...document.querySelectorAll(".welcome-card")].filter((c) => c.offsetParent !== null).map((c) => Math.round(c.getBoundingClientRect().height))`);
+      if (new Set(heights).size !== 1) throw new Error(`Las tarjetas divididas deberían verse iguales: ${JSON.stringify(heights)}`);
       await p.screenshot("bienvenida-dividida");
 
-      // `clear` (lo que emite el comando: ESC[H ESC[2J ESC[3J) vuelve a poner la tarjeta arriba.
+      // `clear` escrito en la shell (lo que emite en Linux: ESC[H ESC[2J ESC[3J) vuelve a poner la tarjeta arriba.
       const cleared = await p.run(`
         const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
         const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
@@ -686,7 +1108,7 @@ const TESTS = [
         const pane = document.querySelector('[data-pane-id="' + id + '"]');
         const before = pane.querySelector(".welcome-card");
         terminalManager.receiveForTesting(id, "ls\\r\\nuno dos tres\\r\\n");
-        terminalManager.receiveForTesting(id, "\x1b[H\x1b[2J\x1b[3J% ");
+        terminalManager.receiveForTesting(id, "clear\\r\\n\\x1b]633;E;clear\\x07\\x1b]133;C\\x07\\x1b[H\\x1b[2J\\x1b[3J\\x1b]133;D;0\\x07\\x1b]133;A\\x07% ");
         for (let i = 0; i < 50; i++) {
           const now = pane.querySelector(".welcome-card");
           if (now && now !== before) break;
@@ -716,7 +1138,9 @@ async function main() {
     process.exit(1);
   }, RUN_TIMEOUT_MS);
   watchdog.unref();
-  const selected = TESTS.filter((t) => !filter || t.name.includes(filter));
+  // Varias separadas por coma: `pnpm e2e -- clear,bienvenida`.
+  const filters = filter ? filter.split(",").filter(Boolean) : [];
+  const selected = TESTS.filter((t) => !filters.length || filters.some((f) => t.name.includes(f)));
   if (!selected.length) throw new Error(`Ninguna prueba coincide con «${filter}».`);
 
   const vite = startVite();
@@ -752,6 +1176,9 @@ async function main() {
     for (const test of TESTS) {
       if (!selected.includes(test) && test.name !== "bienvenida-primera-vez") continue;
       const started = Date.now();
+      // Chrome headless a veces marca la página como oculta tras una tecla (p. ej. Esc al cerrar un
+      // popover) y entonces deja de correr requestAnimationFrame: xterm no pinta. Al frente, siempre.
+      await cdp.send("Page.bringToFront").catch(() => {});
       try {
         await Promise.race([
           test.run(page),

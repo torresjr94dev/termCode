@@ -9,9 +9,10 @@ export const ConfirmDialog: React.FC<{ onSettled: () => void }> = ({ onSettled }
   const request = useUiStore((s) => s.confirm);
   const resolve = useUiStore((s) => s.resolveConfirm);
   const confirmRef = useRef<HTMLButtonElement | null>(null);
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
-    if (request) confirmRef.current?.focus();
+    if (request) (request.safeDefault ? cancelRef : confirmRef).current?.focus();
   }, [request]);
 
   if (!request) return null;
@@ -47,16 +48,17 @@ export const ConfirmDialog: React.FC<{ onSettled: () => void }> = ({ onSettled }
             <h2 id="confirm-title" className="text-[13px] font-medium text-ink">
               {request.title}
             </h2>
-            <p id="confirm-body" className="mt-1 text-[12px] leading-relaxed text-ink-2">
+            <p id="confirm-body" className="mt-1 whitespace-pre-line text-[12px] leading-relaxed text-ink-2">
               {request.body}
             </p>
           </div>
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-line bg-chrome px-3 py-2.5">
           <button
+            ref={cancelRef}
             type="button"
             onClick={() => settle(false)}
-            className="flex h-7 items-center gap-2 rounded-md px-2.5 text-[12px] text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
+            className="flex h-7 items-center gap-2 rounded-md px-2.5 text-[12px] text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-accent"
           >
             Cancelar <Kbd>esc</Kbd>
           </button>
@@ -66,7 +68,7 @@ export const ConfirmDialog: React.FC<{ onSettled: () => void }> = ({ onSettled }
             onClick={() => settle(true)}
             className="flex h-7 items-center gap-2 rounded-md bg-signal px-3 text-[12px] font-medium text-on-accent transition-opacity duration-150 hover:opacity-90"
           >
-            {request.confirmLabel} <Kbd className="text-on-accent/70">↵</Kbd>
+            {request.confirmLabel} {!request.safeDefault && <Kbd className="text-on-accent/70">↵</Kbd>}
           </button>
         </div>
       </div>

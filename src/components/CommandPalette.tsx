@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
-import {
+import { LayoutTemplate, Server, ScrollText,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -39,6 +39,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useTerminalStore } from "../store/terminalStore";
+import { explainFailure, openOutput } from "../lib/output";
+import { describeServer, sshAliasCommand, sshServerCommand } from "../lib/ssh";
+import { copyWorkspaceTemplate, openWorkspace } from "../lib/workspace";
+import { useSidebarStore } from "../store/sidebarStore";
 import { actions, AGENTS } from "../lib/actions";
 import { commit, generateCommitMessage, openBranchPicker, openProject, pull, push, reviewAgent, stashPush } from "../lib/project";
 import { useUiStore } from "../store/uiStore";
@@ -88,17 +92,50 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const fontSize = useSettingsStore((s) => s.settings.fontSize);
   const currentTheme = useSettingsStore((s) => s.settings.theme);
   const agents = useTerminalStore((s) => s.agents);
+  const shells = useTerminalStore((s) => s.shells);
+  const sshHosts = useSidebarStore((s) => s.sshHosts);
+  const servers = useSidebarStore((s) => s.servers);
   const repo = useProjectStore((s) => s.repo);
+  const activePaneId = tabs.find((t) => t.id === activeTabId)?.activePaneId;
 
   const commands = useMemo<Command[]>(
     () => [
       { id: "new-tab", group: "Sesión", title: "Nueva pestaña", icon: Plus, shortcut: sc("newTab"), run: actions.newTab },
+      ...(shells ?? [])
+        .filter((shell) => !shell.default)
+        .map<Command>((shell) => ({
+          id: `shell-${shell.path}`,
+          group: "Sesión",
+          title: `Nueva pestaña con ${shell.name}`,
+          hint: shell.path,
+          icon: Plus,
+          run: () => void actions.newTabWith(shell),
+        })),
+      ...servers.map<Command>((server) => ({
+        id: `ssh-${server.id}`,
+        group: "SSH",
+        title: `Conectar a ${server.name}`,
+        hint: describeServer(server.user || null, server.host, server.port),
+        icon: Server,
+        run: () => actions.connectSsh(server.name, sshServerCommand(server)),
+      })),
+      ...sshHosts.map<Command>((host) => ({
+        id: `ssh-config-${host.alias}`,
+        group: "SSH",
+        title: `Conectar a ${host.alias}`,
+        hint: describeServer(host.user, host.hostName ?? host.alias, host.port),
+        icon: Server,
+        run: () => actions.connectSsh(host.alias, sshAliasCommand(host.alias)),
+      })),
+      { id: "ssh-add", group: "SSH", title: "Agregar servidor SSH…", icon: Server, run: () => useUiStore.getState().setSshDialog({}) },
       { id: "split-right", group: "Sesión", title: "Dividir a la derecha", icon: Columns2, shortcut: sc("splitRight"), run: actions.splitRight },
       { id: "split-down", group: "Sesión", title: "Dividir hacia abajo", icon: Rows2, shortcut: sc("splitDown"), run: actions.splitDown },
       { id: "next-pane", group: "Sesión", title: "Panel siguiente", icon: ArrowRight, shortcut: sc("nextPane"), run: () => actions.focusPaneOffset(1) },
       { id: "prev-pane", group: "Sesión", title: "Panel anterior", icon: ArrowLeft, shortcut: sc("prevPane"), run: () => actions.focusPaneOffset(-1) },
       { id: "close-pane", group: "Sesión", title: "Cerrar panel", icon: X, shortcut: sc("closePane"), run: () => actions.closePane() },
       { id: "find", group: "Sesión", title: "Buscar en el terminal", icon: TextSearch, shortcut: sc("find"), run: actions.toggleFind },
+      { id: "output", group: "Sesión", title: "Ver salida del último comando", hint: "completa, con búsqueda", icon: ScrollText, run: () => activePaneId && openOutput(activePaneId) },
+      { id: "explain", group: "Agentes", title: "Explicar el último error", hint: "comando y salida al agente", icon: Sparkles, run: () => activePaneId && explainFailure(activePaneId) },
 
       ...(["claude", "codex"] as const).flatMap<Command>((agent) => {
         const icon = agent === "claude" ? Asterisk : Hexagon;
@@ -116,6 +153,8 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       { id: "review-agent", group: "Agentes", title: "Revisar cambios del agente", hint: "desde tu último mensaje", icon: Eye, run: () => void reviewNearestAgent() },
       { id: "send-selection", group: "Agentes", title: "Enviar selección al agente", hint: "pega el texto seleccionado", icon: Send, run: actions.sendSelectionToAgent },
 
+      { id: "workspace-open", group: "Proyecto", title: "Abrir workspace del proyecto", hint: ".termcode.json", icon: LayoutTemplate, run: () => void openWorkspace() },
+      { id: "workspace-template", group: "Proyecto", title: "Copiar plantilla de .termcode.json", hint: "paneles del proyecto ya armados", icon: LayoutTemplate, run: () => void copyWorkspaceTemplate() },
       { id: "find-file", group: "Proyecto", title: "Buscar archivo…", icon: FileSearch, shortcut: sc("fileFinder"), run: () => useUiStore.getState().setFinderOpen(true) },
 
       ...(repo
@@ -174,7 +213,7 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         run: () => actions.goToTab(index),
       })),
     ],
-    [tabs, activeTabId, isBroadcastEnabled, isSidebarOpen, fontSize, agents, repo, currentTheme],
+    [tabs, activeTabId, activePaneId, isBroadcastEnabled, isSidebarOpen, fontSize, agents, shells, sshHosts, servers, repo, currentTheme],
   );
 
   const filtered = useMemo(() => {

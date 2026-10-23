@@ -5,10 +5,13 @@ import { QuickApp } from "./QuickApp";
 import { loadSettings, startSettingsSync } from "./lib/settings";
 import { startUpdateChecks } from "./lib/updates";
 import { useTerminalStore } from "./store/terminalStore";
+import { useProjectStore } from "./store/projectStore";
 import { startBridge } from "./lib/bridge";
 import { IS_MAC, IS_WINDOWS } from "./lib/shortcuts";
 import { startProjectTracking } from "./lib/project";
 import { loadSession, startAutosave } from "./lib/persistence";
+import { loadSidebar, startSidebarAutosave } from "./lib/sidebar";
+import { loadBuffers, startBufferAutosave } from "./lib/buffers";
 import { IS_TAURI } from "./lib/ipc";
 import { invoke } from "@tauri-apps/api/core";
 import { error as logError, info as logInfo } from "@tauri-apps/plugin-log";
@@ -67,8 +70,12 @@ async function boot(root: HTMLElement) {
     isQuick ? Promise.resolve(null) : loadSession(),
     loadSettings(),
     waitForTerminalFont(),
+    isQuick ? Promise.resolve() : loadSidebar(),
   ]);
   if (session) useTerminalStore.getState().hydrate(session);
+  if (session?.isProjectOpen !== undefined) useProjectStore.getState().set({ isOpen: session.isProjectOpen });
+  // Antes del primer render: los paneles restaurados se pintan con lo que tenían.
+  if (session) await loadBuffers();
 
   // Glass real solo donde hay material detrás. En el resto, o con "reducir
   // transparencia" (macOS) / "efectos de transparencia" apagados (Windows), Neón
@@ -86,6 +93,8 @@ async function boot(root: HTMLElement) {
   startBridge({ isMainWindow: !isQuick });
   if (!isQuick) {
     startAutosave();
+    startSidebarAutosave();
+    startBufferAutosave();
     startProjectTracking();
     startUpdateChecks();
   }

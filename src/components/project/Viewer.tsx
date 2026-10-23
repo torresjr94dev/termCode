@@ -4,13 +4,20 @@ import { closeViewer, stepDiff } from "../../lib/project";
 import { DiffView } from "./viewer/DiffView";
 import { FileView } from "./viewer/FileView";
 import { ConflictView } from "./viewer/ConflictView";
+import { OutputView } from "./viewer/OutputView";
 
 /** Hoja sobre el área de terminales: diff de un archivo o vista previa. Esc cierra. */
 export const Viewer: React.FC = () => {
   const viewer = useProjectStore((s) => s.viewer);
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
-  const target = viewer ? (viewer.kind === "diff" ? viewer.source : `${viewer.kind}:${viewer.path}`) : null;
+  const target = viewer
+    ? viewer.kind === "diff"
+      ? viewer.source
+      : viewer.kind === "output"
+        ? `output:${viewer.id}`
+        : `${viewer.kind}:${viewer.path}`
+    : null;
   useEffect(() => {
     // El foco pasa al visor: las teclas dejan de ir a la terminal.
     if (target) bodyRef.current?.focus();
@@ -26,7 +33,9 @@ export const Viewer: React.FC = () => {
           ? `Diff de ${viewer.source.path}`
           : viewer.kind === "conflict"
             ? `Conflicto en ${viewer.path}`
-            : `Archivo ${viewer.path}`
+            : viewer.kind === "output"
+              ? `Salida de ${viewer.command}`
+              : `Archivo ${viewer.path}`
       }
       data-viewer
       onKeyDown={(e) => {
@@ -44,6 +53,7 @@ export const Viewer: React.FC = () => {
       {viewer.kind === "diff" && <DiffView viewer={viewer} bodyRef={bodyRef} />}
       {viewer.kind === "file" && <FileView viewer={viewer} bodyRef={bodyRef} />}
       {viewer.kind === "conflict" && <ConflictView key={viewer.path} viewer={viewer} bodyRef={bodyRef} />}
+      {viewer.kind === "output" && <OutputView key={viewer.id} viewer={viewer} bodyRef={bodyRef} />}
     </div>
   );
 };
