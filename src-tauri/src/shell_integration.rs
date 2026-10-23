@@ -240,6 +240,9 @@ mod tests {
         }
         // The user's own config still runs (and a hostile PS1 does not matter).
         std::fs::write(user.join(".zshrc"), "PS1='user> '\nexport FROM_USER_RC=1\n").unwrap();
+        // /etc/zsh/zshrc de Debian y Ubuntu corre compinit, que pregunta y espera
+        // si una carpeta de $fpath tiene permisos laxos (las del runner de GitHub).
+        std::fs::write(user.join(".zshenv"), "skip_global_compinit=1\n").unwrap();
 
         let mgr = PtyManager::default();
         let (tx, rx) = mpsc::channel();
