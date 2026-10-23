@@ -1,0 +1,28 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "termCode",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 520,
+        "minHeight": 320
+      }
+    ]
+  },
+  "bundle": {
+    "category": "DeveloperTool",
+    "longDescription": "A terminal for running several coding agents at once (Claude Code and Codex CLI) without losing sight of your repo: see what each agent is doing, approve its permissions from any pane, review its changes line by line and compare solutions side by side.",
+    "linux": {
+      "deb": {
+        "section": "devel",
+        "recommends": ["git", "lsof", "xdg-utils"]
+      },
+      "rpm": {
+        "recommends": ["git", "lsof", "xdg-utils"]
+      }
+    }
+  }
+}

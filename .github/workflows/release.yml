@@ -1,8 +1,9 @@
 name: Release
 
-# git tag v0.2.0 && git push --tags → borrador de release con el .dmg universal
-# y los instaladores de Windows (NSIS .exe y .msi). Los archivos no llevan la
-# versión en el nombre (termCode_universal.dmg, termCode_x64-setup.exe), así
+# git tag v0.2.0 && git push --tags → borrador de release con el .dmg universal,
+# los instaladores de Windows (NSIS .exe y .msi) y los de Linux (AppImage, .deb y
+# .rpm, en x86_64 y ARM). Los archivos no llevan la versión en el nombre
+# (termCode_universal.dmg, termCode_x64-setup.exe, termCode_amd64.AppImage), así
 # releases/latest/download/<archivo> siempre baja la última versión publicada.
 on:
   push:
@@ -149,4 +150,59 @@ jobs:
           releaseAssetNamePattern: "[name]_[arch][setup][ext]"
           # La landing enlaza el instalador NSIS; el updater usa el mismo.
           updaterJsonPreferNsis: true
+          args: ${{ steps.updater.outputs.args }}
+
+  linux:
+    needs: draft
+    strategy:
+      # Que un fallo en ARM no cancele la de x86_64 (ni al revés).
+      fail-fast: false
+      matrix:
+        # 22.04 (glibc 2.35): lo compilado aquí corre en Ubuntu 22.04+, Debian 12+
+        # y Fedora 36+. Compilado en 24.04 exigiría glibc 2.39.
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      # patchelf: lo pide el AppImage. jq: la imagen de ARM no siempre lo trae.
+      - name: Dependencias de Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev patchelf jq
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: pnpm install --frozen-lockfile
+      - name: Configurar el updater
+        id: updater
+        shell: bash
+        env:
+          PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBKEY" ]; then
+            echo "::warning::Sin TAURI_SIGNING_PRIVATE_KEY o TAURI_UPDATER_PUBKEY: esta release no se actualizará sola."
+            exit 0
+          fi
+          conf="$RUNNER_TEMP/updater.conf.json"
+          jq -n --arg pubkey "$PUBKEY" --arg url "https://github.com/$REPO/releases/latest/download/latest.json" \
+            '{bundle: {createUpdaterArtifacts: true}, plugins: {updater: {pubkey: $pubkey, endpoints: [$url]}}}' > "$conf"
+          echo "args=--config $conf" >> "$GITHUB_OUTPUT"
+      # AppImage, .deb y .rpm. El updater busca primero el de su formato
+      # (linux-x86_64-deb…) y el AppImage queda como linux-x86_64.
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ needs.draft.outputs.id }}
+          tagName: ${{ github.ref_name }}
+          releaseDraft: true
+          releaseAssetNamePattern: "[name]_[arch][setup][ext]"
           args: ${{ steps.updater.outputs.args }}

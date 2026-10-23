@@ -6,6 +6,7 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ### Añadido
 
+- Versión para Linux (x86_64 y ARM64): cada release trae AppImage, `.deb` y `.rpm`, compilados en Ubuntu 22.04 para que corran desde glibc 2.35 (Ubuntu 22.04, Debian 12, Fedora 36). La ventana lleva el marco de tu escritorio y se pinta opaca; con el driver propietario de NVIDIA, WebKitGTK usa su renderizador sin DMA-BUF para no dejar la ventana en blanco. CI compila, pasa clippy y corre los tests de Rust en Linux.
 - La salida completa de un comando en el visor (clic en el comando de la barra de estado, en su marca del margen o desde la paleta): se lee entera y se busca con ⌘F.
 - «Explicar este error»: en un comando que falló, manda el comando, su carpeta y el final de su salida al agente (o abre Claude junto al panel con ese mensaje).
 - Terminal acoplada al agente (`⌘L` o el botón «terminal» de su cabecera): una shell en la carpeta del agente, abajo, sin dividir el panel; se pliega sin perder la shell.
