@@ -100,7 +100,7 @@ En Windows y Linux, como en Windows Terminal, `Ctrl+C` copia si hay texto selecc
 
 - macOS; Windows 10 1809 o posterior (la primera versión con ConPTY), o Linux con glibc 2.35 o posterior (Ubuntu 22.04, Debian 12, Fedora 36 o más nuevos), en x86_64 o ARM64. En Windows hace falta WebView2, que ya viene en Windows 11 y que el instalador descarga si falta. En Linux, WebKitGTK 4.1: el `.deb` y el `.rpm` lo instalan como dependencia y el AppImage lo lleva dentro.
 - [Node.js](https://nodejs.org) 22 o superior y [pnpm](https://pnpm.io) 12.
-- [Rust](https://rustup.rs) estable con edición 2024 (1.88 o superior).
+- [Rust](https://rustup.rs) estable, 1.90 o superior (lo piden Tauri y sus plugins; está en `rust-version` de `Cargo.toml`).
 - En Windows, además: [Visual Studio Build Tools 2022](https://visualstudio.microsoft.com/visual-cpp-build-tools/) con *Desarrollo para el escritorio con C++* y Rust con la toolchain MSVC (`rustup default stable-msvc`), igual que en CI. Con la toolchain GNU (`x86_64-pc-windows-gnu`) no compila: faltan `dlltool` y un compilador de C. Las Build Tools se instalan con:
 
   ```powershell
@@ -162,6 +162,7 @@ e2e/                 Pruebas de punta a punta
 
 - **CI** (`.github/workflows/ci.yml`): frontend en Ubuntu (typecheck, lint, tests, build), e2e en macOS, Rust en macOS (fmt, clippy, tests y un benchmark del PTY) y jobs en Windows y en Linux (Ubuntu 22.04, la misma imagen de la release) con build, clippy y tests de Rust, para que un `cfg` mal puesto no rompa una versión sin que nadie se entere.
 - **Release** (`.github/workflows/release.yml`): `git tag v0.2.0 && git push --tags` genera un borrador de release con el `.dmg` universal, los instaladores de Windows y los de Linux (AppImage, `.deb` y `.rpm`, en x86_64 y ARM64). Los archivos no llevan la versión en el nombre, así que `releases/latest/download/termCode_universal.dmg`, `releases/latest/download/termCode_x64-setup.exe` y `releases/latest/download/termCode_amd64.AppImage` siempre bajan la última versión publicada. Cada formato de Linux sigue la convención de su arquitectura: `termCode_amd64.deb` y `termCode_x86_64.rpm` (en ARM, `termCode_arm64.deb`, `termCode_aarch64.rpm` y `termCode_aarch64.AppImage`). La firma y notarización de Apple dependen de los secretos `APPLE_*` (sin ellos el `.app` se firma ad hoc y Gatekeeper pide abrirlo desde Privacidad y seguridad); las actualizaciones automáticas, de `TAURI_SIGNING_PRIVATE_KEY` y `TAURI_UPDATER_PUBKEY`. El instalador de Windows sale sin firma Authenticode (SmartScreen avisará) hasta configurar un firmador en `bundle.windows.signCommand`, por ejemplo Azure Trusted Signing: los certificados nuevos viven en un HSM y ya no caben en un `.pfx` dentro de un secreto.
+- **Landing** (`.github/workflows/landing.yml`): al publicar una release, avisa a Vercel (secreto `VERCEL_LANDING_DEPLOY_HOOK`) y la landing se reconstruye. No copia nada a mano: la versión y las plataformas salen del `latest.json` de la última release publicada, sus novedades de la sección de esa versión en el `CHANGELOG.md`, y lo que pide para compilar de `main` (`engines.node` y `packageManager` en `package.json`, `rust-version` en `Cargo.toml`). Sin el secreto, la landing se pone al día en su revalidación de cada hora.
 
 ### Windows
 

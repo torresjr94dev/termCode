@@ -6,6 +6,9 @@ members = ["src-tauri", "crates/pty-core"]
 version = "0.3.0"
 edition = "2024"
 license = "MIT"
+# The oldest Rust that builds every dependency (Tauri and its plugins ask for
+# 1.90). The landing page reads it from here.
+rust-version = "1.90"
 authors = ["Jorge Torres"]
 
 [workspace.dependencies]

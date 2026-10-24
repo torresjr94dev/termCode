@@ -3,6 +3,7 @@ name = "pty-core"
 description = "PTY session management with output coalescing and backpressure"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
