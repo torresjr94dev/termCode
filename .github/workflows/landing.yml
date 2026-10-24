@@ -1,0 +1,30 @@
+name: Landing
+
+# Al publicar una release (no al crear el tag: eso solo deja un borrador), la
+# landing se reconstruye y toma de ella su versión, sus plataformas y sus
+# novedades. VERCEL_LANDING_DEPLOY_HOOK es el Deploy Hook del proyecto
+# landing-termCode en Vercel (Settings → Git → Deploy Hooks, rama main). Sin
+# él, la landing se pone al día sola en su revalidación de cada hora.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Reconstruir la landing
+        env:
+          HOOK: ${{ secrets.VERCEL_LANDING_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::warning::Sin VERCEL_LANDING_DEPLOY_HOOK: la landing tomará esta versión en su próxima revalidación (cada hora)."
+            exit 0
+          fi
+          # Unos segundos para que releases/latest ya apunte a esta release.
+          sleep 30
+          curl -fsS --retry 3 --retry-all-errors -X POST "$HOOK" -o /dev/null -w "Vercel respondió %{http_code}\n"

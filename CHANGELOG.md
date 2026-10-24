@@ -30,7 +30,7 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 - Cada sesión de la barra lateral muestra su carpeta (y la rama del repo), el último comando con su resultado y, en los agentes, una barra con el contexto libre. Las pestañas y la cabecera de cada panel también dicen en qué carpeta están.
 - El panel de proyecto empieza abierto en Archivos; plegado queda como un riel con sus vistas, y su estado se guarda con la sesión.
 - El lanzador de la barra lateral ocupa una sola fila; las secciones Carpetas y Sistema se pliegan y lo recuerdan.
-- Rust 1.88 o superior (por `sysinfo`).
+- Rust 1.90 o superior: lo piden Tauri y sus plugins.
 
 ### Corregido
 
