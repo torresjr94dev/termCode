@@ -823,6 +823,30 @@ const TESTS = [
     },
   },
   {
+    name: "raton-tras-ssh-caido",
+    async run(p) {
+      // Claude Code (o vim) del otro lado de un ssh activa el ratón; la conexión se corta y nadie
+      // lo apaga: cada movimiento escribía `35;88;22M…` en el prompt. El prompt lo apaga.
+      const r = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        const s = useTerminalStore.getState();
+        const id = s.tabs.find((t) => t.id === s.activeTabId).activePaneId;
+        const term = terminalManager.getTerminal(id);
+        const flush = () => new Promise((resolve) => term.write("", resolve));
+        const recv = (t) => terminalManager.receiveForTesting(id, t);
+        recv("\\x1b]133;C\\x07\\x1b[?1003h\\x1b[?1006h\\x1b[?1004h\\x1b[?25l");
+        await flush();
+        const during = { mouse: term.modes.mouseTrackingMode, focus: term.modes.sendFocusMode };
+        recv("\\r\\nclient_loop: send disconnect: Broken pipe\\r\\n\\x1b]133;D;255\\x07\\x1b]133;A\\x07% ");
+        await flush();
+        await flush();
+        return { during, after: { mouse: term.modes.mouseTrackingMode, focus: term.modes.sendFocusMode } };`);
+      if (r.during.mouse !== "any" || !r.during.focus) throw new Error(`El programa no activó el ratón: ${JSON.stringify(r)}`);
+      if (r.after.mouse !== "none" || r.after.focus) throw new Error(`El ratón siguió activo en el prompt: ${JSON.stringify(r)}`);
+    },
+  },
+  {
     name: "revision-al-agente",
     async run(p) {
       await p.run(`

@@ -190,6 +190,19 @@ const AGENT_COMMAND = /^(?:\S*\/)?(?:claude|codex)(?:\s|$)/;
 /** Programas de OSC 7501 cuyo prompt es multilínea con Ctrl+J. */
 const MULTILINE_APPS = new Set(["claude-code", "codex"]);
 
+/**
+ * Lo que un programa de pantalla completa deja encendido si muere sin
+ * apagarlo (un ssh que se corta con Claude Code o vim del otro lado): con el
+ * ratón activo, cada movimiento llega a la shell como `35;88;22M35;87;22M…`.
+ * En el prompt nadie lo pidió, así que se apaga (y el cursor vuelve a verse).
+ */
+const ABANDONED_MODES = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l\x1b[?25h";
+
+function resetAbandonedModes(term: Terminal) {
+  if (term.modes.mouseTrackingMode === "none" && !term.modes.sendFocusMode) return;
+  term.write(ABANDONED_MODES);
+}
+
 /** Shift+Enter sin más modificadores (y sin IME a medio componer). */
 function isShiftEnter(e: KeyboardEvent): boolean {
   return e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing;
@@ -320,8 +333,10 @@ class TerminalManager {
         (record) => this.hooks?.onCommandFinished(id, record),
         (cwd) => this.hooks?.onCwd(id, cwd),
         () => {
-          // Volvió el prompt: el programa que reportaba por OSC 7501 ya no está (salió sin `clear`).
+          // Volvió el prompt: lo que corría ya no está, aunque haya salido sin limpiar
+          // (su estado por OSC 7501, el ratón o el foco que dejó encendidos).
           instance.program = null;
+          resetAbandonedModes(term);
           this.hooks?.onPrompt(id);
         },
       ),
