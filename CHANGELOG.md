@@ -4,6 +4,8 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ## [Sin publicar]
 
+## [0.5.0] - 2026-10-27
+
 ### Añadido
 
 - Un `claude` o `codex` que escribes a mano en una shell tiene la misma barra que uno lanzado desde termCode (modelo, contexto libre, terminal acoplada), igual que la pestaña, la barra de estado, la barra lateral y Mission Control. Se reconoce en cuanto la shell lo ejecuta, sin esperar a que el agente se anuncie por OSC 7501 (Codex y los Claude Code viejos no lo hacen). `claude -p`, `codex exec` y los subcomandos (`claude mcp`, `codex login`…) no cuentan.
