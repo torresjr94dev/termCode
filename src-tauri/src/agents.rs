@@ -188,6 +188,44 @@ fn capture_baseline(cwd: &Path) -> Option<Value> {
     Some(json!({ "root": root, "sha": sha, "untracked": untracked, "at": now_ms() }))
 }
 
+/// Herramientas con las que Claude se detiene a esperarte: una pregunta o su plan.
+const WAITS_FOR_YOU: [&str; 2] = ["AskUserQuestion", "ExitPlanMode"];
+
+#[derive(Debug, PartialEq)]
+enum Notice {
+    /// Un permiso o una pregunta que espera tu respuesta.
+    NeedsInput,
+    /// Terminó hace rato y no has escrito: está quieto, no bloqueado.
+    Idle,
+    /// Lo demás (login correcto, respuesta a un diálogo, avisos de cuota…).
+    Ignore,
+}
+
+/// Qué quiere decir un `Notification` de Claude Code. Antes todos eran "te
+/// necesita": `idle_prompt` llega ~60 s después de cada turno terminado, así
+/// que todo agente que acababa pasaba a "te necesita" y ahí se quedaba.
+fn notification_meaning(input: &Value) -> Notice {
+    match input.get("notification_type").and_then(Value::as_str) {
+        Some("permission_prompt" | "elicitation_dialog" | "elicitation_url_dialog") => {
+            Notice::NeedsInput
+        }
+        Some("idle_prompt") => Notice::Idle,
+        Some(_) => Notice::Ignore,
+        // Versiones sin `notification_type`: el único aviso que no pide nada es el de espera.
+        None => {
+            let message = input
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if message.contains("waiting for your input") {
+                Notice::Idle
+            } else {
+                Notice::NeedsInput
+            }
+        }
+    }
+}
+
 fn hook_cli(event: &str) -> i32 {
     // A hook must never get in Claude's way: always exit 0, and print nothing
     // except an explicit decision from the approvals tray.
@@ -240,16 +278,21 @@ fn hook_cli(event: &str) -> i32 {
                 let _ = write_atomic(&path, &json!({ "session": session, "turn": turn }));
             }
         }
-        "PreToolUse" => {
+        // Antes de cada herramienta trabaja; después también (si pidió permiso y se lo
+        // diste en su panel, aquí deja de "necesitarte"). Preguntarte o enseñarte el
+        // plan es esperar tu respuesta.
+        "PreToolUse" | "PostToolUse" => {
             let tool = input
                 .get("tool_name")
                 .and_then(Value::as_str)
                 .unwrap_or("herramienta");
+            let waits = event == "PreToolUse" && WAITS_FOR_YOU.contains(&tool);
             activity(
-                "working",
+                if waits { "needs-input" } else { "working" },
                 describe_tool(tool, input.get("tool_input").unwrap_or(&Value::Null)),
             );
         }
+        "SessionEnd" => activity("idle", "La sesión terminó".to_owned()),
         // La única salida que imprime algo: tu decisión desde la bandeja de termCode.
         // Sin decisión (o ante cualquier fallo) no imprime nada y Claude pregunta en su panel.
         "PermissionRequest" => {
@@ -266,11 +309,6 @@ fn hook_cli(event: &str) -> i32 {
             }
         }
         "Notification" | "Stop" => {
-            let kind = if event == "Notification" {
-                "needs-input"
-            } else {
-                "done"
-            };
             // Stop no trae `message`: su resumen útil es la última respuesta del agente.
             let message = input
                 .get("message")
@@ -278,16 +316,23 @@ fn hook_cli(event: &str) -> i32 {
                 .and_then(Value::as_str)
                 .map(|m| truncate(m, 300))
                 .unwrap_or_default();
-            activity(
-                if kind == "done" {
-                    "idle"
-                } else {
-                    "needs-input"
-                },
-                message.clone(),
-            );
-            let record = json!({ "at": now_ms(), "kind": kind, "message": message });
-            let _ = write_atomic(&dir.join(format!("event-{pane}.json")), &record);
+            let (state, kind) = if event == "Stop" {
+                ("idle", Some("done"))
+            } else {
+                match notification_meaning(&input) {
+                    Notice::NeedsInput => ("needs-input", Some("needs-input")),
+                    // El recordatorio de "sigo esperando" no es un aviso nuevo (ya avisó
+                    // el Stop): solo confirma que está quieto, p. ej. tras un Esc, que
+                    // no dispara Stop y dejaba el panel "trabajando" para siempre.
+                    Notice::Idle => ("idle", None),
+                    Notice::Ignore => return 0,
+                }
+            };
+            activity(state, message.clone());
+            if let Some(kind) = kind {
+                let record = json!({ "at": now_ms(), "kind": kind, "message": message });
+                let _ = write_atomic(&dir.join(format!("event-{pane}.json")), &record);
+            }
         }
         _ => {}
     }
@@ -297,6 +342,10 @@ fn hook_cli(event: &str) -> i32 {
 /// Writes the `--settings` file termCode passes to Claude Code. Regenerated on
 /// every start so it always points at the current executable.
 pub fn write_claude_settings() -> std::io::Result<PathBuf> {
+    write_claude_settings_in(&state_dir())
+}
+
+fn write_claude_settings_in(dir: &Path) -> std::io::Result<PathBuf> {
     let exe = std::env::current_exe()?;
     let hook = |event: &str| hook_command(&exe, event);
     let mut permission = hook_command(&exe, "PermissionRequest");
@@ -308,20 +357,22 @@ pub fn write_claude_settings() -> std::io::Result<PathBuf> {
             "SessionStart": [{ "hooks": [hook("SessionStart")] }],
             "UserPromptSubmit": [{ "hooks": [hook("UserPromptSubmit")] }],
             "PreToolUse": [{ "hooks": [hook("PreToolUse")] }],
+            "PostToolUse": [{ "hooks": [hook("PostToolUse")] }],
             "Notification": [{ "hooks": [hook("Notification")] }],
             "Stop": [{ "hooks": [hook("Stop")] }],
+            "SessionEnd": [{ "hooks": [hook("SessionEnd")] }],
             "PermissionRequest": [{ "hooks": [permission] }],
         },
         // Las herramientas de solo lectura del MCP de termCode no piden permiso cada vez.
         "permissions": { "allow": ["mcp__termcode__list_panes", "mcp__termcode__read_pane"] },
     });
-    let path = state_dir().join("claude-settings.json");
+    let path = dir.join("claude-settings.json");
     write_atomic(&path, &settings)?;
 
     let mcp = json!({
         "mcpServers": { "termcode": { "command": std::env::current_exe()?, "args": ["--mcp"] } }
     });
-    write_atomic(&state_dir().join("mcp.json"), &mcp)?;
+    write_atomic(&dir.join("mcp.json"), &mcp)?;
     Ok(path)
 }
 
@@ -965,6 +1016,64 @@ mod tests {
         assert_eq!(ctx(-3.0), "ctx 0%");
         assert_eq!(ctx(140.0), "ctx 100%");
         assert_eq!(ctx(41.6), "ctx 42%");
+    }
+
+    #[test]
+    fn idle_reminder_is_not_a_request_for_input() {
+        let notice = |v: Value| notification_meaning(&v);
+        // El bug: ~60 s después de cada turno llegaba `idle_prompt` y el panel quedaba en "te necesita".
+        assert_eq!(
+            notice(
+                json!({ "notification_type": "idle_prompt", "message": "Claude is waiting for your input" })
+            ),
+            Notice::Idle
+        );
+        assert_eq!(
+            notice(
+                json!({ "notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash" })
+            ),
+            Notice::NeedsInput
+        );
+        assert_eq!(
+            notice(json!({ "notification_type": "elicitation_dialog" })),
+            Notice::NeedsInput
+        );
+        assert_eq!(
+            notice(json!({ "notification_type": "auth_success" })),
+            Notice::Ignore
+        );
+        assert_eq!(
+            notice(json!({ "notification_type": "agent_completed" })),
+            Notice::Ignore
+        );
+        // Versiones sin el campo.
+        assert_eq!(
+            notice(json!({ "message": "Claude is waiting for your input" })),
+            Notice::Idle
+        );
+        assert_eq!(
+            notice(json!({ "message": "Claude needs your permission to use Edit" })),
+            Notice::NeedsInput
+        );
+    }
+
+    #[test]
+    fn settings_hook_the_events_that_move_the_state() {
+        let dir = std::env::temp_dir().join(format!("termcode-settings-{}", std::process::id()));
+        let path = write_claude_settings_in(&dir).unwrap();
+        let settings: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        for event in [
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "Notification",
+            "Stop",
+            "SessionEnd",
+            "PermissionRequest",
+        ] {
+            assert!(settings["hooks"][event].is_array(), "falta el hook {event}");
+        }
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

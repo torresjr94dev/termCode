@@ -4,6 +4,25 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ## [Sin publicar]
 
+## [0.4.0] - 2026-10-27
+
+### Añadido
+
+- Estado de los agentes por OSC 7501 (Program Status Protocol): termCode contesta la consulta con la que Claude Code (2.1.295 o posterior) pregunta si la terminal lo soporta, y desde ahí el agente dice él mismo si trabaja, te necesita (permiso, pregunta, login) o terminó. Llega por el PTY de su propio panel, así que no puede caer en otro, y manda sobre los hooks, que quedan para Windows y versiones anteriores.
+- Un `claude` o `codex` escrito a mano en una shell cuenta como agente en Mission Control, la barra lateral y la barra de estado en cuanto se anuncia por OSC 7501.
+- Shift+Enter en un agente es un salto de línea (se envía Ctrl+J, que Claude Code y Codex leen así en cualquier terminal). En una shell sigue siendo Enter.
+- Mission Control dice en la cabecera cuántos agentes te necesitan y cuántos trabajan, y en la tarjeta de uno que espera permiso, que está en la bandeja.
+
+### Corregido
+
+- «Te necesita» se quedaba pegado en agentes que ya habían terminado: Claude Code avisa (`Notification` tipo `idle_prompt`) unos 60 s después de cada turno, y termCode lo tomaba como una petición. Ahora ese aviso solo confirma que el agente está quieto, y únicamente los permisos y diálogos cuentan como "te necesita".
+- Al ir al panel de un agente bloqueado la campana se apagaba y al salir volvía a encenderse, y Mission Control mostraba "te necesita" aunque el agente ya trabajaba: una marca de atención vieja ganaba al estado real. Ahora manda lo que el agente reporta y la marca se retira en cuanto deja de necesitarte.
+- Un permiso aprobado en el propio panel dejaba al agente en "te necesita" hasta la siguiente herramienta (hook `PostToolUse`); una pregunta (`AskUserQuestion`) o un plan por aprobar ahora sí cuentan como "te necesita"; al cerrar la sesión (`SessionEnd`) el agente deja de verse trabajando.
+- A pantalla completa en macOS quedaba el hueco de los semáforos a la izquierda del header (y de Mission Control y la vista general).
+- Las imágenes sixel no se veían en la app: la política de seguridad bloqueaba el WebAssembly de su decodificador (`'wasm-unsafe-eval'`, que no permite `eval` de JavaScript).
+- Con broadcast activo, las respuestas automáticas de una terminal (posición del cursor, `CSI c`, foco) se escribían en todos los paneles: ahora solo se difunde lo que tecleas en el panel con el foco.
+- Las escrituras al PTY van en orden: dos envíos seguidos podían ejecutarse en paralelo en el backend y cruzarse.
+
 ## [0.3.0] - 2026-10-23
 
 ### Añadido

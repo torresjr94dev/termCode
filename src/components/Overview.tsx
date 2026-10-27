@@ -7,9 +7,11 @@ import { actions } from "../lib/actions";
 import { cn, collectPanes } from "../lib/layout";
 import { paneDisplayName, projectTone, tabDisplayName } from "../lib/identity";
 import { formatDuration } from "../lib/format";
+import { agentStateOf, paneAgent, type AgentState } from "../lib/attention";
 import { useNow } from "../lib/useNow";
-import { IS_MAC, shortcutLabel } from "../lib/shortcuts";
-import type { PaneNode, Tab } from "../types/layout";
+import { shortcutLabel } from "../lib/shortcuts";
+import { useTrafficLights } from "../lib/fullscreen";
+import type { AgentKind, PaneNode, Tab } from "../types/layout";
 import { AgentGlyph, IconButton, Lamp } from "./ui";
 
 const SNAPSHOT_ROWS = 9;
@@ -43,6 +45,7 @@ const OverviewPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
   const gridRef = useRef<HTMLDivElement | null>(null);
   // Miniaturas vivas: se releen cada segundo mientras la vista está abierta.
   const now = useNow(1000);
+  const lightsGap = useTrafficLights();
 
   const entries = useMemo<Entry[]>(
     () =>
@@ -106,7 +109,7 @@ const OverviewPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
       aria-label="Todos los paneles"
       className="fixed inset-0 z-40 flex animate-fade-in flex-col bg-canvas backdrop-blur-2xl"
     >
-      <div data-tauri-drag-region className={cn("flex h-12 shrink-0 items-center gap-3 border-b border-line pr-5", IS_MAC ? "pl-[88px]" : "pl-5")}>
+      <div data-tauri-drag-region className={cn("flex h-12 shrink-0 items-center gap-3 border-b border-line pr-5", lightsGap ? "pl-[88px]" : "pl-5")}>
         <h2 className="text-[15px] font-semibold text-ink">Paneles</h2>
         <span className="font-mono text-[12px] text-ink-3">
           {entries.length} en {tabs.length} pestaña{tabs.length === 1 ? "" : "s"}
@@ -163,7 +166,8 @@ const OverviewPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
               selected={i === selected}
               current={entry.tab.id === activeTabId && entry.pane.id === entry.tab.activePaneId}
               attention={entry.pane.id in attention}
-              agentState={agentActivity[entry.pane.id]?.state}
+              agent={paneAgent(entry.pane, agentActivity[entry.pane.id])}
+              agentState={agentStateOf(agentActivity[entry.pane.id], attention[entry.pane.id])}
               now={now}
               onHover={() => i !== selected && setCursor(i)}
               onGo={() => go(entry)}
@@ -181,11 +185,12 @@ const PaneCard: React.FC<{
   selected: boolean;
   current: boolean;
   attention: boolean;
-  agentState?: string;
+  agent: AgentKind | null;
+  agentState: AgentState;
   now: number;
   onHover: () => void;
   onGo: () => void;
-}> = ({ entry, index, selected, current, attention, agentState, now, onHover, onGo }) => {
+}> = ({ entry, index, selected, current, attention, agent, agentState, now, onHover, onGo }) => {
   const lines = terminalManager.snapshot(entry.pane.id, SNAPSHOT_ROWS);
   const last = terminalManager.getTracker(entry.pane.id)?.last();
   const running = last && last.endedAt === null;
@@ -206,7 +211,7 @@ const PaneCard: React.FC<{
     >
       <span className="flex w-full items-center gap-2 border-b border-line px-3 py-2">
         <span className={cn("font-mono text-[11px] tabular-nums", current ? "text-accent" : "text-ink-3")}>{entry.tabIndex + 1}</span>
-        <AgentGlyph agentType={entry.pane.agentType} className="shrink-0 text-ink-3" />
+        <AgentGlyph agentType={agent} className="shrink-0 text-ink-3" />
         <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-ink">{entry.name}</span>
         {attention ? (
           <Lamp state="attention" />

@@ -16,7 +16,8 @@ termCode es una terminal para macOS, Windows y Linux (Tauri + React + xterm.js) 
 ## Funciones
 
 ### Agentes
-- **Mission Control** (`⇧⌘A`): todos los agentes abiertos con su estado en vivo (trabajando, te necesita, esperando), modelo, contexto usado y costo de la sesión.
+- **Mission Control** (`⇧⌘A`): todos los agentes abiertos con su estado en vivo (trabajando, te necesita, esperando), modelo, contexto usado y costo de la sesión. El estado lo dice el propio agente por OSC 7501 (Claude Code 2.1.295 o posterior), así que también cuenta un `claude` escrito a mano en cualquier pestaña; con versiones anteriores y en Windows lo dan los hooks.
+- **Shift+Enter** en un agente es un salto de línea en su prompt (en una shell sigue siendo Enter).
 - **Bandeja de aprobaciones**: los permisos que pide Claude Code aparecen abajo a la derecha, estés donde estés, con el comando o el diff completos. Si estás mirando el panel del agente, pregunta el panel, como siempre.
 - **Ir al que te necesita** (`⌘J`): salta al agente bloqueado que más lleva esperando. La campana del header cuenta cuántos paneles te esperan (en acento si alguno está bloqueado).
 - **Reanudar tras reiniciar**: los paneles de agente vuelven como shells con un aviso para retomar la conversación (`claude --resume`, `codex resume --last`). Nunca se relanzan solos, para no gastar cuota.

@@ -10,6 +10,7 @@ import { useUiStore } from "../store/uiStore";
 import { settingsNow } from "../store/settingsStore";
 import { terminalManager } from "../terminal/TerminalManager";
 import type { CommandRecord } from "../terminal/commands";
+import type { ProgramState, ProgramStatus } from "../terminal/programStatus";
 import type { FileLinkTarget } from "../terminal/links";
 import { collectPanes, findOwnerTab, findPane } from "./layout";
 import { IS_TAURI, ipc } from "./ipc";
@@ -71,6 +72,69 @@ function raiseAttention(paneId: string, kind: string, message: string) {
     kind === "done" ? `${who} terminó` : kind === "needs-input" ? `${who} necesita tu atención` : who;
   void notify(title, message || (kind === "bell" ? "Campana en el terminal" : ""));
 }
+
+/** OSC 7501 → estado de la interfaz. `done` y `error` son "esperando instrucciones" con aviso. */
+const OSC_STATE: Record<Exclude<ProgramState, "clear">, string> = {
+  working: "working",
+  blocked: "needs-input",
+  idle: "idle",
+  done: "idle",
+  error: "idle",
+};
+
+/** El último estado OSC de cada panel: avisar solo al cambiar, no en cada repetición. */
+const lastProgramState = new Map<string, ProgramState>();
+
+/** Un "te necesita" ya resuelto (el agente siguió): fuera la marca, aunque no hayas pasado por el panel. */
+function settleNeedsInput(paneId: string) {
+  if (state().attention[paneId]?.kind === "needs-input") state().setAttention(paneId, null);
+}
+
+/**
+ * El programa del panel dijo qué hace (OSC 7501, ver `programStatus.ts`).
+ * Es la fuente buena: llega por el PTY de ese panel, así que no se cruza con
+ * otro, y cuando existe manda sobre los hooks.
+ */
+function onProgramStatus(paneId: string, status: ProgramStatus) {
+  const previous = lastProgramState.get(paneId);
+  if (status.state === "clear") {
+    lastProgramState.delete(paneId);
+    if (state().agentActivity[paneId]?.source === "osc") state().clearAgentActivity(paneId);
+    settleNeedsInput(paneId);
+    return;
+  }
+  lastProgramState.set(paneId, status.state);
+  const current = state().agentActivity[paneId];
+  state().setAgentActivity({
+    paneId,
+    state: OSC_STATE[status.state],
+    detail: status.msg ?? status.title ?? (status.state === "working" ? (current?.detail ?? "") : ""),
+    at: status.state === previous && current ? current.at : Date.now(),
+    source: "osc",
+    app: status.app ?? current?.app ?? null,
+  });
+  if (status.state === previous) return;
+
+  const message = status.msg ?? "";
+  if (status.state === "blocked") raiseAttention(paneId, "needs-input", message);
+  else settleNeedsInput(paneId);
+  if (status.state === "done") raiseAttention(paneId, "done", message);
+  if (status.state === "error") raiseAttention(paneId, "failed", message);
+}
+
+/**
+ * Volvió el prompt de la shell: lo que reportaba salió sin decir `clear` (se
+ * cerró de golpe). El spec deja ver un `done` hasta que lo mires; eso ya lo
+ * guarda la marca de atención, así que el panel deja de contar como agente.
+ */
+function onPrompt(paneId: string) {
+  if (!lastProgramState.delete(paneId)) return;
+  if (state().agentActivity[paneId]?.source === "osc") state().clearAgentActivity(paneId);
+  settleNeedsInput(paneId);
+}
+
+/** El panel ya reporta por OSC 7501: lo que digan sus hooks llega tarde y sobra. */
+const reportsByOsc = (paneId: string) => state().agentActivity[paneId]?.source === "osc";
 
 /**
  * Comando largo terminado mientras no mirabas: notificación del sistema con
@@ -207,6 +271,8 @@ export function startBridge({ isMainWindow }: { isMainWindow: boolean }): () => 
       }
     },
     onOpenPath: (target) => void openPath(target),
+    onProgramStatus,
+    onPrompt,
     renderWelcome,
   });
 
@@ -235,11 +301,15 @@ export function startBridge({ isMainWindow }: { isMainWindow: boolean }): () => 
     ipc.onUsage((usage) => state().setUsage(usage)),
     ipc.onAgentStatus((status) => state().setAgentStatus(status)),
     ipc.onAgentAttention(({ paneId, kind, message }) => {
-      // El turno terminó: si es de una carrera, el juez corre aunque estés mirando ese panel.
+      // El turno terminó (hook Stop): si es de una carrera, el juez corre aunque estés mirando ese panel.
       if (kind === "done") onAgentDone(paneId);
-      raiseAttention(paneId, kind, message);
+      if (!reportsByOsc(paneId)) raiseAttention(paneId, kind, message);
     }),
-    ipc.onAgentActivity((activity) => state().setAgentActivity(activity)),
+    ipc.onAgentActivity((activity) => {
+      if (reportsByOsc(activity.paneId)) return;
+      state().setAgentActivity({ ...activity, source: "hook" });
+      if (activity.state !== "needs-input") settleNeedsInput(activity.paneId);
+    }),
     ipc.onAgentSession(({ paneId, sessionId, prompt, at }) =>
       state().setAgentSession(paneId, { id: sessionId, prompt: prompt ?? undefined, at }),
     ),

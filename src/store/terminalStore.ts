@@ -159,6 +159,8 @@ interface TerminalState {
   setShells: (shells: ShellInfo[]) => void;
   setAgentStatus: (status: AgentStatus) => void;
   setAgentActivity: (activity: AgentActivity) => void;
+  /** El programa del panel se fue (OSC 7501 `clear` o volvió el prompt de la shell). */
+  clearAgentActivity: (paneId: string) => void;
   setPaneProject: (paneId: string, project: PaneProject) => void;
   setPanePorts: (ports: Record<string, number[]>) => void;
   setAttention: (paneId: string, attention: Attention | null) => void;
@@ -370,6 +372,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   setAgentActivity: (activity) => {
     if (!findOwnerTab(get().tabs, activity.paneId)) return;
     set((state) => ({ agentActivity: { ...state.agentActivity, [activity.paneId]: activity } }));
+  },
+
+  clearAgentActivity: (paneId) => {
+    const { agentActivity } = get();
+    if (paneId in agentActivity) set({ agentActivity: omit(agentActivity, [paneId]) });
   },
 
   setPaneProject: (paneId, project) => {

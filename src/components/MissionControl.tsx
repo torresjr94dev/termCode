@@ -12,10 +12,13 @@ import { formatAgo, formatDuration, formatUsd } from "../lib/format";
 import { discardOthers, lastRaceCommand, raceScore, startRace, verifyEntry } from "../lib/race";
 import { passed, useRaceStore, type VerifyState } from "../store/raceStore";
 import { useNow } from "../lib/useNow";
-import { IS_MAC, shortcutLabel } from "../lib/shortcuts";
+import { shortcutLabel } from "../lib/shortcuts";
+import { useTrafficLights } from "../lib/fullscreen";
 import type { AgentWorktree, PaneNode, Tab } from "../types/layout";
 import { IconButton, Lamp, Ring } from "./ui";
 import { cleanTitle } from "../lib/identity";
+import { agentStateOf, agentSummary, paneAgent } from "../lib/attention";
+import { useApprovalStore } from "../store/approvalStore";
 import { TextButton } from "./project/common";
 
 const STATE_LABEL: Record<string, string> = {
@@ -32,15 +35,21 @@ export const MissionControl: React.FC<{ onClosed: () => void }> = ({ onClosed })
 
 const MissionPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
   const tabs = useTerminalStore((s) => s.tabs);
+  const activity = useTerminalStore((s) => s.agentActivity);
+  const attention = useTerminalStore((s) => s.attention);
+  const status = useTerminalStore((s) => s.agentStatus);
+  const approvals = useApprovalStore((s) => s.requests);
   const setOpen = useUiStore((s) => s.setMissionOpen);
   const repo = useProjectStore((s) => s.repo);
   const [racing, setRacing] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const now = useNow(1000);
+  const lightsGap = useTrafficLights();
 
+  // También los agentes escritos a mano en una shell, si se anunciaron por OSC 7501.
   const agents: Array<{ pane: PaneNode; tab: Tab }> = tabs.flatMap((tab) =>
     collectPanes(tab.root)
-      .filter((pane) => pane.agentType)
+      .filter((pane) => paneAgent(pane, activity[pane.id]))
       .map((pane) => ({ pane, tab })),
   );
 
@@ -70,9 +79,10 @@ const MissionPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
       className="fixed inset-0 z-40 flex animate-fade-in flex-col bg-canvas outline-none backdrop-blur-2xl"
     >
       {/* En macOS la cabecera deja sitio a los semáforos y sirve para arrastrar la ventana. */}
-      <div data-tauri-drag-region className={cn("flex h-12 shrink-0 items-center gap-3 border-b border-line pr-4", IS_MAC ? "pl-[88px]" : "pl-5")}>
+      <div data-tauri-drag-region className={cn("flex h-12 shrink-0 items-center gap-3 border-b border-line pr-4", lightsGap ? "pl-[88px]" : "pl-5")}>
         <h2 className="text-[15px] font-semibold text-ink">Agentes</h2>
         <span className="rounded-full bg-hover px-2 font-mono text-[11px] leading-5 text-ink-2">{agents.length} abiertos</span>
+        <AgentCounts summary={agentSummary(tabs, activity, attention, status, approvals)} />
         <span className="flex-1" />
         <TextButton onClick={() => setRacing(true)} disabled={!repo} title={repo ? undefined : "Abre un panel dentro de un repositorio git"}>
           <Flag size={13} strokeWidth={1.75} aria-hidden="true" /> Carrera de agentes
@@ -118,6 +128,17 @@ const MissionPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
   );
 };
 
+/** «1 te necesita · 2 trabajando»: lo que importa antes de leer tarjeta por tarjeta. */
+const AgentCounts: React.FC<{ summary: { waiting: number; working: number } }> = ({ summary }) => {
+  if (!summary.waiting && !summary.working) return null;
+  return (
+    <span role="status" aria-atomic="true" className="flex items-center gap-1.5 font-mono text-[11px] leading-5">
+      {summary.waiting > 0 && <span className="rounded-full bg-warn px-2 text-on-accent">{summary.waiting} te necesita{summary.waiting === 1 ? "" : "n"}</span>}
+      {summary.working > 0 && <span className="rounded-full bg-accent/15 px-2 text-accent">{summary.working} trabajando</span>}
+    </span>
+  );
+};
+
 const STATE_CHIP: Record<string, string> = {
   working: "bg-accent/15 text-accent",
   "needs-input": "bg-warn text-on-accent",
@@ -128,13 +149,14 @@ const AgentCard: React.FC<{ pane: PaneNode; tab: Tab; now: number; onGo: () => v
   const activity = useTerminalStore((s) => s.agentActivity[pane.id]);
   const status = useTerminalStore((s) => s.agentStatus[pane.id]);
   const attention = useTerminalStore((s) => s.attention[pane.id]);
-  const state = attention?.kind === "needs-input" ? "needs-input" : (activity?.state ?? "idle");
+  const waiting = useApprovalStore((s) => s.requests.some((r) => r.paneId === pane.id));
+  const state = agentStateOf(activity, attention, waiting);
   // Las últimas líneas con contenido (sin el hueco de abajo que deja el TUI).
   const lines = terminalManager.snapshot(pane.id, 14).map((l) => l.trimEnd());
   while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
   const cwd = terminalManager.knownCwd(pane.id) ?? pane.cwd;
   const title = cleanTitle(pane.title);
-  const Glyph = pane.agentType === "codex" ? Hexagon : Asterisk;
+  const Glyph = paneAgent(pane, activity) === "codex" ? Hexagon : Asterisk;
 
   const go = () => {
     onGo();
@@ -177,7 +199,7 @@ const AgentCard: React.FC<{ pane: PaneNode; tab: Tab; now: number; onGo: () => v
         )}
         <div className="min-w-0 flex-1">
           <p className="truncate font-mono text-[12px] text-ink-2" title={activity?.detail}>
-            {activity?.detail || (state === "idle" ? "Sin actividad registrada" : "…")}
+            {waiting ? "Espera tu permiso (bandeja de abajo a la derecha)" : activity?.detail || (state === "idle" ? "Sin actividad registrada" : "…")}
           </p>
           <p className="mt-1 flex flex-wrap items-center gap-1.5 font-mono text-[11px] text-ink-3">
             {status?.model && <span className="rounded-full bg-hover px-2 leading-5 text-ink-2">{status.model}</span>}

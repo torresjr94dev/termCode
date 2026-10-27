@@ -9,7 +9,7 @@ import { basename, cn, collectPanes, findPane } from "../lib/layout";
 import { projectColor, shortCommand, tabDisplayName } from "../lib/identity";
 import { attentionCandidates } from "../lib/attention";
 import { useRunningCommand } from "../terminal/useRunningCommand";
-import { IS_MAC, IS_WINDOWS, shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
+import { IS_WINDOWS, shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
 import type { ProviderUsage, Tab } from "../types/layout";
 import { terminalManager } from "../terminal/TerminalManager";
 import { AgentGlyph, IconButton, Kbd, Lamp, Ring } from "./ui";
@@ -18,6 +18,7 @@ import { pace } from "../lib/quota";
 import { useNow } from "../lib/useNow";
 import { useSettingsStore } from "../store/settingsStore";
 import { tildify } from "../lib/paths";
+import { useTrafficLights } from "../lib/fullscreen";
 
 interface HeaderProps {
   onOpenPalette: () => void;
@@ -31,6 +32,8 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
   const attention = useTerminalStore((s) => s.attention);
   const moveTab = useTerminalStore((s) => s.moveTab);
   const listRef = useRef<HTMLUListElement | null>(null);
+  // Hueco para los semáforos de macOS: solo con la ventana normal y sin barra lateral (que los aloja).
+  const lightsGap = useTrafficLights() && !isSidebarOpen;
   const [drag, setDrag] = useState<{ from: number; to: number; dragging: boolean } | null>(null);
 
   /** Arrastrar una pestaña la reordena (umbral de 5 px para no robar clics). */
@@ -68,10 +71,9 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
       // botones de ventana van pegados al borde derecho.
       className={cn("relative z-20 flex h-11 shrink-0 items-center bg-chrome", IS_WINDOWS ? "pr-0" : "pr-2")}
     >
-      {/* Hueco para los semáforos de macOS (solo cuando la barra lateral no los aloja) */}
-      {IS_MAC && !isSidebarOpen && <div data-tauri-drag-region className="h-full w-[78px] shrink-0" />}
+      {lightsGap && <div data-tauri-drag-region className="h-full w-[78px] shrink-0" />}
 
-      <div className={cn("flex items-center", !(IS_MAC && !isSidebarOpen) && "pl-2")}>
+      <div className={cn("flex items-center", !lightsGap && "pl-2")}>
         <IconButton
           icon={PanelLeft}
           label={isSidebarOpen ? "Ocultar sesiones" : "Mostrar sesiones"}
