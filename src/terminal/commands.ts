@@ -1,5 +1,5 @@
 import type { IMarker, Terminal } from "@xterm/xterm";
-import type { ProcessInfo } from "../types/layout";
+import type { AgentKind, ProcessInfo } from "../types/layout";
 
 /**
  * Comandos de un panel, a partir de las marcas de la integración con la shell
@@ -29,6 +29,42 @@ export function decodeCommandLine(raw: string): string {
   return raw.replace(/\\(\\|x([0-9a-fA-F]{2}))/g, (_, escaped: string, hex?: string) =>
     hex ? String.fromCharCode(parseInt(hex, 16)) : escaped,
   );
+}
+
+/**
+ * Lo que no abre la interfaz del agente: modos sin TUI y subcomandos. Mismo
+ * criterio que la función `claude` de la integración con zsh. En Codex `-p`
+ * es `--profile` (interactivo), así que cada uno tiene su lista.
+ */
+const NOT_INTERACTIVE: Record<AgentKind, { flags: Set<string>; subcommands: Set<string> }> = {
+  claude: {
+    flags: new Set(["-p", "--print", "-v", "--version", "-h", "--help"]),
+    subcommands: new Set(["mcp", "config", "doctor", "update", "install", "setup-token", "migrate-installer", "plugin", "plugins"]),
+  },
+  codex: {
+    flags: new Set(["-V", "--version", "-h", "--help"]),
+    subcommands: new Set(["exec", "e", "login", "logout", "mcp", "mcp-server", "app-server", "completion", "apply", "a", "sandbox", "debug"]),
+  },
+};
+/** Lo que puede ir antes del programa sin cambiar cuál es: `FOO=1`, `command`, `exec`… */
+const PREFIX = /^(?:[A-Za-z_][A-Za-z0-9_]*=\S*|command|builtin|exec|noglob|nocorrect)$/;
+
+/**
+ * El agente que abre un comando escrito en la shell (`claude`,
+ * `/opt/bin/codex --model o3`, `ANTHROPIC_MODEL=x claude`), o null si no es
+ * uno o no abre su interfaz (`claude -p …`, `codex exec …`, `claude mcp list`).
+ */
+export function commandAgent(command: string | null | undefined): AgentKind | null {
+  const words = command?.trim().split(/\s+/) ?? [];
+  const at = words.findIndex((w) => !PREFIX.test(w));
+  const program = at >= 0 ? words[at].slice(words[at].lastIndexOf("/") + 1) : "";
+  if (program !== "claude" && program !== "codex") return null;
+  const args = words.slice(at + 1);
+  const rules = NOT_INTERACTIVE[program];
+  // El subcomando es la primera palabra que no es opción (un alias puede meter opciones antes).
+  const first = args.find((a) => !a.startsWith("-")) ?? "";
+  if (args.some((a) => rules.flags.has(a)) || rules.subcommands.has(first)) return null;
+  return program;
 }
 
 /** `file://host/Users/x/Mi%20dir` → `/Users/x/Mi dir`; `file://host/C:/Users/x` → `C:\Users\x`. */
@@ -85,6 +121,8 @@ export class CommandTracker {
     private readonly onCwd: (cwd: string) => void,
     /** La shell volvió a su prompt: lo que corría en el panel ya terminó. */
     private readonly onPrompt: () => void = () => {},
+    /** Empezó a correr un comando (lo que escribiste, tal cual). */
+    private readonly onStart: (command: string) => void = () => {},
   ) {}
 
   /** Conecta los manejadores OSC. Devuelve cómo desconectarlos. */
@@ -147,10 +185,12 @@ export class CommandTracker {
           endedAt: null,
           exitCode: null,
         });
+        const command = this.pendingCommand;
         this.lastPrompt = null;
         this.pendingCommand = "";
         this.trim();
         this.changed();
+        this.onStart(command);
         return true;
       }
       case "D": {

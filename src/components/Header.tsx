@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Asterisk, Bell, Check, ChevronDown, GitBranch, Hexagon, Maximize2, PanelLeft, Plus, Search, Settings, X } from "lucide-react";
-import { useTerminalStore } from "../store/terminalStore";
+import { usePaneAgent, useTerminalStore } from "../store/terminalStore";
 import { useProjectStore } from "../store/projectStore";
 import { useApprovalStore } from "../store/approvalStore";
 import { openProject } from "../lib/project";
@@ -302,7 +302,7 @@ const TabItem: React.FC<TabItemProps> = ({
   // Si el nombre ya es el comando (p. ej. el título que puso vim), no se repite.
   const runningHint = running && !label.startsWith(running.split(" ")[0]) ? shortCommand(running, 2) : null;
   const pane = findPane(tab.root, tab.activePaneId);
-  const agentType = pane?.agentType;
+  const agentType = usePaneAgent(pane);
   // Dónde está parada (dos «Claude Code» dejan de verse iguales); si el nombre ya es la carpeta, no se repite.
   const cwd = project?.cwd ?? pane?.cwd;
   const folder = cwd ? basename(cwd) : null;

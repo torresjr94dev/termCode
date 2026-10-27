@@ -14,6 +14,7 @@ import type {
 } from "../types/layout";
 import { terminalManager } from "../terminal/TerminalManager";
 import { collectPanes, equalize, findOwnerTab, findPane, removePane, replacePane, setSplitRatio } from "../lib/layout";
+import { paneAgent } from "../lib/attention";
 
 let nextId = 1;
 export const genId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${nextId++}`;
@@ -27,8 +28,6 @@ export interface PaneSpec {
   /** Servidor SSH al que se conecta el panel (su nombre). */
   ssh?: string;
   agentType?: AgentKind | null;
-  /** Bienvenida antes del primer prompt. Por defecto, toda shell nueva (pestaña, división, rápida). */
-  welcome?: boolean;
 }
 
 export interface PaneProject {
@@ -87,8 +86,6 @@ function newPane(spec: PaneSpec = {}): PaneNode {
     ...(spec.shell && !spec.command ? { shell: spec.shell } : {}),
     ...(spec.ssh ? { ssh: spec.ssh } : {}),
     agentType: spec.agentType ?? null,
-    // Las shells nuevas dan la bienvenida; los agentes no (su TUI ocupa el panel).
-    ...(!spec.command && spec.welcome !== false ? { welcome: true } : {}),
   };
 }
 
@@ -111,7 +108,7 @@ export function findDrawerOwner(tabs: Tab[], drawerId: string): PaneNode | undef
   return undefined;
 }
 
-function omit<T extends object>(record: Record<string, T>, keys: string[]): Record<string, T> {
+function omit<T>(record: Record<string, T>, keys: string[]): Record<string, T> {
   if (!keys.some((k) => k in record)) return record;
   const next = { ...record };
   for (const key of keys) delete next[key];
@@ -131,6 +128,8 @@ interface TerminalState {
   shells: ShellInfo[] | null;
   agentStatus: Record<string, AgentStatus>;
   agentActivity: Record<string, AgentActivity>;
+  /** Agente escrito a mano que corre ahora en una shell (lo dice su integración: `claude`, `codex`). */
+  runningAgent: Record<string, AgentKind>;
   /** Carpeta y proyecto (repo o carpeta) de cada panel, según la shell (OSC 7). */
   paneProject: Record<string, PaneProject>;
   /** Puertos TCP en escucha de cada panel o shell acoplada (servidores de desarrollo). */
@@ -158,6 +157,9 @@ interface TerminalState {
   setAgents: (agents: AgentsInfo) => void;
   setShells: (shells: ShellInfo[]) => void;
   setAgentStatus: (status: AgentStatus) => void;
+  /** El agente del panel se fue: su modelo y su contexto ya no son de nadie. */
+  clearAgentStatus: (paneId: string) => void;
+  setRunningAgent: (paneId: string, agent: AgentKind | null) => void;
   setAgentActivity: (activity: AgentActivity) => void;
   /** El programa del panel se fue (OSC 7501 `clear` o volvió el prompt de la shell). */
   clearAgentActivity: (paneId: string) => void;
@@ -191,6 +193,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   shells: null,
   agentStatus: {},
   agentActivity: {},
+  runningAgent: {},
   paneProject: {},
   panePorts: {},
   attention: {},
@@ -217,6 +220,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         activeTabId: fresh.id,
         agentStatus: omit(state.agentStatus, paneIds),
         agentActivity: omit(state.agentActivity, paneIds),
+        runningAgent: omit(state.runningAgent, paneIds),
         paneProject: omit(state.paneProject, paneIds),
         attention: omit(state.attention, paneIds),
       }));
@@ -230,6 +234,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       activeTabId: nextActive,
       agentStatus: omit(state.agentStatus, paneIds),
       agentActivity: omit(state.agentActivity, paneIds),
+      runningAgent: omit(state.runningAgent, paneIds),
       paneProject: omit(state.paneProject, paneIds),
       attention: omit(state.attention, paneIds),
     }));
@@ -278,6 +283,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       tabs: state.tabs.map((t) => (t.id === owner.id ? { ...t, root, activePaneId, zoomedPaneId } : t)),
       agentStatus: omit(state.agentStatus, [paneId]),
       agentActivity: omit(state.agentActivity, [paneId]),
+      runningAgent: omit(state.runningAgent, [paneId]),
       paneProject: omit(state.paneProject, [paneId]),
       attention: omit(state.attention, [paneId]),
     }));
@@ -362,6 +368,23 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   setAgentStatus: (status) => {
     if (!findOwnerTab(get().tabs, status.paneId)) return;
     set((state) => ({ agentStatus: { ...state.agentStatus, [status.paneId]: status } }));
+  },
+
+  clearAgentStatus: (paneId) => {
+    const { agentStatus } = get();
+    if (paneId in agentStatus) set({ agentStatus: omit(agentStatus, [paneId]) });
+  },
+
+  setRunningAgent: (paneId, agent) => {
+    const { runningAgent, tabs } = get();
+    if (runningAgent[paneId] === (agent ?? undefined)) return;
+    if (!agent) {
+      set({ runningAgent: omit(runningAgent, [paneId]) });
+      return;
+    }
+    // Solo paneles: un `claude` en la shell acoplada no convierte al panel en otro agente.
+    if (!findOwnerTab(tabs, paneId)) return;
+    set({ runningAgent: { ...runningAgent, [paneId]: agent } });
   },
 
   setPanePorts: (ports) => {
@@ -462,6 +485,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       ),
       agentStatus: omit(state.agentStatus, [paneId]),
       agentActivity: omit(state.agentActivity, [paneId]),
+      runningAgent: omit(state.runningAgent, [paneId]),
       paneProject: omit(state.paneProject, [paneId]),
       attention: omit(state.attention, [paneId]),
     }));
@@ -487,3 +511,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     });
   },
 }));
+
+/** El agente del panel ahora: lanzado por termCode, anunciado por OSC 7501 o escrito a mano en la shell. */
+export function liveAgent(state: Pick<TerminalState, "agentActivity" | "runningAgent">, pane: PaneNode): AgentKind | null {
+  return paneAgent(pane, state.agentActivity[pane.id], state.runningAgent[pane.id]);
+}
+
+export const usePaneAgent = (pane: PaneNode | undefined): AgentKind | null =>
+  useTerminalStore((s) => (pane ? liveAgent(s, pane) : null));

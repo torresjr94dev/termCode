@@ -1,12 +1,13 @@
-import { useTerminalStore, type PaneSpec } from "../store/terminalStore";
+import { liveAgent, useTerminalStore, type PaneSpec } from "../store/terminalStore";
 import { useUiStore } from "../store/uiStore";
 import { terminalManager } from "../terminal/TerminalManager";
 import { DEFAULT_SETTINGS, settingsNow, useSettingsStore } from "../store/settingsStore";
 import { basename, collectPanes, findOwnerTab, findPane } from "./layout";
-import { ipc, shellQuote } from "./ipc";
+import { ipc, powershellQuote, shellQuote } from "./ipc";
 import { agentCommand, type AgentCommandOptions } from "./resume";
-import { cdKeystrokes } from "./cd";
+import { cdKeystrokes, lineKeystrokes } from "./cd";
 import { nextAttentionPane } from "./attention";
+import { IS_WINDOWS } from "./shortcuts";
 import { useApprovalStore } from "../store/approvalStore";
 import type { AgentKind, PaneShell, ShellInfo, SplitDirection } from "../types/layout";
 
@@ -70,6 +71,23 @@ export function agentSpec(
     resume,
   });
   return { title: title ?? AGENTS[agent].title, agentType: agent, command, cwd };
+}
+
+/**
+ * Lo que se teclea para abrir el agente en la shell de un panel. En zsh con
+ * la integración basta `claude`: su función le pasa el `--settings` de
+ * termCode (statusLine y hooks). En otra shell va la línea completa.
+ */
+function typedAgent(agent: AgentKind, paneId: string): string {
+  const wrapped = !IS_WINDOWS && Boolean(terminalManager.getTracker(paneId)?.integrated);
+  if (wrapped) return lineKeystrokes(AGENTS[agent].command);
+  const { claudeSettingsPath, mcpConfigPath } = state().agents ?? {};
+  return lineKeystrokes(
+    agentCommand(agent, AGENTS[agent].command, IS_WINDOWS ? powershellQuote : shellQuote, {
+      settingsPath: claudeSettingsPath,
+      mcpConfigPath: settingsNow().agentsReadPanes ? mcpConfigPath : null,
+    }),
+  );
 }
 
 /** La shell de las pestañas nuevas según Ajustes (undefined = la del sistema). */
@@ -175,6 +193,33 @@ export const actions = {
     if (!agentAvailable(agent)) return;
     const cwd = await cwdOf(activePaneId());
     guardQuota(agent, () => void split("horizontal", agentSpec(agent, cwd, undefined, prompt)));
+  },
+
+  /**
+   * El agente en este mismo panel, como si lo escribieras: se teclea `claude`
+   * (o `codex`) en su shell y al salir vuelves a ella, con su carpeta, su
+   * entorno y su historial. Si la shell no está libre (algo corre o ya hay un
+   * agente), se abre junto al panel y se dice por qué.
+   */
+  openAgentHere: async (agent: AgentKind, paneId = activePaneId()) => {
+    if (!paneId || !agentAvailable(agent)) return;
+    const tab = findOwnerTab(state().tabs, paneId);
+    const pane = tab ? findPane(tab.root, paneId) : undefined;
+    if (!pane) return;
+    const present = liveAgent(state(), pane);
+    const info = present ? null : await terminalManager.info(paneId);
+    if (!info || info.busy) {
+      const why = present
+        ? `${AGENTS[present].title} ya está en este panel`
+        : info?.busy
+          ? `${info.foregroundName ?? "Un programa"} sigue corriendo`
+          : "La terminal aún no arranca";
+      ui().showToast(`${why}: ${AGENTS[agent].title} se abre junto al panel.`);
+      state().setActivePane(paneId, { focus: false });
+      await actions.openAgentInSplit(agent);
+      return;
+    }
+    guardQuota(agent, () => terminalManager.run(paneId, typedAgent(agent, paneId)));
   },
 
   openAgentInTab: async (agent: AgentKind) => {
@@ -286,7 +331,7 @@ export const actions = {
       ...(current ? collectPanes(current.root) : []),
       ...tabs.filter((t) => t !== current).flatMap((t) => collectPanes(t.root)),
     ];
-    const target = candidates.find((p) => p.agentType && p.id !== source);
+    const target = candidates.find((p) => liveAgent(state(), p) && p.id !== source);
     if (!target) {
       ui().showToast("No hay ningún agente abierto.");
       return;
@@ -385,7 +430,8 @@ export const actions = {
     const tab = paneId ? findOwnerTab(state().tabs, paneId) : undefined;
     const pane = tab && paneId ? findPane(tab.root, paneId) : undefined;
     if (!pane) return;
-    if (!pane.agentType) {
+    // Una ya abierta se puede plegar aunque el agente haya salido.
+    if (!liveAgent(state(), pane) && !pane.drawer) {
       ui().showToast("La terminal acoplada es para paneles de agente; para otra shell aquí, divide el panel.");
       return;
     }

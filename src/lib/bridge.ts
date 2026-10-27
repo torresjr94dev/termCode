@@ -4,12 +4,12 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 import { invoke } from "@tauri-apps/api/core";
-import { findDrawerOwner, useTerminalStore } from "../store/terminalStore";
+import { findDrawerOwner, liveAgent, useTerminalStore } from "../store/terminalStore";
 import { useSidebarStore } from "../store/sidebarStore";
 import { useUiStore } from "../store/uiStore";
 import { settingsNow } from "../store/settingsStore";
 import { terminalManager } from "../terminal/TerminalManager";
-import type { CommandRecord } from "../terminal/commands";
+import { commandAgent, type CommandRecord } from "../terminal/commands";
 import type { ProgramState, ProgramStatus } from "../terminal/programStatus";
 import type { FileLinkTarget } from "../terminal/links";
 import { collectPanes, findOwnerTab, findPane } from "./layout";
@@ -17,7 +17,6 @@ import { IS_TAURI, ipc } from "./ipc";
 import { formatDuration } from "./format";
 import { startApprovals } from "./approvals";
 import { onAgentDone } from "./race";
-import { renderWelcome } from "./welcome";
 import { cleanTitle } from "./identity";
 import { info as logInfo } from "@tauri-apps/plugin-log";
 import { basename } from "./paths";
@@ -123,11 +122,28 @@ function onProgramStatus(paneId: string, status: ProgramStatus) {
 }
 
 /**
- * Volvió el prompt de la shell: lo que reportaba salió sin decir `clear` (se
- * cerró de golpe). El spec deja ver un `done` hasta que lo mires; eso ya lo
- * guarda la marca de atención, así que el panel deja de contar como agente.
+ * Un `claude` o `codex` escrito en la shell: el panel cuenta como agente desde
+ * ya (cabecera, barra de estado, Mission Control), sin esperar a que el
+ * agente se anuncie por OSC 7501, cosa que Codex y los Claude viejos no hacen.
+ */
+function onCommandStart(paneId: string, command: string) {
+  const agent = commandAgent(command);
+  if (agent) state().setRunningAgent(paneId, agent);
+}
+
+/**
+ * Volvió el prompt de la shell: lo que corría ya no está. Un agente escrito a
+ * mano se lleva su modelo y su contexto (el panel vuelve a ser una shell). Si
+ * reportaba por OSC 7501 y salió sin decir `clear` (se cerró de golpe), el
+ * spec deja ver un `done` hasta que lo mires; eso ya lo guarda la marca de
+ * atención, así que el panel deja de contar como agente.
  */
 function onPrompt(paneId: string) {
+  const owner = findOwnerTab(state().tabs, paneId);
+  if (owner && !findPane(owner.root, paneId)?.agentType) {
+    state().setRunningAgent(paneId, null);
+    state().clearAgentStatus(paneId);
+  }
   if (!lastProgramState.delete(paneId)) return;
   if (state().agentActivity[paneId]?.source === "osc") state().clearAgentActivity(paneId);
   settleNeedsInput(paneId);
@@ -209,7 +225,7 @@ async function resolveProject(paneId: string, cwd: string) {
  */
 async function pollCodex() {
   if (document.visibilityState !== "visible") return;
-  const panes = state().tabs.flatMap((t) => collectPanes(t.root)).filter((p) => p.agentType === "codex");
+  const panes = state().tabs.flatMap((t) => collectPanes(t.root)).filter((p) => liveAgent(state(), p) === "codex");
   await Promise.all(
     panes.map(async (pane) => {
       const status = await terminalManager.codexStatus(pane.id);
@@ -273,7 +289,7 @@ export function startBridge({ isMainWindow }: { isMainWindow: boolean }): () => 
     onOpenPath: (target) => void openPath(target),
     onProgramStatus,
     onPrompt,
-    renderWelcome,
+    onCommandStart,
   });
 
   // Títulos visibles → registro del MCP (para que el agente reconozca "el panel del servidor").

@@ -1,5 +1,5 @@
 import { useProjectStore } from "../store/projectStore";
-import { useTerminalStore } from "../store/terminalStore";
+import { liveAgent, useTerminalStore } from "../store/terminalStore";
 import { useUiStore } from "../store/uiStore";
 import { terminalManager } from "../terminal/TerminalManager";
 import type { CommandRecord } from "../terminal/commands";
@@ -84,7 +84,8 @@ export function explainFailure(paneId: string, record?: CommandRecord) {
   if (!found) return;
   const output = terminalManager.getTracker(paneId)?.output(found) ?? "";
   const prompt = explainPrompt(found.command.split("\n")[0], found.cwd, found.exitCode, output);
-  const hasAgent = useTerminalStore.getState().tabs.some((t) => collectPanes(t.root).some((p) => p.agentType));
+  const store = useTerminalStore.getState();
+  const hasAgent = store.tabs.some((t) => collectPanes(t.root).some((p) => liveAgent(store, p)));
   if (hasAgent) {
     actions.sendTextToAgent(prompt);
     toast("Error pegado en el agente: revísalo y pulsa Enter para mandarlo.");

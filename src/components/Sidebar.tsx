@@ -17,7 +17,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useTerminalStore, type PaneProject } from "../store/terminalStore";
+import { liveAgent, usePaneAgent, useTerminalStore, type PaneProject } from "../store/terminalStore";
 import { useApprovalStore } from "../store/approvalStore";
 import { useProjectStore } from "../store/projectStore";
 import { placesToShow, useSidebarStore, type SidebarSection } from "../store/sidebarStore";
@@ -26,7 +26,7 @@ import { actions, AGENTS, type AgentKind } from "../lib/actions";
 import { basename, cn, collectPanes, findPane } from "../lib/layout";
 import { paneDisplayName, projectTone, shortCommand, tabDisplayName } from "../lib/identity";
 import { formatDuration } from "../lib/format";
-import { agentStateOf, paneAgent } from "../lib/attention";
+import { agentStateOf } from "../lib/attention";
 import { parentDir } from "../lib/cd";
 import { shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
 import { useLastCommand } from "../terminal/useRunningCommand";
@@ -156,6 +156,8 @@ const SessionItem: React.FC<{ tab: Tab; index: number; active: boolean }> = ({ t
 /** Paneles de la pestaña activa, cada uno con su carpeta (dos «Claude Code» dejan de verse iguales). */
 const PaneList: React.FC<{ tab: Tab; panes: PaneNode[] }> = ({ tab, panes }) => {
   const paneProject = useTerminalStore((s) => s.paneProject);
+  const agentActivity = useTerminalStore((s) => s.agentActivity);
+  const runningAgent = useTerminalStore((s) => s.runningAgent);
   const attention = useTerminalStore((s) => s.attention);
   const approvals = useApprovalStore((s) => s.requests);
   return (
@@ -163,7 +165,8 @@ const PaneList: React.FC<{ tab: Tab; panes: PaneNode[] }> = ({ tab, panes }) => 
       {panes.map((pane) => {
         const focused = pane.id === tab.activePaneId;
         const cwd = paneProject[pane.id]?.cwd ?? pane.cwd;
-        const Icon = pane.agentType === "codex" ? Hexagon : pane.agentType === "claude" ? Asterisk : SquareTerminal;
+        const agent = liveAgent({ agentActivity, runningAgent }, pane);
+        const Icon = agent === "codex" ? Hexagon : agent === "claude" ? Asterisk : SquareTerminal;
         return (
           <li key={pane.id}>
             <button
@@ -175,7 +178,7 @@ const PaneList: React.FC<{ tab: Tab; panes: PaneNode[] }> = ({ tab, panes }) => 
                 focused ? "bg-hover text-ink" : "text-ink-3 hover:bg-hover hover:text-ink-2",
               )}
             >
-              <Icon size={12.5} strokeWidth={1.9} aria-hidden="true" className={cn("shrink-0", pane.agentType && "text-accent")} />
+              <Icon size={12.5} strokeWidth={1.9} aria-hidden="true" className={cn("shrink-0", agent && "text-accent")} />
               <span className="min-w-0 shrink truncate text-[12.5px]">{paneDisplayName(pane, paneProject[pane.id])}</span>
               {cwd && <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-ink-3">{basename(cwd)}</span>}
               {/* Te necesita (marca o permiso pendiente): eso manda sobre el contexto. */}
@@ -190,12 +193,13 @@ const PaneList: React.FC<{ tab: Tab; panes: PaneNode[] }> = ({ tab, panes }) => 
 
 /** Ícono de la sesión: el agente o una terminal; el punto es el color estable de su proyecto. */
 const SessionIcon: React.FC<{ pane: PaneNode; project?: PaneProject }> = ({ pane, project }) => {
-  const Icon = pane.agentType === "codex" ? Hexagon : pane.agentType === "claude" ? Asterisk : pane.ssh ? Server : SquareTerminal;
+  const agent = usePaneAgent(pane);
+  const Icon = agent === "codex" ? Hexagon : agent === "claude" ? Asterisk : pane.ssh ? Server : SquareTerminal;
   return (
     <span
       className={cn(
         "relative mt-0.5 grid size-7 shrink-0 place-items-center rounded-[9px]",
-        pane.agentType ? "bg-accent/12 text-accent" : "bg-hover text-ink-3",
+        agent ? "bg-accent/12 text-accent" : "bg-hover text-ink-3",
       )}
     >
       <Icon size={14} strokeWidth={1.9} aria-hidden="true" />
@@ -240,10 +244,11 @@ const PaneActivity: React.FC<{ pane: PaneNode; extraPanes: number }> = ({ pane, 
   const attention = useTerminalStore((s) => s.attention[pane.id]);
   const waiting = useApprovalStore((s) => s.requests.some((r) => r.paneId === pane.id));
   const last = useLastCommand(pane.id);
+  const agent = usePaneAgent(pane);
 
   let text: string | null = null;
   let tone = "text-ink-3";
-  if (paneAgent(pane, activity)) {
+  if (agent) {
     const state = agentStateOf(activity, attention, waiting);
     if (state === "needs-input") {
       text = waiting ? "Espera tu permiso" : "Te necesita";
@@ -285,7 +290,8 @@ function where(cwd: string, project?: PaneProject): string {
 /** Contexto que le queda al agente: barra de lo usado y cuánto queda, escrito. */
 const ContextLine: React.FC<{ pane: PaneNode }> = ({ pane }) => {
   const status = useTerminalStore((s) => s.agentStatus[pane.id]);
-  if (!pane.agentType || status?.contextPercent == null) return null;
+  const agent = usePaneAgent(pane);
+  if (!agent || status?.contextPercent == null) return null;
   const used = Math.min(Math.max(status.contextPercent, 0), 100);
   const tone = toneFor(used);
   return (
@@ -306,7 +312,8 @@ const ContextLine: React.FC<{ pane: PaneNode }> = ({ pane }) => {
 /** Contexto del agente en la lista compacta de paneles: el anillo se llena con lo usado, el número es lo que queda. */
 const ContextBadge: React.FC<{ pane: PaneNode }> = ({ pane }) => {
   const status = useTerminalStore((s) => s.agentStatus[pane.id]);
-  if (!pane.agentType || status?.contextPercent == null) return null;
+  const agent = usePaneAgent(pane);
+  if (!agent || status?.contextPercent == null) return null;
   const free = Math.round(100 - status.contextPercent);
   return (
     <span title={`Contexto: queda ${free} %`} className="flex shrink-0 items-center gap-1 font-mono text-[10.5px] tabular-nums text-ink-3">

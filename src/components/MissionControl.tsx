@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Asterisk, Eye, Flag, GitBranch, GitMerge, Hexagon, RotateCcw, Trash2, X } from "lucide-react";
-import { useTerminalStore } from "../store/terminalStore";
+import { liveAgent, usePaneAgent, useTerminalStore } from "../store/terminalStore";
 import { useUiStore } from "../store/uiStore";
 import { useProjectStore } from "../store/projectStore";
 import { terminalManager } from "../terminal/TerminalManager";
@@ -17,7 +17,7 @@ import { useTrafficLights } from "../lib/fullscreen";
 import type { AgentWorktree, PaneNode, Tab } from "../types/layout";
 import { IconButton, Lamp, Ring } from "./ui";
 import { cleanTitle } from "../lib/identity";
-import { agentStateOf, agentSummary, paneAgent } from "../lib/attention";
+import { agentStateOf, agentSummary } from "../lib/attention";
 import { useApprovalStore } from "../store/approvalStore";
 import { TextButton } from "./project/common";
 
@@ -36,6 +36,7 @@ export const MissionControl: React.FC<{ onClosed: () => void }> = ({ onClosed })
 const MissionPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
   const tabs = useTerminalStore((s) => s.tabs);
   const activity = useTerminalStore((s) => s.agentActivity);
+  const running = useTerminalStore((s) => s.runningAgent);
   const attention = useTerminalStore((s) => s.attention);
   const status = useTerminalStore((s) => s.agentStatus);
   const approvals = useApprovalStore((s) => s.requests);
@@ -46,10 +47,10 @@ const MissionPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
   const now = useNow(1000);
   const lightsGap = useTrafficLights();
 
-  // También los agentes escritos a mano en una shell, si se anunciaron por OSC 7501.
+  // También los agentes escritos a mano en una shell.
   const agents: Array<{ pane: PaneNode; tab: Tab }> = tabs.flatMap((tab) =>
     collectPanes(tab.root)
-      .filter((pane) => paneAgent(pane, activity[pane.id]))
+      .filter((pane) => liveAgent({ agentActivity: activity, runningAgent: running }, pane))
       .map((pane) => ({ pane, tab })),
   );
 
@@ -82,7 +83,7 @@ const MissionPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
       <div data-tauri-drag-region className={cn("flex h-12 shrink-0 items-center gap-3 border-b border-line pr-4", lightsGap ? "pl-[88px]" : "pl-5")}>
         <h2 className="text-[15px] font-semibold text-ink">Agentes</h2>
         <span className="rounded-full bg-hover px-2 font-mono text-[11px] leading-5 text-ink-2">{agents.length} abiertos</span>
-        <AgentCounts summary={agentSummary(tabs, activity, attention, status, approvals)} />
+        <AgentCounts summary={agentSummary(tabs, activity, attention, status, approvals, running)} />
         <span className="flex-1" />
         <TextButton onClick={() => setRacing(true)} disabled={!repo} title={repo ? undefined : "Abre un panel dentro de un repositorio git"}>
           <Flag size={13} strokeWidth={1.75} aria-hidden="true" /> Carrera de agentes
@@ -156,7 +157,8 @@ const AgentCard: React.FC<{ pane: PaneNode; tab: Tab; now: number; onGo: () => v
   while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
   const cwd = terminalManager.knownCwd(pane.id) ?? pane.cwd;
   const title = cleanTitle(pane.title);
-  const Glyph = paneAgent(pane, activity) === "codex" ? Hexagon : Asterisk;
+  const agent = usePaneAgent(pane);
+  const Glyph = agent === "codex" ? Hexagon : Asterisk;
 
   const go = () => {
     onGo();
@@ -221,7 +223,7 @@ const AgentCard: React.FC<{ pane: PaneNode; tab: Tab; now: number; onGo: () => v
           Ir al panel
         </TextButton>
         {/* Las fotos del repo las toman los hooks de Claude Code; Codex no tiene. */}
-        {pane.agentType === "claude" && (
+        {agent === "claude" && (
           <>
             <TextButton
               onClick={() => {

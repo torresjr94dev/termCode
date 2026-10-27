@@ -40,8 +40,8 @@ export interface Settings {
   agentsReadPanes: boolean;
   /** Los permisos de Claude se aprueban desde la bandeja, sin ir a su panel. */
   approvalsInApp: boolean;
-  /** Bienvenida al abrir una pestaña de shell: la más grande que quepa, compacta o nada. */
-  welcomeBanner: "full" | "compact" | "off";
+  /** Barra arriba de cada shell (carpeta, rama, abrir un agente ahí). Los agentes y las divisiones la llevan siempre. */
+  paneBar: boolean;
   screenReader: boolean;
   /** Ruta de la shell de las pestañas nuevas; vacío = la del sistema. */
   defaultShell: string;
@@ -75,7 +75,7 @@ export const DEFAULT_SETTINGS: Settings = {
   quotaGuard: true,
   agentsReadPanes: true,
   approvalsInApp: true,
-  welcomeBanner: "full",
+  paneBar: true,
   defaultShell: "",
   screenReader: false,
   holdHints: true,
@@ -122,7 +122,8 @@ export function sanitize(input: unknown): Settings {
     quotaGuard: pick("quotaGuard", isBool),
     agentsReadPanes: pick("agentsReadPanes", isBool),
     approvalsInApp: pick("approvalsInApp", isBool),
-    welcomeBanner: pick("welcomeBanner", oneOf("full", "compact", "off")),
+    // La barra reemplazó a la tarjeta de bienvenida (0.5.0): quien la había apagado, tampoco ve la barra.
+    paneBar: isBool(raw.paneBar) ? (raw.paneBar as boolean) : (raw as Record<string, unknown>).welcomeBanner !== "off",
     defaultShell: pick("defaultShell", (v) => typeof v === "string" && v.length < 4096),
     screenReader: pick("screenReader", isBool),
     holdHints: pick("holdHints", isBool),

@@ -564,13 +564,6 @@
   background-color: transparent !important;
 }
 
-/* La tarjeta de bienvenida vive en una decoración de xterm: recibe clics y se sale del ancho de 1 celda. */
-.xterm .welcome-decoration {
-  pointer-events: auto;
-  overflow: visible;
-  z-index: 7;
-}
-
 .xterm-viewport::-webkit-scrollbar {
   width: 8px;
 }

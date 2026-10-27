@@ -45,8 +45,6 @@ export interface PaneNode {
   agentSession?: AgentSessionRef;
   /** Al restaurar: aquí había un agente y se puede reanudar con un clic. */
   resumable?: ResumableAgent;
-  /** Pestaña de shell recién abierta: muestra la bienvenida antes del prompt (no se guarda). */
-  welcome?: boolean;
   /** Shell acoplada abajo del agente, en su carpeta, sin dividir el panel. */
   drawer?: PaneDrawer;
 }
