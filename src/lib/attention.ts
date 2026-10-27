@@ -1,5 +1,5 @@
 import type { Attention } from "../store/terminalStore";
-import type { AgentActivity, AgentStatus, Tab } from "../types/layout";
+import type { AgentActivity, AgentKind, AgentStatus, PaneNode, Tab } from "../types/layout";
 import { collectPanes } from "./layout";
 
 export interface PaneRef {
@@ -11,6 +11,37 @@ export interface AttentionCandidate extends PaneRef {
   /** 0 = te necesita (permiso, pregunta), 1 = el resto (terminó, falló, campana). */
   rank: number;
   at: number;
+}
+
+export type AgentState = "working" | "needs-input" | "idle";
+
+/** Programas que se anuncian por OSC 7501 y son agentes (Map: un `app` no puede ser `constructor`). */
+const OSC_AGENTS = new Map<string, AgentKind>([
+  ["claude-code", "claude"],
+  ["codex", "codex"],
+]);
+
+/**
+ * El agente del panel: el que lanzó termCode o el que se anunció por OSC 7501
+ * (un `claude` escrito a mano en una shell también cuenta).
+ */
+export function paneAgent(pane: PaneNode, activity?: AgentActivity): AgentKind | null {
+  if (pane.agentType) return pane.agentType;
+  return activity?.source === "osc" && activity.app ? (OSC_AGENTS.get(activity.app) ?? null) : null;
+}
+
+/**
+ * El estado de un agente en una sola regla para toda la interfaz (Mission
+ * Control, barra lateral, barra de estado, campana). Manda lo que el agente
+ * reporta ahora; la marca de atención "te necesita" solo cuenta si no hay
+ * nada más (un aviso por OSC 9 de un agente sin hooks), porque una marca
+ * vieja no puede contradecir a un agente que ya siguió trabajando.
+ */
+export function agentStateOf(activity: AgentActivity | undefined, attention: Attention | undefined, waitingApproval = false): AgentState {
+  if (waitingApproval || activity?.state === "needs-input") return "needs-input";
+  if (activity?.state === "working") return "working";
+  if (!activity && attention?.kind === "needs-input") return "needs-input";
+  return "idle";
 }
 
 /**
@@ -32,9 +63,9 @@ export function attentionCandidates(
       if (pane.id === currentPaneId) continue;
       const approval = approvals.find((a) => a.paneId === pane.id);
       const seen = attention[pane.id];
-      const blocked = activity[pane.id]?.state === "needs-input";
-      if (approval || seen?.kind === "needs-input" || blocked) {
-        const at = approval?.at ?? seen?.at ?? activity[pane.id]?.at ?? 0;
+      const live = activity[pane.id];
+      if (agentStateOf(live, seen, Boolean(approval)) === "needs-input") {
+        const at = approval?.at ?? (live?.state === "needs-input" ? live.at : seen?.at) ?? 0;
         candidates.push({ tabId: tab.id, paneId: pane.id, rank: 0, at });
       } else if (seen) {
         candidates.push({ tabId: tab.id, paneId: pane.id, rank: 1, at: seen.at });
@@ -69,14 +100,11 @@ export function agentSummary(
   const summary: AgentSummary = { agents: 0, working: 0, waiting: 0, costUsd: null };
   for (const tab of tabs) {
     for (const pane of collectPanes(tab.root)) {
-      if (!pane.agentType) continue;
+      if (!paneAgent(pane, activity[pane.id])) continue;
       summary.agents++;
-      const waiting =
-        approvals.some((a) => a.paneId === pane.id) ||
-        attention[pane.id]?.kind === "needs-input" ||
-        activity[pane.id]?.state === "needs-input";
-      if (waiting) summary.waiting++;
-      else if (activity[pane.id]?.state === "working") summary.working++;
+      const state = agentStateOf(activity[pane.id], attention[pane.id], approvals.some((a) => a.paneId === pane.id));
+      if (state === "needs-input") summary.waiting++;
+      else if (state === "working") summary.working++;
       const cost = status[pane.id]?.costUsd;
       if (cost != null) summary.costUsd = (summary.costUsd ?? 0) + cost;
     }

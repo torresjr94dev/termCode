@@ -139,6 +139,13 @@ export interface AgentActivity {
   state: string;
   detail: string;
   at: number;
+  /**
+   * De dónde salió: `osc` lo dijo el propio programa por su PTY (OSC 7501) y
+   * manda sobre `hook` (archivos de los hooks de Claude Code, por sondeo).
+   */
+  source?: "osc" | "hook";
+  /** Programa que se anunció por OSC 7501 (`claude-code`, `codex`…). */
+  app?: string | null;
 }
 
 export interface AgentSessionEvent {

@@ -733,6 +733,96 @@ const TESTS = [
     },
   },
   {
+    name: "estado-agentes-osc",
+    async run(p) {
+      // Un `claude` escrito a mano en una shell: se anuncia por OSC 7501 y su estado
+      // manda (antes, una marca "te necesita" vieja ganaba y nunca se iba).
+      const id = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        await (await mod("/src/lib/actions.ts")).actions.newTab();
+        const s = useTerminalStore.getState();
+        const id = s.tabs.find((t) => t.id === s.activeTabId).activePaneId;
+        const focused = () => document.activeElement?.closest("[data-pane-id]")?.dataset.paneId;
+        for (let i = 0; i < 75 && (focused() !== id || !terminalManager.getTerminal(id)); i++) await new Promise((r) => setTimeout(r, 40));
+        if (focused() !== id) throw new Error("la terminal nueva nunca tomó el foco");
+        return id;`);
+      const helpers = `
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        const id = ${JSON.stringify(id)};
+        const inst = terminalManager.instances.get(id);
+        const flush = () => new Promise((resolve) => inst.term.write("", resolve));
+        const b64 = (t) => btoa(String.fromCharCode(...new TextEncoder().encode(t)));
+        const osc = (body) => terminalManager.receiveForTesting(id, "\\x1b]7501;" + body + "\\x1b\\\\");
+        const writes = () => inst.pendingInput.map((w) => w.args.data);`;
+
+      // La consulta se contesta antes que la de `CSI c` que el programa manda detrás.
+      const replies = await p.run(`${helpers}
+        inst.pendingInput.length = 0;
+        terminalManager.receiveForTesting(id, "\\x1b]7501;?\\x1b\\\\\\x1b[c");
+        await flush();
+        return writes();`);
+      if (replies[0] !== "\x1b]7501;?\x1b\\" || !replies[1]?.startsWith("\x1b[?")) throw new Error(`Respuestas: ${JSON.stringify(replies)}`);
+
+      await p.run(`${helpers}
+        useTerminalStore.getState().setAttention(id, { kind: "needs-input", message: "", at: Date.now() });
+        osc("state=working:app=claude-code:msg=" + b64("Editando schema.ts"));
+        await flush();`);
+      const settled = await p.run(`${helpers} return !useTerminalStore.getState().attention[id];`);
+      if (!settled) throw new Error("La marca 'te necesita' siguió aunque el agente ya trabajaba");
+
+      await p.shortcut("missionControl");
+      const card = `[...document.querySelectorAll('[aria-label="Mission Control de agentes"] article')].find((a) => a.textContent.includes("Editando schema.ts"))`;
+      await p.waitFor(`${card}?.textContent.includes("Trabajando")`, "Mission Control lista al agente escrito a mano, trabajando");
+      await p.run(`${helpers} osc("state=blocked:kind=permission:app=claude-code:msg=" + b64("Bash: pnpm add zod")); await flush();`);
+      await p.waitFor(`[...document.querySelectorAll('[aria-label="Mission Control de agentes"] article')].some((a) => a.textContent.includes("Te necesita") && a.textContent.includes("pnpm add zod"))`, "pasa a te necesita");
+      await p.run(`${helpers} osc("state=done:app=claude-code:msg=" + b64("Listo: paginación agregada")); await flush();`);
+      await p.waitFor(`[...document.querySelectorAll('[aria-label="Mission Control de agentes"] article')].some((a) => a.textContent.includes("Esperando instrucciones") && a.textContent.includes("paginación agregada"))`, "al terminar espera instrucciones");
+      await p.screenshot("estado-agentes-osc");
+      // Mission Control tapa todo: nada de las terminales (p. ej. la tarjeta de bienvenida) queda
+      // encima. Los avisos (toasts) sí van sobre todo, a propósito.
+      const leaks = await p.run(`
+        const dialog = document.querySelector('[aria-label="Mission Control de agentes"]');
+        const out = [];
+        for (let x = 20; x < innerWidth; x += 60) for (let y = 20; y < innerHeight; y += 60) {
+          const el = document.elementFromPoint(x, y);
+          if (el && !dialog.contains(el) && !el.closest('[role="status"], [role="alert"]')) out.push(x + "," + y + " " + (el.className?.toString?.() ?? el.tagName).slice(0, 60));
+        }
+        return out.slice(0, 8);`);
+      if (leaks.length) throw new Error(`Algo se ve por encima de Mission Control: ${JSON.stringify(leaks)}`);
+      await p.press("Escape");
+      await p.waitFor(`!document.querySelector('[aria-label="Mission Control de agentes"]')`, "Esc cierra Mission Control");
+      await p.run(`
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        const id = ${JSON.stringify(id)};
+        const focused = () => document.activeElement?.closest("[data-pane-id]")?.dataset.paneId;
+        terminalManager.focus(id);
+        for (let i = 0; i < 50 && focused() !== id; i++) await new Promise((r) => setTimeout(r, 40));`);
+
+      // Shift+Enter: salto de línea (Ctrl+J) para el agente; Enter normal en la shell.
+      await p.run(`${helpers} inst.pendingInput.length = 0;`);
+      await p.press("Enter", 8);
+      const agentKeys = await p.run(`${helpers} await new Promise((r) => setTimeout(r, 100)); return writes();`);
+      if (JSON.stringify(agentKeys) !== JSON.stringify(["\n"])) throw new Error(`Shift+Enter en el agente mandó ${JSON.stringify(agentKeys)}`);
+      await p.run(`${helpers} osc("state=clear"); await flush(); inst.pendingInput.length = 0;`);
+      await p.press("Enter", 8);
+      const shellKeys = await p.run(`${helpers} await new Promise((r) => setTimeout(r, 100)); return writes();`);
+      if (JSON.stringify(shellKeys) !== JSON.stringify(["\r"])) throw new Error(`Shift+Enter en la shell mandó ${JSON.stringify(shellKeys)}`);
+      const gone = await p.run(`${helpers} return !useTerminalStore.getState().agentActivity[id];`);
+      if (!gone) throw new Error("Tras `clear` el panel debía dejar de contar como agente");
+      // Si el agente muere sin `clear`, el siguiente prompt de la shell lo da por ido.
+      const afterCrash = await p.run(`${helpers}
+        osc("state=working:app=claude-code");
+        await flush();
+        const before = useTerminalStore.getState().agentActivity[id]?.state;
+        terminalManager.receiveForTesting(id, "\\x1b]133;A\\x07% ");
+        await flush();
+        return { before, after: useTerminalStore.getState().agentActivity[id]?.state ?? null };`);
+      if (afterCrash.before !== "working" || afterCrash.after !== null) throw new Error(`Tras el prompt: ${JSON.stringify(afterCrash)}`);
+    },
+  },
+  {
     name: "revision-al-agente",
     async run(p) {
       await p.run(`

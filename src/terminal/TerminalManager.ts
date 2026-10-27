@@ -20,6 +20,7 @@ import { fileLinkProvider, type FileLinkTarget } from "./links";
 import { sanitizePaste } from "./paste";
 import { initialClearState, welcomeCut, type ClearState } from "./clear";
 import { XTERM_THEMES } from "./themes";
+import { parseProgramStatus, PROGRAM_STATUS_REPLY, type ProgramStatus } from "./programStatus";
 
 export const FONT_SIZE = { min: 9, max: 24, default: DEFAULT_SETTINGS.fontSize } as const;
 
@@ -92,6 +93,14 @@ interface TerminalInstance {
   ackScheduled: boolean;
   /** Lo que xterm o el usuario escribieron antes de conocer el id de la sesión. */
   pendingInput: Array<{ command: string; args: Record<string, unknown> }>;
+  /**
+   * Escrituras al PTY, una tras otra: dos `invoke` seguidos pueden ejecutarse
+   * en paralelo en el backend y cruzarse (p. ej. la respuesta a OSC 7501 y la
+   * de `CSI c` que el programa manda justo detrás para saber si contestamos).
+   */
+  inputChain: Promise<void>;
+  /** Lo último que dijo el programa del panel por OSC 7501 (registro raíz). */
+  program: ProgramStatus | null;
   /** Shell (no agente): tras `clear` vuelve a dar la bienvenida. */
   isShell: boolean;
   /** La tarjeta de bienvenida visible (una a la vez). */
@@ -115,6 +124,10 @@ interface StoreHooks {
   onCommandFinished: (paneId: string, record: CommandRecord) => void;
   /** La shell avisó de un cambio de carpeta (OSC 7). */
   onCwd: (paneId: string, cwd: string) => void;
+  /** El programa del panel reportó su estado (OSC 7501). */
+  onProgramStatus: (paneId: string, status: ProgramStatus) => void;
+  /** La shell volvió a su prompt: lo que corría (un agente, un comando) ya no está. */
+  onPrompt: (paneId: string) => void;
   /** ⌘-clic en una ruta de archivo de la salida. */
   onOpenPath: (target: FileLinkTarget) => void;
   /** Bienvenida para un panel de ese tamaño (`null` = no cabe o está desactivada). */
@@ -170,6 +183,16 @@ function handleClipboardKey(term: Terminal, e: KeyboardEvent): boolean {
   }
   // Sin preventDefault: el navegador dispara `paste` sobre la textarea de xterm.
   return letter !== "v";
+}
+
+/** Un agente escrito a mano en la shell (`claude`, `/opt/bin/codex --model …`). */
+const AGENT_COMMAND = /^(?:\S*\/)?(?:claude|codex)(?:\s|$)/;
+/** Programas de OSC 7501 cuyo prompt es multilínea con Ctrl+J. */
+const MULTILINE_APPS = new Set(["claude-code", "codex"]);
+
+/** Shift+Enter sin más modificadores (y sin IME a medio componer). */
+function isShiftEnter(e: KeyboardEvent): boolean {
+  return e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing;
 }
 
 /**
@@ -271,7 +294,6 @@ class TerminalManager {
       ...(this.windowsPty ? { windowsPty: this.windowsPty } : {}),
       ...terminalOptions(this.settings),
     });
-    term.attachCustomKeyEventHandler((e) => handleClipboardKey(term, e));
 
     const fitAddon = new FitAddon();
     const searchAddon = new SearchAddon({ highlightLimit: 2000 });
@@ -297,6 +319,11 @@ class TerminalManager {
         term,
         (record) => this.hooks?.onCommandFinished(id, record),
         (cwd) => this.hooks?.onCwd(id, cwd),
+        () => {
+          // Volvió el prompt: el programa que reportaba por OSC 7501 ya no está (salió sin `clear`).
+          instance.program = null;
+          this.hooks?.onPrompt(id);
+        },
       ),
       progress: { state: 0, value: 0 },
       container: null,
@@ -304,6 +331,8 @@ class TerminalManager {
       pendingAck: 0,
       ackScheduled: false,
       pendingInput: [],
+      inputChain: Promise.resolve(),
+      program: null,
       isShell: false,
       welcomeCard: null,
       clear: initialClearState(),
@@ -312,6 +341,7 @@ class TerminalManager {
       dispose: [],
     };
     instance.dispose.push(instance.tracker.attach());
+    term.attachCustomKeyEventHandler((e) => this.handleKey(instance, e));
 
     const progressSub = progressAddon.onChange((state) => {
       instance.progress = state;
@@ -319,14 +349,18 @@ class TerminalManager {
     });
     instance.dispose.push(() => progressSub.dispose());
 
+    // Broadcast solo desde el panel con el teclado: `onData` también trae las
+    // respuestas automáticas de xterm (`CSI c`, posición del cursor, foco), y
+    // las de un panel de fondo no deben escribirse en todos los demás.
+    const broadcasting = () => Boolean(this.hooks?.isBroadcastEnabled()) && this.hasFocus(instance);
     term.onData((data) => {
-      if (this.hooks?.isBroadcastEnabled()) this.broadcast("pty_write", { data });
+      if (broadcasting()) this.broadcast("pty_write", { data });
       else this.send(instance, "pty_write", { data });
     });
     // Bytes no UTF-8 (reportes de ratón antiguos): van tal cual, no como texto.
     term.onBinary((data) => {
       const bytes = Array.from(data, (c) => c.charCodeAt(0) & 0xff);
-      if (this.hooks?.isBroadcastEnabled()) this.broadcast("pty_write_bytes", { data: bytes });
+      if (broadcasting()) this.broadcast("pty_write_bytes", { data: bytes });
       else this.send(instance, "pty_write_bytes", { data: bytes });
     });
 
@@ -349,6 +383,19 @@ class TerminalManager {
       const [command, title = "", body = ""] = data.split(";");
       if (command !== "notify") return false;
       this.hooks?.onAttention(id, "notify", [title, body].filter(Boolean).join(": "));
+      return true;
+    });
+    // OSC 7501: el programa dice qué hace. A la consulta se contesta siempre
+    // (es lo único que devolvemos); los informes van al estado del panel.
+    term.parser.registerOscHandler(7501, (data) => {
+      const report = parseProgramStatus(data);
+      if (report === "query") {
+        this.send(instance, "pty_write", { data: PROGRAM_STATUS_REPLY });
+      } else if (report && report.id === null) {
+        // Solo el registro raíz: los hijos (subagentes, tareas) los resume el propio programa.
+        instance.program = report.state === "clear" ? null : report;
+        this.hooks?.onProgramStatus(id, report);
+      }
       return true;
     });
 
@@ -647,9 +694,45 @@ class TerminalManager {
       }
       return;
     }
-    invoke(command, { id: instance.backendSessionId, ...args }).catch((err) =>
-      console.warn(`[termCode] ${command}:`, err),
+    const id = instance.backendSessionId;
+    const call = () => invoke(command, { id, ...args }).then(
+      () => {},
+      (err) => console.warn(`[termCode] ${command}:`, err),
     );
+    if (INPUT_COMMANDS.has(command)) instance.inputChain = instance.inputChain.then(call);
+    else void call();
+  }
+
+  /** El teclado está en este terminal (no en otro panel ni en un diálogo). */
+  private hasFocus(instance: TerminalInstance): boolean {
+    const element = instance.term.element;
+    return Boolean(element && document.activeElement && element.contains(document.activeElement));
+  }
+
+  /**
+   * Hay un agente en primer plano: el panel se abrió como agente, el programa
+   * se anunció como tal por OSC 7501, o la shell dice que corre `claude`/`codex`.
+   */
+  private agentInForeground(instance: TerminalInstance): boolean {
+    if (!instance.isShell) return true;
+    if (instance.program?.app && MULTILINE_APPS.has(instance.program.app)) return true;
+    return AGENT_COMMAND.test(instance.tracker.running()?.command ?? "");
+  }
+
+  /**
+   * Teclas antes de xterm. Shift+Enter en un agente es un salto de línea:
+   * xterm manda el mismo `\r` que Enter (no habla el protocolo de teclado de
+   * kitty), así que se envía Ctrl+J, que Claude Code y Codex leen como salto
+   * de línea en cualquier terminal. En una shell, Shift+Enter sigue siendo
+   * Enter (nano, por ejemplo, usa Ctrl+J para justificar).
+   */
+  private handleKey(instance: TerminalInstance, e: KeyboardEvent): boolean {
+    if (isShiftEnter(e) && this.agentInForeground(instance)) {
+      e.preventDefault();
+      if (e.type === "keydown") instance.term.input("\n");
+      return false;
+    }
+    return handleClipboardKey(instance.term, e);
   }
 
   private broadcast(command: string, args: Record<string, unknown>) {

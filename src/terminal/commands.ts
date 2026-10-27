@@ -83,6 +83,8 @@ export class CommandTracker {
     private readonly term: Terminal,
     private readonly onFinished: (record: CommandRecord) => void,
     private readonly onCwd: (cwd: string) => void,
+    /** La shell volvió a su prompt: lo que corría en el panel ya terminó. */
+    private readonly onPrompt: () => void = () => {},
   ) {}
 
   /** Conecta los manejadores OSC. Devuelve cómo desconectarlos. */
@@ -128,6 +130,7 @@ export class CommandTracker {
         this.lastPrompt = this.term.registerMarker(0);
         // El primer prompt: la shell terminó de arrancar (quien espera ese momento se entera).
         if (first) this.changed();
+        this.onPrompt();
         return true;
       }
       case "C": {

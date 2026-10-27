@@ -26,6 +26,7 @@ import { actions, AGENTS, type AgentKind } from "../lib/actions";
 import { basename, cn, collectPanes, findPane } from "../lib/layout";
 import { paneDisplayName, projectTone, shortCommand, tabDisplayName } from "../lib/identity";
 import { formatDuration } from "../lib/format";
+import { agentStateOf, paneAgent } from "../lib/attention";
 import { parentDir } from "../lib/cd";
 import { shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
 import { useLastCommand } from "../terminal/useRunningCommand";
@@ -236,16 +237,18 @@ const PaneWhere: React.FC<{ pane: PaneNode; project?: PaneProject }> = ({ pane, 
 /** Qué hace: el agente (trabajando, te necesita) o el último comando de la shell, con su resultado. */
 const PaneActivity: React.FC<{ pane: PaneNode; extraPanes: number }> = ({ pane, extraPanes }) => {
   const activity = useTerminalStore((s) => s.agentActivity[pane.id]);
+  const attention = useTerminalStore((s) => s.attention[pane.id]);
   const waiting = useApprovalStore((s) => s.requests.some((r) => r.paneId === pane.id));
   const last = useLastCommand(pane.id);
 
   let text: string | null = null;
   let tone = "text-ink-3";
-  if (pane.agentType) {
-    if (waiting || activity?.state === "needs-input") {
+  if (paneAgent(pane, activity)) {
+    const state = agentStateOf(activity, attention, waiting);
+    if (state === "needs-input") {
       text = waiting ? "Espera tu permiso" : "Te necesita";
       tone = "text-warn";
-    } else if (activity?.state === "working") {
+    } else if (state === "working" && activity) {
       text = activity.detail || "Trabajando…";
       tone = "text-accent";
     } else {
