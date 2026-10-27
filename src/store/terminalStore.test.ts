@@ -169,6 +169,27 @@ describe("titles, attention and font", () => {
     expect(s().runningAgent).toEqual({});
   });
 
+  it("moves a pane within its tab without killing any terminal", () => {
+    const a = s().tabs[0].activePaneId;
+    s().splitPane(a, "horizontal", {});
+    const b = s().tabs[0].activePaneId;
+    s().splitPane(b, "vertical", {});
+    const c = s().tabs[0].activePaneId;
+    s().toggleZoom(b);
+    s().movePane(c, a, "left");
+    const tab = s().tabs[0];
+    expect(collectPanes(tab.root).map((p) => p.id)).toEqual([c, a, b]);
+    expect(tab.activePaneId).toBe(c);
+    expect(tab.zoomedPaneId).toBeNull();
+    expect(terminalManager.kill).not.toHaveBeenCalled();
+    // Otro panel de otra pestaña no es destino.
+    s().createTab();
+    const other = s().tabs[1].activePaneId;
+    const before = s().tabs[0].root;
+    s().movePane(a, other, "center");
+    expect(s().tabs[0].root).toBe(before);
+  });
+
   it("splits inherit the spec (cwd, agent)", () => {
     s().splitPane(s().tabs[0].activePaneId, "horizontal", { cwd: "/repo", agentType: "claude", command: "claude" });
     const created = collectPanes(s().tabs[0].root)[1];

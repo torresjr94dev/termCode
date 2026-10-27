@@ -13,7 +13,7 @@ import type {
   UsageSnapshot,
 } from "../types/layout";
 import { terminalManager } from "../terminal/TerminalManager";
-import { collectPanes, equalize, findOwnerTab, findPane, removePane, replacePane, setSplitRatio } from "../lib/layout";
+import { collectPanes, equalize, findOwnerTab, findPane, movePane, removePane, replacePane, setSplitRatio, type DropZone } from "../lib/layout";
 import { paneAgent } from "../lib/attention";
 
 let nextId = 1;
@@ -140,6 +140,11 @@ interface TerminalState {
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   splitPane: (targetPaneId: string, direction: SplitDirection, spec?: PaneSpec) => void;
+  /**
+   * Lleva un panel junto a otro de su misma pestaña (`center`: se intercambian).
+   * Es el mismo proceso en otro sitio: nada se reinicia.
+   */
+  movePane: (sourceId: string, targetId: string, zone: DropZone) => void;
   closePane: (paneId: string) => void;
   setActivePane: (paneId: string, opts?: { focus?: boolean }) => void;
   updateSplitRatio: (splitId: string, ratio: number) => void;
@@ -260,6 +265,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set((state) => ({
       tabs: state.tabs.map((t) => (t.id === owner.id ? { ...t, root, activePaneId: pane.id } : t)),
     }));
+  },
+
+  movePane: (sourceId, targetId, zone) => {
+    const { tabs } = get();
+    const owner = findOwnerTab(tabs, sourceId);
+    if (!owner || !findPane(owner.root, targetId)) return;
+    const root = movePane(owner.root, sourceId, targetId, zone, genId("split"));
+    if (root === owner.root) return;
+    // Lo movido queda activo; uno maximizado ya no tiene sentido en la forma nueva.
+    set({ tabs: tabs.map((t) => (t.id === owner.id ? { ...t, root, activePaneId: sourceId, zoomedPaneId: null } : t)) });
   },
 
   /** Funciona para cualquier pestaña (antes solo miraba la activa). */

@@ -554,6 +554,12 @@
   }
 }
 
+/* Arrastrando un panel por su barra: la mano cerrada en todas partes (también sobre xterm). */
+:root[data-pane-dragging],
+:root[data-pane-dragging] * {
+  cursor: grabbing !important;
+}
+
 /* xterm.js */
 .xterm {
   height: 100%;

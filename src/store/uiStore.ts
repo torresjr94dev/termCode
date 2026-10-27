@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { DropZone } from "../lib/layout";
 
 export interface ConfirmRequest {
   title: string;
@@ -35,6 +36,8 @@ interface UiState {
   findPaneId: string | null;
   /** Panel bajo el cursor mientras se arrastran archivos. */
   dropPaneId: string | null;
+  /** Un panel que se arrastra por su barra: sobre qué panel y en qué zona caería (null = en ninguno). */
+  paneDrag: PaneDrag | null;
 
   setPaletteOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
@@ -50,6 +53,13 @@ interface UiState {
   dismissToast: (id: number) => void;
   setFindPane: (paneId: string | null) => void;
   setDropPane: (paneId: string | null) => void;
+  setPaneDrag: (drag: PaneDrag | null) => void;
+}
+
+export interface PaneDrag {
+  sourceId: string;
+  targetId: string | null;
+  zone: DropZone | null;
 }
 
 let toastSeq = 0;
@@ -68,6 +78,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   toast: null,
   findPaneId: null,
   dropPaneId: null,
+  paneDrag: null,
 
   setPaletteOpen: (open) => set({ isPaletteOpen: open }),
   setSettingsOpen: (open) => set({ isSettingsOpen: open }),
@@ -99,5 +110,12 @@ export const useUiStore = create<UiState>((set, get) => ({
   setFindPane: (paneId) => set({ findPaneId: paneId }),
   setDropPane: (paneId) => {
     if (get().dropPaneId !== paneId) set({ dropPaneId: paneId });
+  },
+  // Llega en cada movimiento del puntero: sin cambios no hay re-render.
+  setPaneDrag: (drag) => {
+    const current = get().paneDrag;
+    if (current === drag) return;
+    if (current && drag && current.sourceId === drag.sourceId && current.targetId === drag.targetId && current.zone === drag.zone) return;
+    set({ paneDrag: drag });
   },
 }));

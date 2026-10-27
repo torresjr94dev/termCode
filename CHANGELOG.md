@@ -8,6 +8,7 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ### Añadido
 
+- Mover paneles divididos: arrastra un panel por su barra hasta otro. En un borde lo pega de ese lado (arriba, abajo, a la izquierda o a la derecha) y al centro los intercambia; mientras arrastras se ve dónde va a caer, y Esc lo cancela. Es la misma terminal en otro sitio: no se reinicia, no pierde su historial y lo que corre sigue corriendo. Con el teclado, «Mover panel arriba / abajo / a la izquierda / a la derecha» en la paleta lo cambia por su vecino.
 - Un `claude` o `codex` que escribes a mano en una shell tiene la misma barra que uno lanzado desde termCode (modelo, contexto libre, terminal acoplada), igual que la pestaña, la barra de estado, la barra lateral y Mission Control. Se reconoce en cuanto la shell lo ejecuta, sin esperar a que el agente se anuncie por OSC 7501 (Codex y los Claude Code viejos no lo hacen). `claude -p`, `codex exec` y los subcomandos (`claude mcp`, `codex login`…) no cuentan.
 - En zsh con la integración, un `claude` escrito a mano recibe el `--settings` de termCode (statusLine y hooks) y, si está activado, el MCP de lectura de paneles. Así reporta su modelo y contexto y sus permisos llegan a la bandeja. Tus alias siguen funcionando, si ya tienes una función `claude` se respeta la tuya, y `-p`, los subcomandos y un `--settings` propio pasan tal cual.
 

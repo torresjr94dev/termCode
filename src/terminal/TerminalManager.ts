@@ -209,6 +209,8 @@ class TerminalManager {
   private sizeListeners = new Set<() => void>();
   private progressListeners = new Set<() => void>();
   private settings: Settings = DEFAULT_SETTINGS;
+  /** La última terminal que tuvo el teclado: al remontarse (mover, dividir, restaurar) lo recupera solo ella. */
+  private focusedId: string | null = null;
   private home: string | null = null;
   /**
    * Con ConPTY, xterm no debe subir historial a la vista al crecer el panel
@@ -404,9 +406,10 @@ class TerminalManager {
     }
 
     instance.container = container;
+    const opening = !instance.term.element;
     if (instance.term.element) {
-      // Al dividir, React remonta el panel en un contenedor nuevo. `open()` no
-      // re-ancla un terminal ya abierto: hay que mover su elemento a mano.
+      // Al dividir o mover un panel, React lo remonta en un contenedor nuevo. `open()`
+      // no re-ancla un terminal ya abierto: hay que mover su elemento a mano.
       container.replaceChildren(instance.term.element);
     } else {
       container.replaceChildren();
@@ -414,11 +417,20 @@ class TerminalManager {
       this.enableWebgl(id);
       // Imágenes en línea (sixel e iTerm2): con límites de memoria razonables.
       instance.term.loadAddon(new ImageAddon({ pixelLimit: 16_777_216, storageLimit: 64, sixelSupport: true, iipSupport: true }));
+      const textarea = instance.term.textarea;
+      if (textarea) {
+        const onFocus = () => {
+          this.focusedId = id;
+        };
+        textarea.addEventListener("focus", onFocus);
+        instance.dispose.push(() => textarea.removeEventListener("focus", onFocus));
+      }
     }
 
+    // Moverlo de sitio le quita el foco: lo recupera si lo tenía, sin robárselo a otro.
     requestAnimationFrame(() => {
       this.fit(id);
-      instance.term.focus();
+      if (opening || this.focusedId === id) instance.term.focus();
     });
 
     if (!instance.spawnRequested) {
@@ -711,7 +723,10 @@ class TerminalManager {
   }
 
   public focus(id: string) {
-    this.instances.get(id)?.term.focus();
+    const instance = this.instances.get(id);
+    if (!instance) return;
+    this.focusedId = id;
+    instance.term.focus();
   }
 
   /* ------------------------------------------------------------------ */

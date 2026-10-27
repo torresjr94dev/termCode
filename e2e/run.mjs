@@ -308,7 +308,20 @@ function makePage(cdp) {
     }
   };
 
-  return { evaluate, run, waitFor, press, pressMod, shortcut, type, click, screenshot, wheel, dblclick };
+  /** Arrastre real con el ratón: pulsar en `from`, moverse en pasos hasta `to`, (`before`) y soltar. */
+  const drag = async (from, to, { steps = 8, before } = {}) => {
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: from.x, y: from.y });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: from.x, y: from.y, button: "left", buttons: 1, clickCount: 1 });
+    for (let i = 1; i <= steps; i++) {
+      const x = from.x + ((to.x - from.x) * i) / steps;
+      const y = from.y + ((to.y - from.y) * i) / steps;
+      await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "left", buttons: 1 });
+    }
+    if (before) await before();
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: to.x, y: to.y, button: "left", buttons: 0, clickCount: 1 });
+  };
+
+  return { evaluate, run, waitFor, press, pressMod, shortcut, type, click, screenshot, wheel, dblclick, drag };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1156,6 +1169,96 @@ const TESTS = [
         const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
         const s = useTerminalStore.getState();
         s.closeTab(s.activeTabId);`);
+    },
+  },
+  {
+    name: "mover-paneles",
+    async run(p) {
+      // a | (b / c), cada terminal con su texto: moverlos no debe reiniciar ninguna.
+      await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        const st = useTerminalStore.getState();
+        st.createTab();
+        const a = useTerminalStore.getState().tabs.at(-1).activePaneId;
+        st.splitPane(a, "horizontal", {});
+        const b = useTerminalStore.getState().tabs.at(-1).activePaneId;
+        st.splitPane(b, "vertical", {});
+        const c = useTerminalStore.getState().tabs.at(-1).activePaneId;
+        window.__panes = { [a]: "a", [b]: "b", [c]: "c" };
+        for (let i = 0; i < 75 && ![a, b, c].every((id) => terminalManager.getTerminal(id)); i++) await new Promise((r) => setTimeout(r, 40));
+        for (const [id, name] of Object.entries(window.__panes)) {
+          terminalManager.receiveForTesting(id, "soy el panel " + name + "\\r\\n% ");
+          terminalManager.getTerminal(id).__e2e = name;
+        }`);
+      const layout = `(async () => {
+        const { useTerminalStore } = await import("/src/store/terminalStore.ts");
+        const { terminalManager } = await import("/src/terminal/TerminalManager.ts");
+        const tab = useTerminalStore.getState().tabs.at(-1);
+        const name = (id) => window.__panes[id];
+        const shape = (n) => n.type === "pane" ? name(n.id) : "(" + shape(n.first) + (n.direction === "horizontal" ? " | " : " / ") + shape(n.second) + ")";
+        const id = (n) => Object.keys(window.__panes).find((k) => window.__panes[k] === n);
+        const box = (n, sel = "") => { const r = document.querySelector('[data-pane-id="' + id(n) + '"] ' + sel).getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; };
+        const intact = Object.entries(window.__panes).every(([pid, n]) => {
+          const term = terminalManager.getTerminal(pid);
+          const text = term.buffer.active.getLine(0)?.translateToString(true) ?? "";
+          return term.__e2e === n && text.includes("soy el panel " + n) && document.querySelector('[data-pane-id="' + pid + '"] .xterm') === term.element;
+        });
+        const focused = document.activeElement?.closest("[data-pane-id]")?.dataset.paneId;
+        return { shape: shape(tab.root), active: name(tab.activePaneId), focused: focused ? name(focused) : null, intact, bars: { a: box("a", "[data-pane-bar]"), b: box("b", "[data-pane-bar]"), c: box("c", "[data-pane-bar]") }, panes: { a: box("a"), b: box("b"), c: box("c") } };
+      })()`;
+      const before = await p.evaluate(layout);
+      if (before.shape !== "(a | (b / c))") throw new Error(`Forma inicial: ${before.shape}`);
+
+      // Arrastrar c por su barra hasta el borde de arriba de a: c queda encima de a.
+      const grab = (bar) => ({ x: bar.left + 30, y: bar.top + bar.height / 2 });
+      const pa = before.panes.a;
+      let preview = null;
+      await p.drag(grab(before.bars.c), { x: pa.left + pa.width / 2, y: pa.top + pa.height * 0.1 }, {
+        before: async () => {
+          preview = await p.evaluate(`(() => {
+            const ids = Object.keys(window.__panes);
+            const label = (n) => document.querySelector('[data-pane-id="' + ids.find((k) => window.__panes[k] === n) + '"] > .animate-pop-in')?.textContent ?? null;
+            const source = document.querySelector('[data-pane-id="' + ids.find((k) => window.__panes[k] === "c") + '"]');
+            return { a: label("a"), dragging: document.documentElement.hasAttribute("data-pane-dragging"), sourceDimmed: source.classList.contains("opacity-50") };
+          })()`);
+          await p.screenshot("mover-paneles-arrastre");
+        },
+      });
+      await new Promise((r) => setTimeout(r, 150));
+      if (preview?.a !== "Mover aquí" || !preview.dragging || !preview.sourceDimmed) throw new Error(`Vista previa al arrastrar: ${JSON.stringify(preview)}`);
+      const docked = await p.evaluate(layout);
+      if (docked.shape !== "((c / a) | b)" || docked.active !== "c" || !docked.intact) throw new Error(`Tras moverlo: ${JSON.stringify(docked)}`);
+      if (docked.focused !== "c") throw new Error(`El teclado debía quedar en el panel movido, quedó en ${docked.focused}`);
+      await p.screenshot("mover-paneles");
+
+      // Al centro de otro panel, se intercambian.
+      const pb = docked.panes.b;
+      await p.drag(grab(docked.bars.a), { x: pb.left + pb.width / 2, y: pb.top + pb.height / 2 });
+      await new Promise((r) => setTimeout(r, 150));
+      const swapped = await p.evaluate(layout);
+      if (swapped.shape !== "((c / b) | a)" || !swapped.intact) throw new Error(`Intercambio: ${JSON.stringify(swapped)}`);
+
+      // Esc a medio arrastre lo cancela.
+      const pc = swapped.panes.c;
+      await p.drag(grab(swapped.bars.a), { x: pc.left + 20, y: pc.top + pc.height / 2 }, { before: () => p.press("Escape") });
+      await new Promise((r) => setTimeout(r, 150));
+      const cancelled = await p.evaluate(layout);
+      if (cancelled.shape !== "((c / b) | a)") throw new Error(`Esc no canceló: ${cancelled.shape}`);
+
+      // Con el teclado (paleta): el activo se cambia por su vecino.
+      await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const st = useTerminalStore.getState();
+        const tab = st.tabs.at(-1);
+        st.setActivePane(Object.keys(window.__panes).find((k) => window.__panes[k] === "c"));
+        (await mod("/src/lib/actions.ts")).actions.movePaneSide("bottom");`);
+      const keyboard = await p.evaluate(layout);
+      if (keyboard.shape !== "((b / c) | a)" || !keyboard.intact) throw new Error(`Con el teclado: ${JSON.stringify(keyboard)}`);
+      await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const st = useTerminalStore.getState();
+        st.closeTab(st.tabs.at(-1).id);`);
     },
   },
   {
