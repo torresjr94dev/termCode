@@ -1,8 +1,10 @@
 import React, { useEffect, useRef } from "react";
-import { Columns2, History, Maximize2, Minimize2, Rows2, SquareTerminal, X } from "lucide-react";
-import type { PaneNode, ResumableAgent } from "../types/layout";
+import { Asterisk, Columns2, GitBranch, Hexagon, History, Maximize2, Minimize2, Rows2, SquareTerminal, X } from "lucide-react";
+import type { AgentKind, PaneNode, ResumableAgent } from "../types/layout";
 import { terminalManager } from "../terminal/TerminalManager";
-import { useTerminalStore } from "../store/terminalStore";
+import { useRunningCommand } from "../terminal/useRunningCommand";
+import { usePaneAgent, useTerminalStore } from "../store/terminalStore";
+import { useProjectStore } from "../store/projectStore";
 import { useUiStore } from "../store/uiStore";
 import { actions, AGENTS } from "../lib/actions";
 import { cn } from "../lib/layout";
@@ -18,6 +20,7 @@ import { PortChips } from "./PortChips";
 import { ShellStartup, useWatchedShell } from "./ShellStartup";
 import { useSettingsStore } from "../store/settingsStore";
 import { AgentGlyph, IconButton, Lamp, Ring } from "./ui";
+import { LogoMark } from "./Logo";
 
 interface TerminalPaneProps {
   pane: PaneNode;
@@ -26,9 +29,11 @@ interface TerminalPaneProps {
   isSplit: boolean;
   /** Mostrado maximizado dentro de su pestaña (⌘⇧↵). */
   isZoomed?: boolean;
+  /** Barra en una shell sola (según Ajustes). La terminal rápida no la lleva; un agente, siempre. */
+  shellBar?: boolean;
 }
 
-export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSplit, isZoomed = false }) => {
+export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSplit, isZoomed = false, shellBar = true }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const setActivePane = useTerminalStore((s) => s.setActivePane);
@@ -40,10 +45,16 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
   const toggleZoom = useTerminalStore((s) => s.toggleZoom);
   const project = useTerminalStore((s) => s.paneProject[pane.id]);
   const cwd = project?.cwd ?? pane.cwd;
+  // La rama la sabe el panel de proyecto (sigue al panel activo): vale para todos los del mismo repo.
+  const branch = useProjectStore((s) => (project?.root && s.repo?.root === project.root ? s.status?.branch : null));
   const watchedShell = useWatchedShell(pane);
+  // El que lanzó termCode, el que se anunció o un `claude` escrito a mano: todos llevan su barra.
+  const agent = usePaneAgent(pane);
+  const running = useRunningCommand(pane.id);
+  const paneBar = useSettingsStore((s) => s.settings.paneBar);
 
   // El spawn solo usa cwd/command la primera vez: cambios posteriores no relanzan nada.
-  const spawnSpec = useRef({ cwd: pane.cwd, command: pane.command, shell: pane.shell, welcome: pane.welcome });
+  const spawnSpec = useRef({ cwd: pane.cwd, command: pane.command, shell: pane.shell });
   useEffect(() => {
     if (containerRef.current) terminalManager.attach(pane.id, containerRef.current, spawnSpec.current);
   }, [pane.id]);
@@ -56,7 +67,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
     return () => observer.disconnect();
   }, [pane.id]);
 
-  const showHeader = isSplit || isZoomed || Boolean(pane.agentType);
+  const showHeader = isSplit || isZoomed || Boolean(agent) || (paneBar && shellBar);
   const dimmed = dimInactive && isSplit && !isActive;
 
   /** Los botones actúan sobre *este* panel, no sobre el que estaba activo. */
@@ -83,6 +94,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
     >
       {showHeader && (
         <div
+          data-pane-bar
           onMouseDown={(e) => {
             if (!(e.target as HTMLElement).closest("button")) setActivePane(pane.id);
           }}
@@ -92,19 +104,40 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
             isActive ? "text-ink" : "text-ink-3",
           )}
         >
-          <Lamp state={hasAttention ? "attention" : isActive ? "on" : "off"} />
-          <AgentGlyph agentType={pane.agentType} className="shrink-0 opacity-80" />
+          {/* Con un solo panel, "activo" no dice nada: el foco solo se marca al dividir. */}
+          {(isSplit || agent || hasAttention) && <Lamp state={hasAttention ? "attention" : isActive ? "on" : "off"} />}
+          {agent ? (
+            <AgentGlyph agentType={agent} className="shrink-0 opacity-80" />
+          ) : (
+            <LogoMark className="h-3 w-auto shrink-0 text-ink-2" />
+          )}
           {/* El nombre es lo que se recorta (con un mínimo legible); el contexto y la terminal, nunca. */}
           <span className="min-w-[2.5rem] truncate text-[12.5px] font-medium">{paneDisplayName(pane, project)}</span>
           {cwd && (
-            <span title={cwd} className="hidden min-w-0 shrink-[2] truncate font-mono text-[11px] text-ink-3 @2xl:inline">
-              {tildify(cwd, terminalManager.getHome())}
+            <span
+              title={branch ? `${cwd}  ·  ${branch}` : cwd}
+              // Un agente necesita el ancho para su modelo y contexto: su ruta se va antes.
+              className={cn(
+                "hidden min-w-0 shrink-[2] items-center gap-1.5 font-mono text-[11px] text-ink-3",
+                agent ? "@2xl:flex" : "@lg:flex",
+              )}
+            >
+              <span className="min-w-0 truncate">{tildify(cwd, terminalManager.getHome())}</span>
+              {branch && (
+                <span className="flex min-w-0 shrink-[2] items-center gap-0.5">
+                  <GitBranch size={10} strokeWidth={2} aria-hidden="true" className="shrink-0 opacity-80" />
+                  <span className="truncate">{branch}</span>
+                </span>
+              )}
             </span>
           )}
 
-          {status && <AgentReadout model={status.model} context={status.contextPercent} cost={status.costUsd} />}
+          {/* Lo de un agente que ya salió (modelo, contexto) no se muestra en la shell que quedó. */}
+          {agent && status && <AgentReadout model={status.model} context={status.contextPercent} cost={status.costUsd} />}
+          {/* Solo en una shell libre: con algo corriendo, las teclas irían a ese programa. */}
+          {!agent && !running && <AgentLaunchers paneId={pane.id} />}
           <PortChips paneId={pane.id} responsive />
-          {pane.agentType && (
+          {(agent || pane.drawer) && (
             <button
               type="button"
               aria-pressed={Boolean(pane.drawer?.open)}
@@ -194,6 +227,39 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
         {pane.drawer && <DockedShell pane={pane} drawer={pane.drawer} hostRef={bodyRef} />}
       </div>
     </section>
+  );
+};
+
+const LAUNCHER_ICON: Record<AgentKind, typeof Asterisk> = { claude: Asterisk, codex: Hexagon };
+
+/**
+ * Claude Code y Codex en este mismo panel: se escriben en su shell, como si lo
+ * hicieras tú, y al salir vuelves a ella. Para tenerlo al lado está "junto al
+ * panel" (paleta o barra lateral). Solo los instalados.
+ */
+const AgentLaunchers: React.FC<{ paneId: string }> = ({ paneId }) => {
+  const agents = useTerminalStore((s) => s.agents);
+  const installed = agents ? (Object.keys(AGENTS) as AgentKind[]).filter((id) => agents[id]) : [];
+  if (!installed.length) return null;
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      {installed.map((id) => {
+        const Icon = LAUNCHER_ICON[id];
+        return (
+          <button
+            key={id}
+            type="button"
+            aria-label={`Abrir ${AGENTS[id].title} en este panel`}
+            title={`Abrir ${AGENTS[id].title} aquí: escribe \`${AGENTS[id].command}\` en esta shell`}
+            onClick={() => void actions.openAgentHere(id, paneId)}
+            className="flex h-[20px] shrink-0 items-center gap-1 rounded-full border border-line px-2 text-[11px] text-ink-2 transition-colors duration-150 hover:border-accent/50 hover:text-ink focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            <Icon size={11} strokeWidth={2} aria-hidden="true" className="text-accent" />
+            <span className="hidden @md:inline">{AGENTS[id].title}</span>
+          </button>
+        );
+      })}
+    </span>
   );
 };
 

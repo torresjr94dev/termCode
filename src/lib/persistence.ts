@@ -62,9 +62,8 @@ export function sanitizeShell(value: unknown): PaneShell | undefined {
  */
 export function asShells(node: LayoutNode): LayoutNode {
   if (node.type === "split") return { ...node, first: asShells(node.first), second: asShells(node.second) };
-  // `welcome` es de la primera vez que se abrió: restaurar no vuelve a mostrarla.
   // La shell acoplada era del agente: al volver como shell, el panel ya es una terminal.
-  const { agentSession, resumable, welcome: _welcome, shell: savedShell, drawer: _drawer, ...rest } = node;
+  const { agentSession, resumable, shell: savedShell, drawer: _drawer, ...rest } = node;
   const shell = sanitizeShell(savedShell);
   const pane = shell ? { ...rest, shell } : rest;
   if (!pane.agentType && !pane.command) {

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Radio, Sparkles } from "lucide-react";
-import { useTerminalStore } from "../store/terminalStore";
+import { usePaneAgent, useTerminalStore } from "../store/terminalStore";
 import { useApprovalStore } from "../store/approvalStore";
 import { useUiStore } from "../store/uiStore";
 import { terminalManager } from "../terminal/TerminalManager";
@@ -57,7 +57,7 @@ export const StatusBar: React.FC = () => {
                 panel {paneIndex + 1}/{panes.length}
               </span>
             )}
-            {activePane.agentType && <AgentContext pane={activePane} />}
+            <AgentContext pane={activePane} />
             <PortChips paneId={activePane.id} max={2} />
           </span>
         )}
@@ -81,7 +81,8 @@ export const StatusBar: React.FC = () => {
 /** Modelo y contexto que le queda al agente del panel activo (Claude por su statusLine, Codex por su rollout). */
 const AgentContext: React.FC<{ pane: PaneNode }> = ({ pane }) => {
   const status = useTerminalStore((s) => s.agentStatus[pane.id]);
-  if (!status) return null;
+  const agent = usePaneAgent(pane);
+  if (!agent || !status) return null;
   const used = status.contextPercent;
   const tone = used === null ? null : toneFor(used);
   return (
@@ -127,8 +128,9 @@ const AgentsStatus: React.FC = () => {
   const activity = useTerminalStore((s) => s.agentActivity);
   const attention = useTerminalStore((s) => s.attention);
   const status = useTerminalStore((s) => s.agentStatus);
+  const running = useTerminalStore((s) => s.runningAgent);
   const approvals = useApprovalStore((s) => s.requests);
-  const summary = agentSummary(tabs, activity, attention, status, approvals);
+  const summary = agentSummary(tabs, activity, attention, status, approvals, running);
   if (!summary.agents) return null;
 
   const onClick = () => (summary.waiting ? actions.focusNextAttention() : useUiStore.getState().setMissionOpen(true));

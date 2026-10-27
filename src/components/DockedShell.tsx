@@ -48,7 +48,7 @@ export const DockedShell: React.FC<{
   useEffect(() => {
     const node = termRef.current;
     if (!drawer.open || !node) return;
-    terminalManager.attach(drawer.id, node, { cwd: startCwd, welcome: false });
+    terminalManager.attach(drawer.id, node, { cwd: startCwd });
     const observer = new ResizeObserver(() => terminalManager.fit(drawer.id));
     observer.observe(node);
     return () => observer.disconnect();

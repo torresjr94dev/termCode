@@ -168,17 +168,12 @@ const SettingsPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
           </Section>
 
           <Section title="Terminal">
-            <Row label="Bienvenida en terminales nuevas" hint="El logo, tus agentes y los atajos en cada shell nueva (pestaña, división o rápida) y tras `clear`. Nunca en agentes">
-              <Segmented
-                value={settings.welcomeBanner}
-                onChange={set("welcomeBanner")}
-                options={[
-                  { value: "full", label: "Completa" },
-                  { value: "compact", label: "Compacta" },
-                  { value: "off", label: "No" },
-                ]}
-              />
-            </Row>
+            <Toggle
+              label="Barra en cada terminal"
+              hint="Carpeta, rama y Claude Code o Codex para abrirlos ahí mismo. Sin ella, una shell sola usa todo el panel; los agentes y las divisiones la llevan siempre."
+              checked={settings.paneBar}
+              onChange={set("paneBar")}
+            />
             <Toggle
               label={`Integración con ${IS_WINDOWS ? "PowerShell" : "zsh"}`}
               hint={`Marcas de comando, ${shortcutLabel("prevCommand")}/${shortcutLabel("nextCommand")}, avisos y carpeta en vivo. Aplica a terminales nuevas.`}

@@ -101,6 +101,16 @@ describe("paneAgent", () => {
     expect(paneAgent(pane("x", "codex"))).toBe("codex");
   });
 
+  it("recognizes it as soon as the shell says it runs, before it announces itself", () => {
+    expect(paneAgent(pane("shell"), undefined, "codex")).toBe("codex");
+    // Lo que el programa dice de sí manda sobre lo que se tecleó.
+    expect(paneAgent(pane("shell"), osc("claude-code"), "codex")).toBe("claude");
+    // El que lanzó termCode manda sobre todo.
+    expect(paneAgent(pane("x", "claude"), undefined, "codex")).toBe("claude");
+    const summary = agentSummary([tab("t", pane("shell"))], {}, {}, {}, [], { shell: "claude" });
+    expect(summary).toMatchObject({ agents: 1, working: 0 });
+  });
+
   it("counts those agents in the summary", () => {
     const summary = agentSummary([tab("t", pane("shell"))], { shell: osc("claude-code") }, {}, {});
     expect(summary).toMatchObject({ agents: 1, working: 1 });

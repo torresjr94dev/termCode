@@ -1,8 +1,9 @@
 import { decodeCommandLine } from "./commands";
 
 /**
- * Lo que la bienvenida necesita saber del flujo de bytes de una shell, en el
- * orden en que llegan (no en el que xterm los procesa, que es después).
+ * Lo que hay que saber del flujo de bytes de una shell para reconocer un
+ * `clear`, en el orden en que llegan (no en el que xterm los procesa, que es
+ * después).
  */
 export interface ClearState {
   /** Comando en curso según `OSC 633;E` (null en el prompt). */
@@ -71,21 +72,21 @@ function readOsc(bytes: Uint8Array, at: number, state: ClearState): number {
 }
 
 /**
- * Dónde termina, en este bloque, la limpieza de un `clear` que escribiste:
- * ahí va la tarjeta de bienvenida (después del borrado y antes del prompt).
- * -1 si no hay. macOS manda `ESC[3J ESC[H ESC[2J` y Linux `ESC[H ESC[2J
- * ESC[3J`: el punto es tras la última de las dos, venga en el orden que venga.
+ * Dónde termina, en este bloque, la limpieza de un `clear` que escribiste
+ * (después del borrado y antes del prompt), o -1 si no hay. macOS manda
+ * `ESC[3J ESC[H ESC[2J` y Linux `ESC[H ESC[2J ESC[3J`: el punto es tras la
+ * última de las dos, venga en el orden que venga.
  *
  * Solo cuenta un `clear` corriendo en la shell: Vite, `tsc -w`, jest o
- * nodemon también limpian la pantalla, y ponerles la tarjeta encima tapaba
- * las primeras líneas de su salida.
+ * nodemon también limpian la pantalla y lo que hayan dejado en el historial
+ * es suyo.
  *
  * Corre con cada bloque de salida de cada shell, así que casi siempre solo
  * busca `ESC ]` (los OSC son escasos; los colores, `ESC [`, no importan) con
  * `indexOf` nativo y sin copiar nada. Solo mientras corre un `clear` mira
  * cada `ESC`.
  */
-export function welcomeCut(bytes: Uint8Array, state: ClearState): number {
+export function clearEnd(bytes: Uint8Array, state: ClearState): number {
   let cut = -1;
   let i = 0;
   while (i < bytes.length) {

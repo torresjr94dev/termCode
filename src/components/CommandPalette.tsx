@@ -38,7 +38,7 @@ import { LayoutTemplate, Server, ScrollText,
   ZoomOut,
   type LucideIcon,
 } from "lucide-react";
-import { useTerminalStore } from "../store/terminalStore";
+import { liveAgent, useTerminalStore } from "../store/terminalStore";
 import { explainFailure, openOutput } from "../lib/output";
 import { describeServer, sshAliasCommand, sshServerCommand } from "../lib/ssh";
 import { copyWorkspaceTemplate, openWorkspace } from "../lib/workspace";
@@ -382,10 +382,11 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
 /** Revisa el agente del panel activo o, si no es un agente, el primero de la pestaña. */
 async function reviewNearestAgent() {
-  const { tabs, activeTabId } = useTerminalStore.getState();
-  const tab = tabs.find((t) => t.id === activeTabId);
+  const store = useTerminalStore.getState();
+  const tab = store.tabs.find((t) => t.id === store.activeTabId);
   const panes = tab ? panesOf(tab.root) : [];
-  const agent = panes.find((p) => p.id === tab?.activePaneId && p.agentType) ?? panes.find((p) => p.agentType);
+  const isAgent = (p: (typeof panes)[number]) => liveAgent(store, p) !== null;
+  const agent = panes.find((p) => p.id === tab?.activePaneId && isAgent(p)) ?? panes.find(isAgent);
   if (!agent) {
     useUiStore.getState().showToast("No hay un agente en esta pestaña.");
     return;

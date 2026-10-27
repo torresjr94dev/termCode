@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { decodeCommandLine, decodeCwd, withShellFacts, type CommandRecord } from "./commands";
+import { commandAgent, decodeCommandLine, decodeCwd, withShellFacts, type CommandRecord } from "./commands";
 import { findPaths, resolvePath } from "./links";
 import { sanitizePaste } from "./paste";
-import { initialClearState, isClearCommand, welcomeCut } from "./clear";
+import { clearEnd, initialClearState, isClearCommand } from "./clear";
 
 describe("shell integration payloads", () => {
   it("decodes escaped command lines", () => {
@@ -21,6 +21,37 @@ describe("shell integration payloads", () => {
     expect(decodeCwd("file://PC-JORGE/C:/Users/Jorge%20Torres/repo")).toBe("C:\\Users\\Jorge Torres\\repo");
     expect(decodeCwd("file://PC/D:/")).toBe("D:\\");
     expect(decodeCwd("file://PC/C:/50%25")).toBe("C:\\50%");
+  });
+});
+
+describe("commandAgent", () => {
+  it("recognizes an agent typed in the shell, with path, env or a prefix", () => {
+    expect(commandAgent("claude")).toBe("claude");
+    expect(commandAgent("  claude --model opus  ")).toBe("claude");
+    expect(commandAgent("/opt/homebrew/bin/codex --model o3")).toBe("codex");
+    expect(commandAgent("ANTHROPIC_MODEL=x DEBUG=1 claude")).toBe("claude");
+    expect(commandAgent("command claude --continue")).toBe("claude");
+    expect(commandAgent("codex -p trabajo")).toBe("codex"); // en Codex, -p es --profile
+    expect(commandAgent('claude "arregla el login"')).toBe("claude");
+  });
+
+  it("ignores what does not open the agent's interface", () => {
+    expect(commandAgent("claude -p 'resume el diff'")).toBeNull();
+    expect(commandAgent("claude --print hola")).toBeNull();
+    expect(commandAgent("claude --version")).toBeNull();
+    expect(commandAgent("claude mcp list")).toBeNull();
+    expect(commandAgent("claude --dangerously-skip-permissions mcp list")).toBeNull();
+    expect(commandAgent("claude doctor")).toBeNull();
+    expect(commandAgent("codex exec 'corre los tests'")).toBeNull();
+    expect(commandAgent("codex login")).toBeNull();
+  });
+
+  it("ignores other programs and look-alikes", () => {
+    expect(commandAgent("claudette")).toBeNull();
+    expect(commandAgent("npx claude")).toBeNull();
+    expect(commandAgent("echo claude")).toBeNull();
+    expect(commandAgent("")).toBeNull();
+    expect(commandAgent(null)).toBeNull();
   });
 });
 
@@ -114,38 +145,38 @@ describe("sanitizePaste", () => {
   });
 });
 
-describe("welcomeCut", () => {
+describe("clearEnd", () => {
   const bytes = (s: string) => new TextEncoder().encode(s);
   const run = (cmd: string) => `\x1b]633;E;${cmd}\x07\x1b]133;C\x07`;
   const prompt = "\x1b]133;D;0\x07\x1b]133;A\x07% ";
 
-  it("puts the card after the erase in macOS order (ESC[3J first)", () => {
+  it("ends after the erase in macOS order (ESC[3J first)", () => {
     const state = initialClearState();
     const out = bytes(`${run("clear")}\x1b[3J\x1b[H\x1b[2J${prompt}`);
-    expect(welcomeCut(out, state)).toBe(out.length - prompt.length);
+    expect(clearEnd(out, state)).toBe(out.length - prompt.length);
   });
 
   it("and in Linux order (ESC[3J last)", () => {
     const out = bytes(`${run("clear")}\x1b[H\x1b[2J\x1b[3J${prompt}`);
-    expect(welcomeCut(out, initialClearState())).toBe(out.length - prompt.length);
+    expect(clearEnd(out, initialClearState())).toBe(out.length - prompt.length);
   });
 
   it("follows the sequence across chunks", () => {
     const state = initialClearState();
-    expect(welcomeCut(bytes(run("/usr/bin/clear")), state)).toBe(-1);
-    expect(welcomeCut(bytes("\x1b[3J"), state)).toBe(-1);
-    expect(welcomeCut(bytes(`\x1b[H\x1b[2J${prompt}`), state)).toBe(7);
+    expect(clearEnd(bytes(run("/usr/bin/clear")), state)).toBe(-1);
+    expect(clearEnd(bytes("\x1b[3J"), state)).toBe(-1);
+    expect(clearEnd(bytes(`\x1b[H\x1b[2J${prompt}`), state)).toBe(7);
   });
 
-  it("never covers what a program prints after clearing (vite, tsc -w, jest)", () => {
+  it("leaves alone what a program clears (vite, tsc -w, jest)", () => {
     const state = initialClearState();
-    expect(welcomeCut(bytes(`${run("npm run dev")}\x1b[2J\x1b[3J\x1b[H  VITE v6 ready\r\n`), state)).toBe(-1);
-    expect(welcomeCut(bytes(`${run("tsc -w")}\x1b[3J\x1b[H\x1b[2JStarting compilation`), state)).toBe(-1);
+    expect(clearEnd(bytes(`${run("npm run dev")}\x1b[2J\x1b[3J\x1b[H  VITE v6 ready\r\n`), state)).toBe(-1);
+    expect(clearEnd(bytes(`${run("tsc -w")}\x1b[3J\x1b[H\x1b[2JStarting compilation`), state)).toBe(-1);
   });
 
   it("ignores Ctrl+L and clears outside a command", () => {
-    expect(welcomeCut(bytes("\x1b[H\x1b[2J% "), initialClearState())).toBe(-1);
-    expect(welcomeCut(bytes(`${prompt}\x1b[3J\x1b[H\x1b[2J`), initialClearState())).toBe(-1);
+    expect(clearEnd(bytes("\x1b[H\x1b[2J% "), initialClearState())).toBe(-1);
+    expect(clearEnd(bytes(`${prompt}\x1b[3J\x1b[H\x1b[2J`), initialClearState())).toBe(-1);
   });
 
   it("recognizes what you type to clear", () => {

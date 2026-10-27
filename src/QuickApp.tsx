@@ -38,7 +38,7 @@ export const QuickApp: React.FC = () => {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-canvas text-ink">
-      <div className="relative min-h-0 flex-1">{pane && <TerminalPane key={pane.id} pane={pane} isActive isSplit={false} />}</div>
+      <div className="relative min-h-0 flex-1">{pane && <TerminalPane key={pane.id} pane={pane} isActive isSplit={false} shellBar={false} />}</div>
       <div className="flex h-6 shrink-0 items-center justify-between border-t border-accent/40 bg-chrome px-3 font-mono text-[11px] text-ink-3">
         <span>termCode · terminal rápida</span>
         <span>{settingsNow().quickShortcut.replace(/\+/g, " ")} para ocultar · {shortcutLabel("palette")} solo en la ventana principal</span>

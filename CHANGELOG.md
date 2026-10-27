@@ -4,6 +4,16 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ## [Sin publicar]
 
+### Añadido
+
+- Un `claude` o `codex` que escribes a mano en una shell tiene la misma barra que uno lanzado desde termCode (modelo, contexto libre, terminal acoplada), igual que la pestaña, la barra de estado, la barra lateral y Mission Control. Se reconoce en cuanto la shell lo ejecuta, sin esperar a que el agente se anuncie por OSC 7501 (Codex y los Claude Code viejos no lo hacen). `claude -p`, `codex exec` y los subcomandos (`claude mcp`, `codex login`…) no cuentan.
+- En zsh con la integración, un `claude` escrito a mano recibe el `--settings` de termCode (statusLine y hooks) y, si está activado, el MCP de lectura de paneles. Así reporta su modelo y contexto y sus permisos llegan a la bandeja. Tus alias siguen funcionando, si ya tienes una función `claude` se respeta la tuya, y `-p`, los subcomandos y un `--settings` propio pasan tal cual.
+
+### Modificado
+
+- La tarjeta de bienvenida se convierte en una barra fija arriba de cada terminal: el logo, la carpeta y la rama, y Claude Code y Codex para abrirlos ahí mismo. Ya no se va con el scroll ni con `clear`, ocupa 32 px en vez de ~160 y no repite la cuota ni ⌘K, que ya están en la cabecera. Cuando corre un agente, la misma barra muestra su modelo y su contexto. Se apaga en Ajustes → Terminal → «Barra en cada terminal»; si tenías apagada la bienvenida, la barra empieza apagada.
+- Claude Code y Codex en la barra de una shell se abren en ese mismo panel (se teclea `claude` o `codex` en la shell, y al salir vuelves a ella con tu carpeta, tu entorno y tu historial), ya no en una división. Si algo está corriendo, se abren junto al panel y se avisa por qué. «Junto al panel» sigue en la paleta y en la barra lateral.
+
 ## [0.4.0] - 2026-10-27
 
 ### Añadido

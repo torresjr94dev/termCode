@@ -6,7 +6,7 @@ vi.mock("../terminal/TerminalManager", () => ({
   terminalManager: { kill: vi.fn(), focus: vi.fn() },
 }));
 
-const { useTerminalStore } = await import("./terminalStore");
+const { liveAgent, useTerminalStore } = await import("./terminalStore");
 const { terminalManager } = await import("../terminal/TerminalManager");
 const { collectPanes } = await import("../lib/layout");
 
@@ -22,7 +22,7 @@ beforeEach(() => {
     root: { id: "pane-test", type: "pane" as const, terminalId: "term-test", title: "zsh" },
     activePaneId: "pane-test",
   };
-  useTerminalStore.setState({ tabs: [fresh], activeTabId: fresh.id, attention: {}, agentStatus: {}, closed: [] });
+  useTerminalStore.setState({ tabs: [fresh], activeTabId: fresh.id, attention: {}, agentStatus: {}, runningAgent: {}, closed: [] });
 });
 
 describe("closePane", () => {
@@ -151,13 +151,22 @@ describe("titles, attention and font", () => {
     expect(collectPanes(s().tabs[0].root)[1].agentSession).toEqual({ id: "session-9999", prompt: undefined, at: 4 });
   });
 
-  it("every new shell gets the welcome card; agents do not", () => {
-    s().createTab();
-    expect(collectPanes(s().tabs.at(-1)!.root)[0].welcome).toBe(true);
-    s().splitPane(s().tabs.at(-1)!.activePaneId, "horizontal", { agentType: "claude", command: "claude" });
-    expect(collectPanes(s().tabs.at(-1)!.root)[1].welcome).toBeUndefined();
-    s().createTab({ welcome: false });
-    expect(collectPanes(s().tabs.at(-1)!.root)[0].welcome).toBeUndefined();
+  it("a `claude` typed in a shell makes the pane an agent until it leaves", () => {
+    const shell = s().tabs[0].activePaneId;
+    s().setRunningAgent(shell, "claude");
+    const pane = collectPanes(s().tabs[0].root)[0];
+    expect(liveAgent(s(), pane)).toBe("claude");
+    // Una shell acoplada o un panel que ya no existe no se vuelven agentes.
+    s().setRunningAgent("drawer-x", "codex");
+    expect(s().runningAgent).toEqual({ [shell]: "claude" });
+    s().setRunningAgent(shell, null);
+    expect(liveAgent(s(), pane)).toBeNull();
+    // Al cerrar el panel no queda rastro.
+    s().splitPane(shell, "horizontal", {});
+    const other = s().tabs[0].activePaneId;
+    s().setRunningAgent(other, "codex");
+    s().closePane(other);
+    expect(s().runningAgent).toEqual({});
   });
 
   it("splits inherit the spec (cwd, agent)", () => {

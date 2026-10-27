@@ -22,12 +22,14 @@ const OSC_AGENTS = new Map<string, AgentKind>([
 ]);
 
 /**
- * El agente del panel: el que lanzó termCode o el que se anunció por OSC 7501
- * (un `claude` escrito a mano en una shell también cuenta).
+ * El agente del panel: el que lanzó termCode, el que se anunció por OSC 7501
+ * o el que la shell dice que corre (`running`, de su integración). Un `claude`
+ * escrito a mano también cuenta, sin esperar a que el agente se anuncie.
  */
-export function paneAgent(pane: PaneNode, activity?: AgentActivity): AgentKind | null {
+export function paneAgent(pane: PaneNode, activity?: AgentActivity, running?: AgentKind | null): AgentKind | null {
   if (pane.agentType) return pane.agentType;
-  return activity?.source === "osc" && activity.app ? (OSC_AGENTS.get(activity.app) ?? null) : null;
+  const announced = activity?.source === "osc" && activity.app ? OSC_AGENTS.get(activity.app) : undefined;
+  return announced ?? running ?? null;
 }
 
 /**
@@ -96,11 +98,12 @@ export function agentSummary(
   attention: Record<string, Attention>,
   status: Record<string, AgentStatus>,
   approvals: ReadonlyArray<{ paneId: string }> = [],
+  running: Record<string, AgentKind> = {},
 ): AgentSummary {
   const summary: AgentSummary = { agents: 0, working: 0, waiting: 0, costUsd: null };
   for (const tab of tabs) {
     for (const pane of collectPanes(tab.root)) {
-      if (!paneAgent(pane, activity[pane.id])) continue;
+      if (!paneAgent(pane, activity[pane.id], running[pane.id])) continue;
       summary.agents++;
       const state = agentStateOf(activity[pane.id], attention[pane.id], approvals.some((a) => a.paneId === pane.id));
       if (state === "needs-input") summary.waiting++;

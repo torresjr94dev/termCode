@@ -356,17 +356,16 @@ const TESTS = [
     },
   },
   {
-    name: "clear-no-tapa-salida",
+    name: "clear-limpia-historial",
     async run(p) {
-      // El `clear` de macOS manda ESC[3J antes de ESC[H ESC[2J: la tarjeta va tras el borrado,
-      // nunca encima de lo que se imprime después. Y lo que limpia un programa (Vite) no la trae.
+      // El `clear` de macOS manda ESC[3J antes de ESC[H ESC[2J: sin un ESC[3J de más tras el
+      // borrado, la pantalla anterior subía al historial. Lo que viene después queda entero.
       const r = await p.run(`
         const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
         const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
         const s = useTerminalStore.getState();
         const id = s.tabs.find((t) => t.id === s.activeTabId)?.activePaneId;
         const term = terminalManager.getTerminal(id);
-        const pane = document.querySelector('[data-pane-id="' + id + '"]');
         const recv = (t) => terminalManager.receiveForTesting(id, t);
         const settle = async () => { await new Promise((resolve) => term.write("", resolve)); await new Promise((r) => setTimeout(r, 250)); };
         const prompt = "\\x1b]133;D;0\\x07\\x1b]7;file://h/Users/x/Kiosko\\x07\\x1b]133;A\\x07jorge@mac Kiosko % ";
@@ -380,26 +379,10 @@ const TESTS = [
         const b = term.buffer.active;
         const lines = [];
         for (let y = 0; y < b.length; y++) lines.push(b.getLine(y)?.translateToString(true) ?? "");
-        // La decoración puede haber salido de la vista (xterm no la dibuja): se mide sobre el buffer.
-        const card = terminalManager.instances.get(id).welcomeCard;
-        const screen = pane.querySelector(".xterm-screen").getBoundingClientRect();
-        const cell = screen.height / term.rows;
-        const top = card ? card.marker.line : -1;
-        const height = Math.ceil(156 / cell);
-        const covered = card ? lines.slice(top, top + height).filter((l) => l.trim()) : [];
-        const cleared = { card: Boolean(card), top, covered, oldInHistory: lines.some((l) => l.includes("archivo-")) };
-
-        recv(prompt + run("npm run dev") + "\\x1b[2J\\x1b[3J\\x1b[H  VITE v6 listo\\r\\n");
-        for (let i = 0; i < 5; i++) recv("  ➜ linea " + i + "\\r\\n");
-        await settle();
-        // El ESC[3J de Vite borra el historial (y con él la tarjeta vieja): lo que no debe haber es una nueva.
-        const after = terminalManager.instances.get(id).welcomeCard;
-        return { cleared, viteCard: after !== null && after !== card };`);
-      await p.screenshot("clear-no-tapa-salida");
-      if (!r.cleared.card) throw new Error("clear no puso la tarjeta");
-      if (r.cleared.covered.length) throw new Error(`La tarjeta tapa salida: ${JSON.stringify(r.cleared.covered)}`);
-      if (r.cleared.oldInHistory) throw new Error("clear dejó la pantalla anterior en el historial");
-      if (r.viteCard) throw new Error("Vite trajo otra tarjeta encima de su salida");
+        return { oldInHistory: lines.some((l) => l.includes("archivo-")), output: lines.filter((l) => /^salida-\\d+$/.test(l.trim())).length };`);
+      await p.screenshot("clear-limpia-historial");
+      if (r.oldInHistory) throw new Error("clear dejó la pantalla anterior en el historial");
+      if (r.output !== 30) throw new Error(`Tras clear faltan líneas de salida: ${r.output} de 30`);
     },
   },
   {
@@ -1176,69 +1159,107 @@ const TESTS = [
     },
   },
   {
-    name: "bienvenida-pestana",
+    name: "barra-del-panel",
     async run(p) {
       await p.shortcut("newTab");
-      const activeCard = `(() => { const pane = document.querySelector('[data-pane-id] .xterm:not([hidden])') && [...document.querySelectorAll("[data-pane-id]")].find((el) => el.offsetParent !== null && el.querySelector(".welcome-card")); return pane?.querySelector(".welcome-card") ?? null; })()`;
-      await p.waitFor(activeCard, "la pestaña nueva muestra la tarjeta de bienvenida", 6000);
-      const text = await p.evaluate(`${activeCard}.textContent`);
-      if (!text.includes("termCode") || !text.includes("by CODERGENIUS MX") || !text.includes("Comandos")) throw new Error(`Tarjeta incompleta: ${text}`);
-      // Las líneas reservadas van vacías: la shell no ve nada y copiar no arrastra arte.
-      const blank = await p.run(`
+      await p.run(`
         const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
         const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
         const s = useTerminalStore.getState();
-        const id = s.tabs.find((t) => t.id === s.activeTabId)?.activePaneId;
-        return terminalManager.snapshot(id, 12).every((l) => !l.trim());`);
-      if (!blank) throw new Error("Las líneas de la tarjeta deberían estar en blanco");
-      await p.screenshot("bienvenida-pestana");
-
-      // Dividir no deforma la tarjeta (se reacomoda) y el panel nuevo trae la suya.
-      const widthBefore = await p.evaluate(`${activeCard}.getBoundingClientRect().width`);
-      await p.shortcut("splitRight");
-      // El ancho nuevo llega en un layout posterior al de la tarjeta nueva: se espera en vez
-      // de medir una sola vez (en el runner del CI tarda más y la primera aún medía lo de antes).
-      await p.waitFor(
-        `(() => { const cards = [...document.querySelectorAll(".welcome-card")].filter((c) => c.offsetParent !== null); return cards.length === 2 && cards.every((c) => c.getBoundingClientRect().width < ${widthBefore}); })()`,
-        "el panel nuevo también da la bienvenida y las dos tarjetas caben",
-        6000,
-      );
-      const after = await p.evaluate(`(() => {
-        const cards = [...document.querySelectorAll(".welcome-card")].filter((c) => c.offsetParent !== null);
-        return { widths: cards.map((c) => c.getBoundingClientRect().width), text: cards.map((c) => c.textContent).join("|") };
-      })()`);
-      if (!after.widths.every((w) => w < widthBefore) || !after.text.includes("termCode")) throw new Error(`Las tarjetas no se reacomodaron: ${JSON.stringify({ widthBefore, after })}`);
-      // La tarjeta que nació completa no se aplasta: pasa a la compacta, igual que la del panel nuevo.
-      const heights = await p.evaluate(`[...document.querySelectorAll(".welcome-card")].filter((c) => c.offsetParent !== null).map((c) => Math.round(c.getBoundingClientRect().height))`);
-      if (new Set(heights).size !== 1) throw new Error(`Las tarjetas divididas deberían verse iguales: ${JSON.stringify(heights)}`);
-      await p.screenshot("bienvenida-dividida");
-
-      // `clear` escrito en la shell (lo que emite en Linux: ESC[H ESC[2J ESC[3J) vuelve a poner la tarjeta arriba.
-      const cleared = await p.run(`
+        const id = s.tabs.find((t) => t.id === s.activeTabId).activePaneId;
+        for (let i = 0; i < 75 && !terminalManager.getTerminal(id); i++) await new Promise((r) => setTimeout(r, 40));`);
+      const helpers = `
         const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
         const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
         const s = useTerminalStore.getState();
-        const id = s.tabs.find((t) => t.id === s.activeTabId)?.activePaneId;
-        const pane = document.querySelector('[data-pane-id="' + id + '"]');
-        const before = pane.querySelector(".welcome-card");
-        terminalManager.receiveForTesting(id, "ls\\r\\nuno dos tres\\r\\n");
-        terminalManager.receiveForTesting(id, "clear\\r\\n\\x1b]633;E;clear\\x07\\x1b]133;C\\x07\\x1b[H\\x1b[2J\\x1b[3J\\x1b]133;D;0\\x07\\x1b]133;A\\x07% ");
-        for (let i = 0; i < 50; i++) {
-          const now = pane.querySelector(".welcome-card");
-          if (now && now !== before) break;
-          await new Promise((r) => setTimeout(r, 40));
+        const id = s.tabs.find((t) => t.id === s.activeTabId).activePaneId;
+        const inst = terminalManager.instances.get(id);
+        const flush = () => new Promise((resolve) => inst.term.write("", resolve));
+        const recv = (t) => terminalManager.receiveForTesting(id, t);
+        const bar = () => document.querySelector('[data-pane-id="' + id + '"] [data-pane-bar]');
+        const launcher = (name) => bar()?.querySelector('button[aria-label="Abrir ' + name + ' en este panel"]');
+        const writes = () => inst.pendingInput.map((w) => w.args.data);
+        const tabPanes = async () => (await mod("/src/lib/layout.ts")).collectPanes(useTerminalStore.getState().tabs.find((t) => t.id === useTerminalStore.getState().activeTabId).root);`;
+      // Una shell sola ya lleva su barra: el logo, su carpeta y los agentes instalados.
+      const id = await p.run(`${helpers}
+        s.setAgents({ claude: "/x/claude", codex: "/x/codex", gh: null, editors: [], claudeSettingsPath: "/x/claude-settings.json", mcpConfigPath: null });
+        // La integración da su primer prompt: la shell está libre.
+        recv("\\x1b]7;file://h/Users/e2e/Kiosko\\x07\\x1b]133;A\\x07% ");
+        await flush();
+        return id;`);
+      await p.waitFor(`document.querySelector('[data-pane-id="${id}"] button[aria-label="Abrir Claude Code en este panel"]')`, "la barra ofrece abrir Claude Code ahí");
+      await p.waitFor(`document.querySelector('[data-pane-id="${id}"] button[aria-label="Abrir Codex CLI en este panel"]')`, "y Codex");
+      await p.screenshot("barra-del-panel");
+
+      // Clic en Claude Code: se teclea `claude` en ESA shell (sin dividir), sobre lo que hubiera a medio escribir.
+      const typed = await p.run(`${helpers}
+        const info = terminalManager.info;
+        terminalManager.info = async () => ({ busy: false, foregroundName: "zsh", foregroundPid: 1, cwd: "/Users/e2e/Kiosko" });
+        inst.pendingInput.length = 0;
+        try {
+          launcher("Claude Code").click();
+          for (let i = 0; i < 50 && !writes().length; i++) await new Promise((r) => setTimeout(r, 40));
+        } finally {
+          terminalManager.info = info;
         }
-        const term = terminalManager.getTerminal(id);
-        return { replaced: pane.querySelector(".welcome-card") !== before && !!pane.querySelector(".welcome-card"), cards: pane.querySelectorAll(".welcome-card").length, promptRow: term.buffer.active.cursorY, top: term.buffer.active.viewportY };
-      `);
-      if (!cleared.replaced || cleared.cards !== 1 || cleared.promptRow < 3) throw new Error(`clear no devolvió la tarjeta: ${JSON.stringify(cleared)}`);
+        return { writes: writes(), panes: (await tabPanes()).length };`);
+      if (JSON.stringify(typed.writes) !== JSON.stringify(["\x05\x15claude\r"]) || typed.panes !== 1) throw new Error(`Abrir Claude aquí: ${JSON.stringify(typed)}`);
 
-      // Solo colores del tema: en el claro se repinta legible.
-      await p.run(`(await mod("/src/store/settingsStore.ts")).useSettingsStore.getState().update({ theme: "papel" });`);
-      await p.waitFor(`document.documentElement.dataset.theme === "papel"`, "tema claro");
-      await new Promise((r) => setTimeout(r, 150));
-      await p.screenshot("bienvenida-papel");
-      await p.run(`(await mod("/src/store/settingsStore.ts")).useSettingsStore.getState().update({ theme: "fosforo" });`);
+      // La shell dice que corre `claude`: la misma barra pasa a ser la del agente (sin esperar a OSC 7501).
+      await p.run(`${helpers}
+        recv("claude\\r\\n\\x1b]633;E;claude\\x07\\x1b]133;C\\x07");
+        await flush();
+        useTerminalStore.getState().setAgentStatus({ paneId: id, model: "Opus 5.5", contextPercent: 38, costUsd: null });`);
+      await p.waitFor(`document.querySelector('[data-pane-id="${id}"] > div button[aria-pressed]')`, "la barra del agente trae su terminal acoplada");
+      const agentBar = await p.run(`${helpers} return { text: bar().innerText, launchers: Boolean(launcher("Claude Code")), running: useTerminalStore.getState().runningAgent[id] ?? null };`);
+      if (!agentBar.text.includes("62%") || agentBar.launchers || agentBar.running !== "claude") throw new Error(`Barra del agente: ${JSON.stringify(agentBar)}`);
+      await p.screenshot("barra-del-panel-agente");
+
+      // Sale el agente: vuelve la shell, sin el modelo ni el contexto de esa sesión.
+      const back = await p.run(`${helpers}
+        recv("\\x1b]133;D;0\\x07\\x1b]133;A\\x07% ");
+        await flush();
+        await new Promise((r) => setTimeout(r, 50));
+        return { launchers: Boolean(launcher("Claude Code")), status: Boolean(useTerminalStore.getState().agentStatus[id]), terminal: Boolean(bar().querySelector("button[aria-pressed]")) };`);
+      if (!back.launchers || back.status || back.terminal) throw new Error(`Al salir del agente: ${JSON.stringify(back)}`);
+
+      // `clear` no se la lleva: vive fuera de la terminal.
+      const cleared = await p.run(`${helpers}
+        recv("clear\\r\\n\\x1b]633;E;clear\\x07\\x1b]133;C\\x07\\x1b[3J\\x1b[H\\x1b[2J\\x1b]133;D;0\\x07\\x1b]133;A\\x07% ");
+        await flush();
+        return Boolean(launcher("Claude Code"));`);
+      if (!cleared) throw new Error("clear se llevó la barra");
+
+      // Con algo corriendo, el clic no teclea encima: abre el agente junto al panel y avisa.
+      const busy = await p.run(`${helpers}
+        const info = terminalManager.info;
+        terminalManager.info = async () => ({ busy: true, foregroundName: "vite", foregroundPid: 9, cwd: "/Users/e2e/Kiosko" });
+        inst.pendingInput.length = 0;
+        try {
+          launcher("Codex CLI").click();
+          for (let i = 0; i < 50 && (await tabPanes()).length < 2; i++) await new Promise((r) => setTimeout(r, 40));
+        } finally {
+          terminalManager.info = info;
+        }
+        const panes = await tabPanes();
+        return { writes: writes(), agents: panes.map((p) => p.agentType), toast: document.body.innerText.includes("vite sigue corriendo") };`);
+      if (busy.writes.length || JSON.stringify(busy.agents) !== JSON.stringify([null, "codex"]) || !busy.toast) throw new Error(`Con algo corriendo: ${JSON.stringify(busy)}`);
+      await p.shortcut("closePane");
+
+      // Sin la barra en Ajustes, una shell sola usa todo el panel; un agente la lleva igual.
+      const off = await p.run(`${helpers}
+        (await mod("/src/store/settingsStore.ts")).useSettingsStore.getState().update({ paneBar: false });
+        await new Promise((r) => setTimeout(r, 50));
+        const shell = Boolean(bar());
+        recv("codex\\r\\n\\x1b]633;E;codex\\x07\\x1b]133;C\\x07");
+        await flush();
+        await new Promise((r) => setTimeout(r, 50));
+        const agent = Boolean(bar()?.querySelector("button[aria-pressed]"));
+        recv("\\x1b]133;D;0\\x07\\x1b]133;A\\x07% ");
+        await flush();
+        (await mod("/src/store/settingsStore.ts")).useSettingsStore.getState().update({ paneBar: true });
+        return { shell, agent };`);
+      if (off.shell || !off.agent) throw new Error(`Barra apagada en Ajustes: ${JSON.stringify(off)}`);
       await p.shortcut("closePane");
     },
   },

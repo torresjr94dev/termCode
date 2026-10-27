@@ -77,6 +77,9 @@ type CmdResult<T> = Result<T, String>;
 // main thread. None of them block: input is queued to a per-session writer
 // thread inside pty-core.
 
+// Cinco de los argumentos los inyecta Tauri (app, webview, estados, canal):
+// agruparlos en un struct cambiaría el contrato con el frontend sin ganar nada.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn pty_spawn(
     app: AppHandle,
@@ -86,6 +89,7 @@ pub async fn pty_spawn(
     mut options: SpawnOptions,
     on_data: Channel<InvokeResponseBody>,
     shell_integration: Option<bool>,
+    agents_read_panes: Option<bool>,
 ) -> CmdResult<SessionId> {
     let kind = if options.command.is_some() {
         "agent"
@@ -106,7 +110,16 @@ pub async fn pty_spawn(
         options
             .env
             .extend(crate::shell_integration::env_for(&shell));
+        // Lo usa la función `claude` de la integración (un `claude` escrito a mano).
+        options
+            .env
+            .retain(|(k, _)| k != agents::ENV_CLAUDE_SETTINGS && k != agents::ENV_CLAUDE_MCP);
+        options
+            .env
+            .extend(agents::manual_claude_env(agents_read_panes.unwrap_or(true)));
     }
+    #[cfg(not(unix))]
+    let _ = agents_read_panes;
     // Windows: PowerShell con la integración y el agente dentro, sin cmd.exe.
     #[cfg(windows)]
     crate::winlaunch::prepare(&mut options, shell_integration.unwrap_or(true))?;

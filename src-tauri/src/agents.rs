@@ -339,6 +339,38 @@ fn hook_cli(event: &str) -> i32 {
     0
 }
 
+/// `--settings` (and `--mcp-config`) for a `claude` typed by hand in a shell:
+/// the zsh integration wraps `claude` and passes them, so that session reports
+/// to its pane like one launched from termCode.
+pub const ENV_CLAUDE_SETTINGS: &str = "TERMCODE_CLAUDE_SETTINGS";
+pub const ENV_CLAUDE_MCP: &str = "TERMCODE_CLAUDE_MCP";
+
+/// Environment for a shell so a hand-typed `claude` gets termCode's settings.
+/// `read_panes`: the read-only MCP is on in Settings (same rule as launched agents).
+pub fn manual_claude_env(read_panes: bool) -> Vec<(String, String)> {
+    manual_claude_env_in(&state_dir(), read_panes)
+}
+
+fn manual_claude_env_in(dir: &Path, read_panes: bool) -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    let settings = dir.join("claude-settings.json");
+    if !settings.is_file() {
+        return env;
+    }
+    env.push((
+        ENV_CLAUDE_SETTINGS.to_owned(),
+        settings.to_string_lossy().into_owned(),
+    ));
+    let mcp = dir.join("mcp.json");
+    if read_panes && mcp.is_file() {
+        env.push((
+            ENV_CLAUDE_MCP.to_owned(),
+            mcp.to_string_lossy().into_owned(),
+        ));
+    }
+    env
+}
+
 /// Writes the `--settings` file termCode passes to Claude Code. Regenerated on
 /// every start so it always points at the current executable.
 pub fn write_claude_settings() -> std::io::Result<PathBuf> {
@@ -1073,6 +1105,32 @@ mod tests {
         ] {
             assert!(settings["hooks"][event].is_array(), "falta el hook {event}");
         }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_hand_typed_claude_gets_the_same_settings() {
+        let dir = std::env::temp_dir().join(format!("termcode-manual-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        // Sin el archivo de settings no hay nada que pasar.
+        assert!(manual_claude_env_in(&dir, true).is_empty());
+        write_claude_settings_in(&dir).unwrap();
+        let keys = |read_panes| {
+            manual_claude_env_in(&dir, read_panes)
+                .into_iter()
+                .map(|(k, v)| (k, Path::new(&v).is_file()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            keys(true),
+            [
+                (ENV_CLAUDE_SETTINGS.to_owned(), true),
+                (ENV_CLAUDE_MCP.to_owned(), true)
+            ]
+        );
+        // Sin el MCP de lectura en Ajustes, igual que un agente lanzado desde termCode.
+        assert_eq!(keys(false), [(ENV_CLAUDE_SETTINGS.to_owned(), true)]);
         fs::remove_dir_all(dir).unwrap();
     }
 

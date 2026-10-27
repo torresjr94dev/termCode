@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
-import { useTerminalStore } from "../store/terminalStore";
+import { liveAgent, useTerminalStore } from "../store/terminalStore";
 import { useUiStore } from "../store/uiStore";
 import { terminalManager } from "../terminal/TerminalManager";
 import { actions } from "../lib/actions";
 import { cn, collectPanes } from "../lib/layout";
 import { paneDisplayName, projectTone, tabDisplayName } from "../lib/identity";
 import { formatDuration } from "../lib/format";
-import { agentStateOf, paneAgent, type AgentState } from "../lib/attention";
+import { agentStateOf, type AgentState } from "../lib/attention";
 import { useNow } from "../lib/useNow";
 import { shortcutLabel } from "../lib/shortcuts";
 import { useTrafficLights } from "../lib/fullscreen";
@@ -38,6 +38,7 @@ const OverviewPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
   const paneProject = useTerminalStore((s) => s.paneProject);
   const attention = useTerminalStore((s) => s.attention);
   const agentActivity = useTerminalStore((s) => s.agentActivity);
+  const runningAgent = useTerminalStore((s) => s.runningAgent);
   const setOpen = useUiStore((s) => s.setOverviewOpen);
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState<number | null>(null);
@@ -166,7 +167,7 @@ const OverviewPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
               selected={i === selected}
               current={entry.tab.id === activeTabId && entry.pane.id === entry.tab.activePaneId}
               attention={entry.pane.id in attention}
-              agent={paneAgent(entry.pane, agentActivity[entry.pane.id])}
+              agent={liveAgent({ agentActivity, runningAgent }, entry.pane)}
               agentState={agentStateOf(agentActivity[entry.pane.id], attention[entry.pane.id])}
               now={now}
               onHover={() => i !== selected && setCursor(i)}

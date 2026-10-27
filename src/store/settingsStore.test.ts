@@ -21,6 +21,14 @@ describe("settings", () => {
     expect(sanitize({ fontFamily: "" }).fontFamily).toBe(DEFAULT_SETTINGS.fontFamily);
   });
 
+  it("keeps the pane bar off for whoever had turned the welcome card off", () => {
+    expect(sanitize({}).paneBar).toBe(true);
+    expect(sanitize({ welcomeBanner: "off" }).paneBar).toBe(false);
+    expect(sanitize({ welcomeBanner: "compact" }).paneBar).toBe(true);
+    expect(sanitize({ welcomeBanner: "off", paneBar: true }).paneBar).toBe(true);
+    expect("welcomeBanner" in sanitize({ welcomeBanner: "full" })).toBe(false);
+  });
+
   it("updates through the store with validation", () => {
     useSettingsStore.getState().update({ fontSize: 15, theme: "papel" });
     expect(useSettingsStore.getState().settings).toMatchObject({ fontSize: 15, theme: "papel" });

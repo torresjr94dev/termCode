@@ -9,7 +9,12 @@ import { IS_WINDOWS } from "./shortcuts";
  * Las rutas son absolutas, así que nunca empiezan con `-`.
  */
 export function cdKeystrokes(path: string, windows = IS_WINDOWS): string {
-  return windows ? `\x1bSet-Location -LiteralPath ${powershellQuote(path)}` : `\x05\x15cd ${shellQuote(path)}`;
+  return windows ? lineKeystrokes(`Set-Location -LiteralPath ${powershellQuote(path)}`, true) : lineKeystrokes(`cd ${shellQuote(path)}`, false);
+}
+
+/** `line` tecleada en la shell sobre lo que hubiera a medio escribir (sin el Enter). */
+export function lineKeystrokes(line: string, windows = IS_WINDOWS): string {
+  return `${windows ? "\x1b" : "\x05\x15"}${line}`;
 }
 
 /** Carpeta que contiene a `path` (`/a/b` → `/a`, `C:\a` → `C:\`), o null en la raíz. */

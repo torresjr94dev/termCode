@@ -56,7 +56,7 @@ termCode es una terminal para macOS, Windows y Linux (Tauri + React + xterm.js) 
 - `⌘`-clic (`Ctrl`-clic en Windows y Linux) en rutas (`src/app.ts:42`, `C:\repo\app.ts:42`) para abrirlas en tu editor (Cursor, VS Code, Zed, Sublime) o en el visor de termCode.
 - Imágenes en línea (sixel e iTerm2), búsqueda, barras de progreso (OSC 9;4) y broadcast a todos los paneles.
 - **Terminal rápida**: baja sobre cualquier app con un atajo global (`Alt+Space` en macOS y `Ctrl+Alt+Space` en Windows y Linux por defecto, porque allí `Alt+Space` abre el menú de la ventana). En Linux el atajo global es de X11: en una sesión Wayland solo responde con el foco en una app de XWayland.
-- **Bienvenida**: cada shell nueva (pestaña, división o rápida) y cada `clear` muestran el logo, tus agentes, tu cuota y los atajos principales. Es una tarjeta anclada a la terminal: no se deforma al dividir y puedes desactivarla.
+- **Barra de cada terminal**: fija arriba del panel, fuera del scroll (`clear` no la toca). En una shell muestra la carpeta y la rama, y abre Claude Code o Codex ahí mismo; cuando corre un agente, aunque lo hayas escrito a mano, muestra su modelo, su contexto libre y su terminal acoplada. Se puede desactivar.
 
 ### Git y proyecto
 - Cambios con diff unificado o lado a lado; preparar, descartar o revertir por fragmento.

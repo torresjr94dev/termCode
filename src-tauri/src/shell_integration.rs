@@ -85,6 +85,29 @@ __tc_preexec() {
 # del prompt (p10k, starship…) lo pisen.
 precmd_functions=(__tc_precmd ${precmd_functions[@]})
 preexec_functions+=(__tc_preexec)
+
+# Un `claude` escrito a mano recibe lo mismo que uno lanzado desde termCode
+# (statusLine y hooks): así su panel muestra el modelo y el contexto. Solo en
+# una sesión interactiva: `-p`, los subcomandos y lo que ya trae su propio
+# `--settings` pasan tal cual. Si ya tienes una función `claude`, manda la
+# tuya. `function claude` y no `claude()`: así un alias `claude` no se expande.
+if [[ -n "$TERMCODE_CLAUDE_SETTINGS" ]] && (( ! ${+functions[claude]} )); then
+  function claude {
+    emulate -L zsh
+    local arg first=""
+    for arg in "$@"; do
+      [[ -z "$first" && "$arg" != -* ]] && first=$arg
+      [[ "$arg" == (-p|--print|-v|--version|-h|--help|--settings|--settings=*) ]] && { command claude "$@"; return; }
+    done
+    if [[ ! -t 0 || ! -t 1 || ! -r "$TERMCODE_CLAUDE_SETTINGS" || "$first" == (mcp|config|doctor|update|install|setup-token|migrate-installer|plugin|plugins) ]]; then
+      command claude "$@"
+      return
+    fi
+    local -a extra=(--settings "$TERMCODE_CLAUDE_SETTINGS")
+    [[ -r "$TERMCODE_CLAUDE_MCP" ]] && extra+=(--mcp-config "$TERMCODE_CLAUDE_MCP")
+    command claude "${extra[@]}" "$@"
+  }
+fi
 "#;
 
 /// PowerShell 5.1 y 7: `[char]27`/`[char]7` porque `` `e `` no existe en 5.1.
@@ -306,6 +329,125 @@ mod tests {
 
         mgr.remove(id);
         // zsh escribe su historial al cerrarse: limpieza tolerante a esa carrera.
+        for _ in 0..20 {
+            if std::fs::remove_dir_all(&base).is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// A hand-typed `claude` gets termCode's `--settings` only when it opens
+    /// its interface; the user's alias still applies and their own flags win.
+    #[test]
+    fn zsh_wraps_a_hand_typed_claude() {
+        if !std::path::Path::new("/bin/zsh").exists() {
+            return;
+        }
+        let base = std::env::temp_dir().join(format!("termcode-claudewrap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (ours, user, bin) = (base.join("ours"), base.join("user"), base.join("bin"));
+        for dir in [&ours, &user, &bin] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        for (name, content) in [
+            (".zshenv", ZSHENV),
+            (".zprofile", ZPROFILE),
+            (".zshrc", ZSHRC),
+            ("termcode-integration.zsh", INTEGRATION),
+        ] {
+            std::fs::write(ours.join(name), content).unwrap();
+        }
+        // Un `claude` falso que imprime cada argumento entre corchetes.
+        let fake = bin.join("claude");
+        std::fs::write(
+            &fake,
+            "#!/bin/sh\nprintf 'ARGS:'; for a in \"$@\"; do printf '[%s]' \"$a\"; done; printf '\\n'\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let settings = base.join("claude settings.json");
+        let mcp = base.join("mcp.json");
+        std::fs::write(&settings, "{}").unwrap();
+        std::fs::write(&mcp, "{}").unwrap();
+        std::fs::write(user.join(".zshenv"), "skip_global_compinit=1\n").unwrap();
+        std::fs::write(
+            user.join(".zshrc"),
+            format!(
+                "PATH={}:$PATH\nalias claude='claude --alias'\n",
+                bin.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let mgr = PtyManager::default();
+        let (tx, rx) = mpsc::channel();
+        let id = mgr
+            .spawn(
+                SpawnOptions {
+                    program: Some("/bin/zsh".into()),
+                    args: vec!["-i".into()],
+                    env: vec![
+                        ("ZDOTDIR".into(), ours.to_string_lossy().into_owned()),
+                        (
+                            "TERMCODE_USER_ZDOTDIR".into(),
+                            user.to_string_lossy().into_owned(),
+                        ),
+                        ("TERMCODE_ORIG_ZDOTDIR_UNSET".into(), "1".into()),
+                        (
+                            crate::agents::ENV_CLAUDE_SETTINGS.into(),
+                            settings.to_string_lossy().into_owned(),
+                        ),
+                        (
+                            crate::agents::ENV_CLAUDE_MCP.into(),
+                            mcp.to_string_lossy().into_owned(),
+                        ),
+                    ],
+                    cols: 400,
+                    rows: 30,
+                    ..Default::default()
+                },
+                |_| Sink(tx),
+            )
+            .unwrap();
+
+        let mut out = String::new();
+        let mut wait_for = |needle: &str| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !out.contains(needle) && Instant::now() < deadline {
+                if let Ok(chunk) = rx.recv_timeout(Duration::from_millis(200)) {
+                    mgr.ack(id, chunk.len());
+                    out.push_str(&String::from_utf8_lossy(&chunk));
+                }
+            }
+            assert!(out.contains(needle), "no apareció {needle:?} en:\n{out}");
+        };
+
+        wait_for("\x1b]133;A\x07");
+        let (s, m) = (settings.to_string_lossy(), mcp.to_string_lossy());
+        for (typed, expected) in [
+            // Sesión interactiva: los settings de termCode, luego el alias y lo tuyo.
+            (
+                "claude uno",
+                format!("ARGS:[--settings][{s}][--mcp-config][{m}][--alias][uno]"),
+            ),
+            ("claude -p dos", "ARGS:[--alias][-p][dos]".to_owned()),
+            (
+                "claude --settings mio tres",
+                "ARGS:[--alias][--settings][mio][tres]".to_owned(),
+            ),
+            (
+                "claude mcp cuatro",
+                "ARGS:[--alias][mcp][cuatro]".to_owned(),
+            ),
+            ("echo | claude cinco", "ARGS:[--alias][cinco]".to_owned()),
+        ] {
+            mgr.write(id, format!("{typed}\n").as_bytes()).unwrap();
+            wait_for(&expected);
+        }
+
+        mgr.remove(id);
         for _ in 0..20 {
             if std::fs::remove_dir_all(&base).is_ok() {
                 break;
