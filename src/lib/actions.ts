@@ -2,7 +2,7 @@ import { liveAgent, useTerminalStore, type PaneSpec } from "../store/terminalSto
 import { useUiStore } from "../store/uiStore";
 import { terminalManager } from "../terminal/TerminalManager";
 import { DEFAULT_SETTINGS, settingsNow, useSettingsStore } from "../store/settingsStore";
-import { basename, collectPanes, findOwnerTab, findPane } from "./layout";
+import { basename, collectPanes, findOwnerTab, findPane, neighbourPane, type PaneSide } from "./layout";
 import { ipc, powershellQuote, shellQuote } from "./ipc";
 import { agentCommand, type AgentCommandOptions } from "./resume";
 import { cdKeystrokes, lineKeystrokes } from "./cd";
@@ -24,6 +24,8 @@ export const AGENTS: Record<AgentKind, { title: string; command: string; vendor:
 };
 
 const state = () => useTerminalStore.getState();
+
+const SIDE_LABEL: Record<PaneSide, string> = { left: "a la izquierda", right: "a la derecha", top: "arriba", bottom: "abajo" };
 const ui = () => useUiStore.getState();
 
 function activeTab() {
@@ -351,6 +353,18 @@ export const actions = {
       return;
     }
     actions.sendTextToAgent(text);
+  },
+
+  /** Intercambia el panel activo con su vecino de ese lado: lo mismo que arrastrarlo, con el teclado. */
+  movePaneSide: (side: PaneSide) => {
+    const tab = activeTab();
+    if (!tab) return;
+    const neighbour = neighbourPane(tab.root, tab.activePaneId, side);
+    if (!neighbour) {
+      ui().showToast(`No hay ningún panel ${SIDE_LABEL[side]}.`);
+      return;
+    }
+    state().movePane(tab.activePaneId, neighbour, "center");
   },
 
   focusPaneOffset: (delta: number) => {

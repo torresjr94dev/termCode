@@ -7,7 +7,8 @@ import { usePaneAgent, useTerminalStore } from "../store/terminalStore";
 import { useProjectStore } from "../store/projectStore";
 import { useUiStore } from "../store/uiStore";
 import { actions, AGENTS } from "../lib/actions";
-import { cn } from "../lib/layout";
+import { cn, type DropZone } from "../lib/layout";
+import { startPaneDrag } from "../lib/paneDrag";
 import { formatAgo, formatUsd } from "../lib/format";
 import { useNow } from "../lib/useNow";
 import { paneDisplayName } from "../lib/identity";
@@ -41,6 +42,8 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
   const hasAttention = useTerminalStore((s) => pane.id in s.attention);
   const isFindOpen = useUiStore((s) => s.findPaneId === pane.id);
   const isDropTarget = useUiStore((s) => s.dropPaneId === pane.id);
+  const paneDropZone = useUiStore((s) => (s.paneDrag?.targetId === pane.id ? s.paneDrag.zone : null));
+  const isDragSource = useUiStore((s) => s.paneDrag?.sourceId === pane.id && s.paneDrag.targetId !== null);
   const dimInactive = useSettingsStore((s) => s.settings.dimInactivePanes);
   const toggleZoom = useTerminalStore((s) => s.toggleZoom);
   const project = useTerminalStore((s) => s.paneProject[pane.id]);
@@ -68,6 +71,8 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
   }, [pane.id]);
 
   const showHeader = isSplit || isZoomed || Boolean(agent) || (paneBar && shellBar);
+  // Con otros paneles a la vista, la barra sirve para llevarlo a otro sitio.
+  const movable = isSplit && !isZoomed;
   const dimmed = dimInactive && isSplit && !isActive;
 
   /** Los botones actúan sobre *este* panel, no sobre el que estaba activo. */
@@ -86,22 +91,27 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
       }}
       // Cada panel es una tarjeta sobre el vidrio; con divisiones, el activo lleva un anillo de acento.
       className={cn(
-        "relative flex h-full w-full min-h-0 flex-col overflow-hidden rounded-xl border bg-canvas transition-[border-color,box-shadow] duration-200",
+        "relative flex h-full w-full min-h-0 flex-col overflow-hidden rounded-xl border bg-canvas transition-[border-color,box-shadow,opacity] duration-200",
         isSplit && isActive
           ? "border-accent/35 shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-accent)_12%,transparent)]"
           : "border-line",
+        isDragSource && "opacity-50",
       )}
     >
       {showHeader && (
         <div
           data-pane-bar
-          onMouseDown={(e) => {
-            if (!(e.target as HTMLElement).closest("button")) setActivePane(pane.id);
+          onPointerDown={(e) => {
+            if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
+            setActivePane(pane.id);
+            if (movable) startPaneDrag(pane.id, e);
           }}
+          title={movable ? "Arrástralo a otro panel: a un lado lo pega ahí, al centro los intercambia" : undefined}
           // @container: lo secundario (ruta, modelo, costo) se va según el ancho del panel, nunca se encima.
           className={cn(
-            "@container group relative flex h-8 shrink-0 items-center gap-2 border-b border-line pl-3 pr-1.5 transition-colors duration-150",
+            "@container group relative flex h-8 shrink-0 select-none items-center gap-2 border-b border-line pl-3 pr-1.5 transition-colors duration-150",
             isActive ? "text-ink" : "text-ink-3",
+            movable && "cursor-grab",
           )}
         >
           {/* Con un solo panel, "activo" no dice nada: el foco solo se marca al dividir. */}
@@ -226,9 +236,33 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
         </div>
         {pane.drawer && <DockedShell pane={pane} drawer={pane.drawer} hostRef={bodyRef} />}
       </div>
+      {paneDropZone && <DropPreview key={paneDropZone} zone={paneDropZone} />}
     </section>
   );
 };
+
+const ZONE_BOX: Record<DropZone, string> = {
+  left: "inset-y-1.5 left-1.5 w-[calc(50%-0.375rem)]",
+  right: "inset-y-1.5 right-1.5 w-[calc(50%-0.375rem)]",
+  top: "inset-x-1.5 top-1.5 h-[calc(50%-0.375rem)]",
+  bottom: "inset-x-1.5 bottom-1.5 h-[calc(50%-0.375rem)]",
+  center: "inset-1.5",
+};
+
+/** Dónde caería el panel que se arrastra: la mitad de ese lado, o todo el panel si se intercambian. */
+const DropPreview: React.FC<{ zone: DropZone }> = ({ zone }) => (
+  <div
+    aria-hidden="true"
+    className={cn(
+      "pointer-events-none absolute z-30 grid animate-pop-in place-items-center rounded-lg border-2 border-dashed border-accent/70 bg-accent/10",
+      ZONE_BOX[zone],
+    )}
+  >
+    <span className="rounded-md bg-raised px-2.5 py-1 text-[12px] text-ink-2 shadow-lg">
+      {zone === "center" ? "Intercambiar" : "Mover aquí"}
+    </span>
+  </div>
+);
 
 const LAUNCHER_ICON: Record<AgentKind, typeof Asterisk> = { claude: Asterisk, codex: Hexagon };
 

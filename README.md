@@ -31,7 +31,7 @@ termCode es una terminal para macOS, Windows y Linux (Tauri + React + xterm.js) 
 - **Consumo**: la ventana de 5 h en un anillo doble (lo usado contra el tiempo transcurrido) con la proyección de tu ritmo ("se agota a las 15:42"), barras por semana y la actividad de tokens por hora de las últimas 24 h.
 
 ### Terminal
-- Paneles divisibles, maximizables y reordenables. La sesión (pestañas, divisiones y carpetas) se restaura al volver a abrir.
+- Paneles divisibles, maximizables y reordenables: arrastra un panel por su barra y suéltalo en un borde de otro para pegarlo de ese lado, o al centro para intercambiarlos (con el teclado, «Mover panel…» en la paleta). La sesión (pestañas, divisiones y carpetas) se restaura al volver a abrir.
 - `Ctrl+L` limpia la vista sin perder la salida: lo que estaba en pantalla sube al historial, como en Terminal.app e iTerm2 (`clear` borra todo).
 - **Salida en el visor**: la salida completa de un comando (clic en el comando de la barra de estado o en su marca) se lee entera y se busca con `⌘F`.
 - **Elige tu shell**: el menú junto al `+` lista las instaladas (zsh, bash, fish, nu, PowerShell…); la predeterminada se cambia en Ajustes. La integración (marcas de comando, carpeta en vivo) es de zsh y PowerShell.
