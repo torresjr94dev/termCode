@@ -171,6 +171,9 @@ function resetAbandonedModes(term: Terminal) {
   term.write(ABANDONED_MODES);
 }
 
+/** Shift+Enter en CSI u: la integración de zsh lo liga a un salto de línea. */
+const SHIFT_ENTER_CSI_U = "\x1b[13;2u";
+
 /** Shift+Enter sin más modificadores (y sin IME a medio componer). */
 function isShiftEnter(e: KeyboardEvent): boolean {
   return e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing;
@@ -626,19 +629,39 @@ class TerminalManager {
   }
 
   /**
-   * Teclas antes de xterm. Shift+Enter en un agente es un salto de línea:
-   * xterm manda el mismo `\r` que Enter (no habla el protocolo de teclado de
-   * kitty), así que se envía Ctrl+J, que Claude Code y Codex leen como salto
-   * de línea en cualquier terminal. En una shell, Shift+Enter sigue siendo
+   * Lo que es Shift+Enter para lo que está en primer plano. xterm manda el
+   * mismo `\r` que Enter (no habla el protocolo de teclado de kitty), así que
+   * se elige qué mandar: a un agente, Ctrl+J, que Claude Code y Codex leen
+   * como salto de línea en cualquier terminal; al prompt de zsh que la
+   * integración anunció, Shift+Enter en CSI u, que ella liga a un salto de
+   * línea (Ctrl+J ahí ejecutaría). `null` para todo lo demás: sigue siendo
    * Enter (nano, por ejemplo, usa Ctrl+J para justificar).
    */
+  private shiftEnterInput(instance: TerminalInstance): string | null {
+    if (this.agentInForeground(instance)) return "\n";
+    if (instance.isShell && instance.tracker.shiftEnterNewline && !instance.tracker.running()) return SHIFT_ENTER_CSI_U;
+    return null;
+  }
+
+  /** Teclas antes de xterm: Shift+Enter (ver `shiftEnterInput`) y el portapapeles fuera de macOS. */
   private handleKey(instance: TerminalInstance, e: KeyboardEvent): boolean {
-    if (isShiftEnter(e) && this.agentInForeground(instance)) {
+    if (!isShiftEnter(e)) return handleClipboardKey(instance.term, e);
+    if (!this.hooks?.isBroadcastEnabled() || !this.hasFocus(instance)) {
+      const input = this.shiftEnterInput(instance);
+      if (!input) return true;
       e.preventDefault();
-      if (e.type === "keydown") instance.term.input("\n");
+      if (e.type === "keydown") instance.term.input(input);
       return false;
     }
-    return handleClipboardKey(instance.term, e);
+    // Escribiendo en todos, cada panel recibe su propio Shift+Enter: el CSI u
+    // del prompt de zsh sería deshacer (`u`) en un vim de al lado.
+    e.preventDefault();
+    if (e.type === "keydown") {
+      for (const target of this.instances.values()) {
+        this.send(target, "pty_write", { data: this.shiftEnterInput(target) ?? "\r" });
+      }
+    }
+    return false;
   }
 
   private broadcast(command: string, args: Record<string, unknown>) {

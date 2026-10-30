@@ -110,6 +110,13 @@ export class CommandTracker {
   cwd: string | null = null;
   /** Hay integración activa en este panel (se vio al menos un prompt). */
   integrated = false;
+  /**
+   * El prompt de ahora es de la integración de termCode, que lo anunció justo
+   * antes (`633;P;ShiftEnter=newline`): ahí Shift+Enter en CSI u es un salto
+   * de línea. Otra shell que también marque prompts no lo anuncia.
+   */
+  shiftEnterNewline = false;
+  private pendingShiftEnter = false;
   private pendingCommand = "";
   private lastPrompt: IMarker | null = null;
   private listeners = new Set<() => void>();
@@ -131,6 +138,10 @@ export class CommandTracker {
     const subs = [
       parser.registerOscHandler(133, (data) => this.on133(data)),
       parser.registerOscHandler(633, (data) => {
+        if (data === "P;ShiftEnter=newline") {
+          this.pendingShiftEnter = true;
+          return true;
+        }
         if (!data.startsWith("E;")) return false;
         this.pendingCommand = decodeCommandLine(data.slice(2)).trim();
         return true;
@@ -164,6 +175,8 @@ export class CommandTracker {
       case "A": {
         const first = !this.integrated;
         this.integrated = true;
+        this.shiftEnterNewline = this.pendingShiftEnter;
+        this.pendingShiftEnter = false;
         this.lastPrompt?.dispose();
         this.lastPrompt = this.term.registerMarker(0);
         // El primer prompt: la shell terminó de arrancar (quien espera ese momento se entera).
@@ -172,6 +185,8 @@ export class CommandTracker {
         return true;
       }
       case "C": {
+        // Lo que corre ahora no es el prompt, aunque sea otra shell que no marca nada.
+        this.shiftEnterNewline = false;
         const start = this.term.registerMarker(0);
         if (!start) return true;
         this.records.push({

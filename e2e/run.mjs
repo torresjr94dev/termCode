@@ -796,7 +796,7 @@ const TESTS = [
         terminalManager.focus(id);
         for (let i = 0; i < 50 && focused() !== id; i++) await new Promise((r) => setTimeout(r, 40));`);
 
-      // Shift+Enter: salto de línea (Ctrl+J) para el agente; Enter normal en la shell.
+      // Shift+Enter: salto de línea (Ctrl+J) para el agente; Enter normal en una shell sin la integración.
       await p.run(`${helpers} inst.pendingInput.length = 0;`);
       await p.press("Enter", 8);
       const agentKeys = await p.run(`${helpers} await new Promise((r) => setTimeout(r, 100)); return writes();`);
@@ -816,6 +816,52 @@ const TESTS = [
         await flush();
         return { before, after: useTerminalStore.getState().agentActivity[id]?.state ?? null };`);
       if (afterCrash.before !== "working" || afterCrash.after !== null) throw new Error(`Tras el prompt: ${JSON.stringify(afterCrash)}`);
+
+      // En el prompt de zsh que la integración anunció, Shift+Enter va en CSI u (ella lo liga a un salto
+      // de línea). Un prompt marcado sin anuncio (fish, un bash con su integración) y un programa
+      // corriendo (nano justifica con Ctrl+J) siguen recibiendo Enter.
+      const shiftEnter = async (output) => {
+        await p.run(`${helpers} terminalManager.receiveForTesting(id, ${JSON.stringify(output)}); await flush(); inst.pendingInput.length = 0;`);
+        await p.press("Enter", 8);
+        return p.run(`${helpers} await new Promise((r) => setTimeout(r, 100)); return writes();`);
+      };
+      const announced = "\x1b]633;P;ShiftEnter=newline\x07\x1b]133;A\x07% ";
+      const cases = [
+        ["prompt sin anuncio", "", ["\r"]],
+        ["prompt de zsh", announced, ["\x1b[13;2u"]],
+        ["nano corriendo", "nano notas.md\r\n\x1b]633;E;nano notas.md\x07\x1b]133;C\x07", ["\r"]],
+        ["prompt tras nano", "\x1b]133;D;0\x07" + announced, ["\x1b[13;2u"]],
+        ["fish tras exec", "exec fish\r\n\x1b]633;E;exec fish\x07\x1b]133;C\x07\x1b]133;A\x07> ", ["\r"]],
+        // fish marca sus propios prompts y comandos: nada corre, pero su prompt no viene anunciado.
+        ["fish tras un comando", "ls\r\n\x1b]133;C\x07\x1b]133;D;0\x07\x1b]133;A\x07> ", ["\r"]],
+      ];
+      for (const [what, output, expected] of cases) {
+        const keys = await shiftEnter(output);
+        if (JSON.stringify(keys) !== JSON.stringify(expected)) throw new Error(`Shift+Enter (${what}) mandó ${JSON.stringify(keys)}`);
+      }
+
+      // Escribiendo en todos, cada panel recibe su propio Shift+Enter: el CSI u del prompt de zsh
+      // sería deshacer (`u`) en un vim o un nano de otro panel.
+      const otherId = await p.run(`${helpers}
+        const [otherId, other] = [...terminalManager.instances.entries()].find(([, i]) => i !== inst && i.spawnRequested);
+        terminalManager.receiveForTesting(id, ${JSON.stringify(announced)});
+        terminalManager.receiveForTesting(otherId, "nano notas.md\\r\\n\\x1b]633;E;nano notas.md\\x07\\x1b]133;C\\x07");
+        await flush();
+        await new Promise((resolve) => other.term.write("", resolve));
+        for (const i of terminalManager.instances.values()) i.pendingInput.length = 0;
+        useTerminalStore.setState({ isBroadcastEnabled: true });
+        return otherId;`);
+      await p.press("Enter", 8);
+      const broadcastKeys = await p.run(`${helpers}
+        await new Promise((r) => setTimeout(r, 100));
+        const other = terminalManager.instances.get(${JSON.stringify(otherId)});
+        const keys = { mine: writes(), other: other.pendingInput.map((w) => w.args.data) };
+        useTerminalStore.setState({ isBroadcastEnabled: false });
+        terminalManager.receiveForTesting(${JSON.stringify(otherId)}, "\\x1b]133;D;0\\x07\\x1b]133;A\\x07% ");
+        return keys;`);
+      if (JSON.stringify(broadcastKeys) !== JSON.stringify({ mine: ["\x1b[13;2u"], other: ["\r"] })) {
+        throw new Error(`Shift+Enter en broadcast mandó ${JSON.stringify(broadcastKeys)}`);
+      }
     },
   },
   {

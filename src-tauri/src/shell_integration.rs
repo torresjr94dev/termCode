@@ -72,6 +72,9 @@ __tc_precmd() {
   fi
   local dir=${PWD//\%/%25}
   printf '\e]7;file://%s%s\a' "$HOST" "${dir// /%20}"
+  # En cada prompt, justo antes de marcarlo: otra shell que también marque
+  # prompts (fish, un bash con su integración) no recibe la secuencia de abajo.
+  printf '\e]633;P;ShiftEnter=newline\a'
   printf '\e]133;A\a'
 }
 
@@ -85,6 +88,18 @@ __tc_preexec() {
 # del prompt (p10k, starship…) lo pisen.
 precmd_functions=(__tc_precmd ${precmd_functions[@]})
 preexec_functions+=(__tc_preexec)
+
+# Shift+Enter en el prompt: termCode lo manda como CSI u (`ESC[13;2u`), solo
+# en los prompts que anunció __tc_precmd, y aquí es un salto de línea que no
+# ejecuta, también en modo vi. Si ya lo tienes ligado a otra cosa, manda lo tuyo.
+__tc_newline() { LBUFFER+=$'\n' }
+zle -N __tc_newline
+() {
+  local map
+  for map in emacs viins; do
+    [[ "$(bindkey -M $map '^[[13;2u')" == *undefined-key ]] && bindkey -M $map '^[[13;2u' __tc_newline
+  done
+}
 
 # Un `claude` escrito a mano recibe lo mismo que uno lanzado desde termCode
 # (statusLine y hooks): así su panel muestra el modelo y el contexto. Solo en
@@ -453,6 +468,108 @@ mod tests {
                 break;
             }
             std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// Shift+Enter in CSI u is a newline at an announced prompt, in emacs and
+    /// vi mode, and runs nothing until Enter; a binding of the user's wins.
+    #[test]
+    fn zsh_shift_enter_inserts_a_newline() {
+        if !std::path::Path::new("/bin/zsh").exists() {
+            return;
+        }
+        for (case, rc, expected) in [
+            ("emacs", "", "echo uno\\x0aecho dos"),
+            ("vi", "bindkey -v\n", "echo uno\\x0aecho dos"),
+            (
+                "propio",
+                "__mine() { LBUFFER+=X }\nzle -N __mine\nbindkey '^[[13;2u' __mine\n",
+                "echo unoXecho dos",
+            ),
+        ] {
+            let base = std::env::temp_dir()
+                .join(format!("termcode-shiftenter-{case}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&base);
+            let (ours, user) = (base.join("ours"), base.join("user"));
+            std::fs::create_dir_all(&ours).unwrap();
+            std::fs::create_dir_all(&user).unwrap();
+            for (name, content) in [
+                (".zshenv", ZSHENV),
+                (".zprofile", ZPROFILE),
+                (".zshrc", ZSHRC),
+                ("termcode-integration.zsh", INTEGRATION),
+            ] {
+                std::fs::write(ours.join(name), content).unwrap();
+            }
+            std::fs::write(user.join(".zshenv"), "skip_global_compinit=1\n").unwrap();
+            std::fs::write(user.join(".zshrc"), format!("PS1='user> '\n{rc}")).unwrap();
+
+            let mgr = PtyManager::default();
+            let (tx, rx) = mpsc::channel();
+            let id = mgr
+                .spawn(
+                    SpawnOptions {
+                        program: Some("/bin/zsh".into()),
+                        args: vec!["-i".into()],
+                        env: vec![
+                            ("ZDOTDIR".into(), ours.to_string_lossy().into_owned()),
+                            (
+                                "TERMCODE_USER_ZDOTDIR".into(),
+                                user.to_string_lossy().into_owned(),
+                            ),
+                            ("TERMCODE_ORIG_ZDOTDIR_UNSET".into(), "1".into()),
+                        ],
+                        cols: 120,
+                        rows: 30,
+                        ..Default::default()
+                    },
+                    |_| Sink(tx),
+                )
+                .unwrap();
+
+            let mut out = String::new();
+            let receive = |out: &mut String, wait: Duration| {
+                if let Ok(chunk) = rx.recv_timeout(wait) {
+                    mgr.ack(id, chunk.len());
+                    out.push_str(&String::from_utf8_lossy(&chunk));
+                }
+            };
+            let wait_for = |needle: &str, out: &mut String| {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while !out.contains(needle) && Instant::now() < deadline {
+                    receive(out, Duration::from_millis(200));
+                }
+                assert!(
+                    out.contains(needle),
+                    "[{case}] no apareció {needle:?} en:\n{out}"
+                );
+            };
+
+            // termCode solo manda la secuencia a un prompt anunciado.
+            wait_for("\x1b]633;P;ShiftEnter=newline\x07\x1b]133;A\x07", &mut out);
+            mgr.write(id, b"echo uno\x1b[13;2uecho dos").unwrap();
+            let settle = Instant::now() + Duration::from_millis(500);
+            while Instant::now() < settle {
+                receive(&mut out, Duration::from_millis(50));
+            }
+            assert!(
+                !out.contains("\x1b]133;C\x07"),
+                "[{case}] ejecutó antes del Enter:\n{out}"
+            );
+            mgr.write(id, b"\n").unwrap();
+            wait_for("\x1b]133;D;0\x07", &mut out);
+            assert!(
+                out.contains(&format!("\x1b]633;E;{expected}\x07")),
+                "[{case}] {out}"
+            );
+
+            mgr.remove(id);
+            for _ in 0..20 {
+                if std::fs::remove_dir_all(&base).is_ok() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
         }
     }
 }
