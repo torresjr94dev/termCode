@@ -4,6 +4,8 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ## [Sin publicar]
 
+## [0.6.0] - 2026-10-29
+
 ### Añadido
 
 - Shift+Enter en el prompt de zsh es un salto de línea: escribes un comando de varias líneas sin la `\` al final y Enter lo ejecuta entero, igual que Shift+Enter en Claude Code y Codex. Funciona también en modo vi y, si ya tenías Shift+Enter ligado a algo en tu `.zshrc`, manda lo tuyo. Necesita la integración con zsh; con un programa corriendo (nano, vim, ssh) y en otras shells, Shift+Enter sigue siendo Enter.
