@@ -296,6 +296,12 @@ mod tests {
 
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
 
+    /// Los tests que tocan el servidor de portapapeles de macOS, de uno en uno: en paralelo
+    /// (cada uno en su portapapeles «único») a veces una escritura que dice que salió bien
+    /// deja el portapapeles vacío.
+    #[cfg(target_os = "macos")]
+    static PASTEBOARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn saves_images_with_their_real_extension_and_private_permissions() {
         use std::os::unix::fs::PermissionsExt;
@@ -355,6 +361,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn reads_finder_file_references_as_paths() {
+        let _serial = PASTEBOARD.lock().unwrap_or_else(|e| e.into_inner());
         use objc2_app_kit::{NSPasteboard, NSPasteboardTypeFileURL};
         use objc2_foundation::{NSString, NSURL};
         let dir = dir("finder");
@@ -398,6 +405,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn reads_png_or_converts_tiff_from_the_system_clipboard() {
+        let _serial = PASTEBOARD.lock().unwrap_or_else(|e| e.into_inner());
         use objc2_app_kit::{
             NSBitmapImageRep, NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeTIFF,
         };
