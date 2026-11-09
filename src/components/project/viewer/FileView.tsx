@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { BookOpenText, Check, Code2, Copy, CornerDownLeft, FolderOpen, Minus, Plus, SquarePen } from "lucide-react";
+import { BookOpenText, Check, Code2, Columns2, Copy, CornerDownLeft, FolderOpen, Minus, Plus, SquarePen } from "lucide-react";
 import { useProjectStore, type Viewer as ViewerState } from "../../../store/projectStore";
 import { useUiStore } from "../../../store/uiStore";
 import {
@@ -25,6 +25,7 @@ import { cn } from "../../../lib/layout";
 import { IconButton, Kbd } from "../../ui";
 import { Body, Header, Notice } from "./parts";
 import { IS_MAC, sysLabel } from "../../../lib/shortcuts";
+import { revealLabel } from "../../../lib/platformLabels";
 // markdown-it llega bajo demanda, como CodeMirror: no pesa en el arranque.
 const MarkdownPreview = lazy(() => import("./MarkdownPreview").then((m) => ({ default: m.MarkdownPreview })));
 
@@ -43,16 +44,19 @@ const FileActions: React.FC<{ path: string; absolute: string | null; line?: numb
   return (
     <>
       <IconButton icon={SquarePen} label="Abrir en tu editor (Cursor, VS Code…)" size="sm" onClick={() => void openInEditor(path, line)} />
-      <IconButton icon={CornerDownLeft} label="Pegar la ruta en la terminal" size="sm" onClick={() => pastePath(absolute)} />
-      <IconButton icon={Copy} label="Copiar ruta" size="sm" onClick={() => void copyPath()} />
-      {IS_TAURI && (
-        <IconButton
-          icon={FolderOpen}
-          label="Mostrar en Finder"
-          size="sm"
-          onClick={() => void revealItemInDir(absolute).catch(() => toast("No se pudo abrir Finder.", "error"))}
-        />
-      )}
+      {/* Angosto: estas quedan en el clic derecho de la pestaña. */}
+      <span className="hidden items-center @2xl:flex">
+        <IconButton icon={CornerDownLeft} label="Pegar la ruta en la terminal" size="sm" onClick={() => pastePath(absolute)} />
+        <IconButton icon={Copy} label="Copiar ruta" size="sm" onClick={() => void copyPath()} />
+        {IS_TAURI && (
+          <IconButton
+            icon={FolderOpen}
+            label={revealLabel()}
+            size="sm"
+            onClick={() => void revealItemInDir(absolute).catch(() => toast("No se pudo abrir el gestor de archivos.", "error"))}
+          />
+        )}
+      </span>
     </>
   );
 };
@@ -186,6 +190,9 @@ type EditorModule = typeof import("../../../editor/codemirror");
 type EditorHandle = ReturnType<EditorModule["createEditor"]>;
 type EditorSession = import("../../../editor/codemirror").EditorSession;
 
+type MarkdownMode = "preview" | "split" | "source";
+const PREVIEW_DEBOUNCE_MS = 180;
+
 /** ⌘⇧V / Ctrl+Shift+V: alternar vista previa y texto (como en VS Code). */
 const isPreviewToggle = (e: React.KeyboardEvent) =>
   (IS_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "v";
@@ -211,6 +218,8 @@ const TextFile: React.FC<{
   const saveRef = useRef<(force?: boolean) => void>(() => {});
   /** Un guardado puede terminar después de cambiar de pestaña. */
   const mounted = useRef(true);
+  /** Con «Ambos», la vista previa sigue lo que escribes (un render por pausa, no por tecla). */
+  const docChangeRef = useRef<() => void>(() => {});
   const [ready, setReady] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -244,6 +253,7 @@ const TextFile: React.FC<{
             setTabDirty(root, path, next);
           },
           onSave: () => saveRef.current(),
+          onDocChange: () => docChangeRef.current(),
         });
         editorRef.current = handle;
         if (resume?.dirty && resume.version !== version) setDiskChanged(true);
@@ -274,13 +284,29 @@ const TextFile: React.FC<{
     if (ready && viewer.jump && viewer.line) editorRef.current?.goTo(viewer.line, viewer.column, viewer.length);
   }, [ready, viewer.jump, viewer.line, viewer.column, viewer.length]);
 
-  const switchMode = (next: "preview" | "source") => {
+  const switchMode = (next: MarkdownMode) => {
     if (next === mode) return;
-    if (next === "preview") setPreviewText(editorRef.current?.snapshot().text ?? previewText);
+    if (next !== "source") setPreviewText(editorRef.current?.snapshot().text ?? previewText);
     setTabMarkdown(path, next);
-    if (next === "source") requestAnimationFrame(() => editorRef.current?.focus());
-    else requestAnimationFrame(() => bodyRef.current?.focus());
+    if (next === "preview") requestAnimationFrame(() => bodyRef.current?.focus());
+    else requestAnimationFrame(() => editorRef.current?.focus());
   };
+
+  useEffect(() => {
+    if (mode !== "split") {
+      docChangeRef.current = () => {};
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    docChangeRef.current = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const text = editorRef.current?.snapshot().text;
+        if (text !== undefined) setPreviewText(text);
+      }, PREVIEW_DEBOUNCE_MS);
+    };
+    return () => clearTimeout(timer);
+  }, [mode]);
 
   const save = async (force = false) => {
     const editor = editorRef.current;
@@ -372,18 +398,19 @@ const TextFile: React.FC<{
             onClick={() => void save()}
             disabled={!dirty || saving}
             title={`Guardar  ${sysLabel("S")}`}
-            className="flex h-7 items-center gap-1.5 rounded-md bg-accent px-2.5 font-sans text-[12px] font-medium text-on-accent transition-opacity duration-150 disabled:opacity-0"
+            className="flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-accent px-2.5 font-sans text-[12px] font-medium text-on-accent transition-opacity duration-150 disabled:hidden"
           >
             <Check size={13} strokeWidth={2} aria-hidden="true" />
             {saving ? "Guardando…" : "Guardar"}
-            <Kbd className="text-on-accent/70">{sysLabel("S")}</Kbd>
+            <Kbd className="hidden text-on-accent/70 @xl:inline">{sysLabel("S")}</Kbd>
           </button>
         )}
         {markdown && (
-          <span role="group" aria-label="Cómo ver el Markdown" className="flex rounded-md border border-line p-0.5 font-sans text-[11.5px]">
+          <span role="group" aria-label="Cómo ver el Markdown" className="flex shrink-0 rounded-md border border-line p-0.5 font-sans text-[11.5px]">
             {(
               [
                 ["preview", "Vista previa", BookOpenText],
+                ["split", "Ambos", Columns2],
                 ["source", "Texto", Code2],
               ] as const
             ).map(([id, label, Icon]) => (
@@ -391,7 +418,8 @@ const TextFile: React.FC<{
                 key={id}
                 type="button"
                 aria-pressed={mode === id}
-                title={`${label}  ${IS_MAC ? "⇧⌘V" : "Ctrl+Shift+V"}`}
+                aria-label={label}
+                title={id === "split" ? "Texto y vista previa a la vez (se actualiza mientras escribes)" : `${label}  ${IS_MAC ? "⇧⌘V" : "Ctrl+Shift+V"}`}
                 onClick={() => switchMode(id)}
                 className={cn(
                   "flex h-[22px] items-center gap-1 rounded px-1.5 transition-colors duration-150",
@@ -399,7 +427,7 @@ const TextFile: React.FC<{
                 )}
               >
                 <Icon size={12} strokeWidth={1.9} aria-hidden="true" />
-                {label}
+                <span className="hidden whitespace-nowrap @2xl:inline">{label}</span>
               </button>
             ))}
           </span>
@@ -437,15 +465,19 @@ const TextFile: React.FC<{
         }}
         className="relative min-h-0 flex-1 outline-none"
       >
-        <div ref={hostRef} className="absolute inset-0" hidden={mode === "preview"} />
-        {mode === "preview" && (
-          <div className="absolute inset-0 overflow-y-auto">
+        <div
+          ref={hostRef}
+          className={cn("absolute inset-y-0 left-0", mode === "split" ? "right-1/2" : "right-0")}
+          hidden={mode === "preview"}
+        />
+        {mode !== "source" && (
+          <div className={cn("absolute inset-y-0 right-0 overflow-y-auto", mode === "split" ? "left-1/2 border-l border-line" : "left-0")}>
             <Suspense fallback={<p className="px-8 py-6 font-sans text-[13px] text-ink-3">Abriendo…</p>}>
               <MarkdownPreview path={path} text={previewText} />
             </Suspense>
           </div>
         )}
-        {!ready && !loadError && mode === "source" && <p className="absolute left-4 top-4 font-sans text-[13px] text-ink-3">Abriendo…</p>}
+        {!ready && !loadError && mode !== "preview" && <p className="absolute left-4 top-4 font-sans text-[13px] text-ink-3">Abriendo…</p>}
       </div>
     </>
   );

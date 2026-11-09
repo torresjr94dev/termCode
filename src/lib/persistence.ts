@@ -1,7 +1,7 @@
 import { LazyStore } from "@tauri-apps/plugin-store";
 import { warn as logWarn } from "@tauri-apps/plugin-log";
 import { useTerminalStore, type PersistedSession } from "../store/terminalStore";
-import { useProjectStore } from "../store/projectStore";
+import { sanitizeFileTabs, sanitizeViewerDock, useProjectStore, type FileTab } from "../store/projectStore";
 import { terminalManager } from "../terminal/TerminalManager";
 import type { LayoutNode, PaneShell, ResumableAgent, Tab } from "../types/layout";
 import { basename } from "./layout";
@@ -105,6 +105,8 @@ export async function loadSession(timeoutMs = 800): Promise<PersistedSession | n
       activeTabId: saved.activeTabId,
       isSidebarOpen: Boolean(saved.isSidebarOpen),
       ...(typeof saved.isProjectOpen === "boolean" ? { isProjectOpen: saved.isProjectOpen } : {}),
+      fileTabs: sanitizeFileTabs(saved.fileTabs),
+      viewerDock: sanitizeViewerDock(saved.viewerDock),
     };
   } catch (err) {
     console.warn("[termCode] no se pudo leer la sesión guardada:", err);
@@ -131,6 +133,8 @@ async function save() {
       activeTabId,
       isSidebarOpen,
       isProjectOpen: useProjectStore.getState().isOpen,
+      fileTabs: useProjectStore.getState().fileTabs.map(({ root, path, markdown }) => ({ root, path, markdown })),
+      viewerDock: useProjectStore.getState().viewerDock,
     };
     await store.set(KEY, session);
     await store.save();
@@ -155,8 +159,11 @@ export function startAutosave(): () => void {
       schedule();
     }
   });
+  // Las pestañas cuentan al abrir, cerrar o cambiar de modo (no por cada tecla que las marca con cambios).
+  const tabsKey = (tabs: FileTab[]) => tabs.map((t) => `${t.root}\u0000${t.path}\u0000${t.markdown ?? ""}`).join("\n");
   const unsubscribeProject = useProjectStore.subscribe((s, prev) => {
-    if (s.isOpen !== prev.isOpen) schedule();
+    if (s.isOpen !== prev.isOpen || s.viewerDock !== prev.viewerDock) schedule();
+    else if (s.fileTabs !== prev.fileTabs && tabsKey(s.fileTabs) !== tabsKey(prev.fileTabs)) schedule();
   });
   const interval = setInterval(() => void save(), SAVE_EVERY_MS);
   // Primer guardado poco después de arrancar: los PTY ya tienen cwd real.

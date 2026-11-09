@@ -82,8 +82,10 @@ function isBrowserAccelerator(e: KeyboardEvent): boolean {
 }
 
 function focusActivePane() {
-  // El visor tapa las terminales: el teclado se queda en él (Esc lo cierra, ⌘F busca).
-  if (useProjectStore.getState().viewer) return;
+  // El visor encima de las terminales se queda con el teclado (Esc lo cierra, ⌘F busca);
+  // acoplado a su lado, las terminales siguen a mano.
+  const { viewer, viewerDock } = useProjectStore.getState();
+  if (viewer && !viewerDock.docked) return;
   const { tabs, activeTabId } = useTerminalStore.getState();
   const tab = tabs.find((t) => t.id === activeTabId);
   if (tab) terminalManager.focus(tab.activePaneId);
@@ -292,20 +294,22 @@ export const App: React.FC = () => {
         {/* Las tarjetas (terminales, visor, proyecto) flotan sobre el vidrio con 8 px de aire. */}
         <div className="flex min-h-0 flex-1 gap-2 px-2">
           {/* Sin fondo propio: cada panel pinta el suyo (con glass, un solo velo sobre el escritorio). */}
-          <main className="relative min-w-0 flex-1">
-            {tabs.map((tab) => (
-              <div key={tab.id} hidden={tab.id !== activeTabId} className="absolute inset-0">
-                <SplitView node={tab.root} activePaneId={tab.activePaneId} zoomedPaneId={tab.zoomedPaneId} />
-              </div>
-            ))}
-            {/* Broadcast es peligroso: el marco rojo no se puede pasar por alto */}
-            {isBroadcastEnabled && (
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0 z-20 rounded-xl shadow-[inset_0_0_0_1.5px_var(--color-signal)]"
-              />
-            )}
-            {/* Diffs y vistas previas se abren sobre las terminales; el panel queda a mano */}
+          <main className="relative flex min-w-0 flex-1">
+            <div className="relative min-w-0 flex-1">
+              {tabs.map((tab) => (
+                <div key={tab.id} hidden={tab.id !== activeTabId} className="absolute inset-0">
+                  <SplitView node={tab.root} activePaneId={tab.activePaneId} zoomedPaneId={tab.zoomedPaneId} />
+                </div>
+              ))}
+              {/* Broadcast es peligroso: el marco rojo no se puede pasar por alto */}
+              {isBroadcastEnabled && (
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 z-20 rounded-xl shadow-[inset_0_0_0_1.5px_var(--color-signal)]"
+                />
+              )}
+            </div>
+            {/* Diffs, archivos y salidas: encima de las terminales o acoplados a su lado. */}
             <Viewer />
           </main>
           <ProjectPanel />

@@ -520,6 +520,14 @@ const TESTS = [
       await p.screenshot("buscador-cursor");
       await p.press("Escape");
       await p.waitFor(`!document.querySelector("#finder-results")`, "Esc cierra el buscador");
+      // Un agente crea un archivo: al reabrir ⌘P ya está (no espera a que caduque la caché).
+      await p.run(`
+        const { gitApi } = await mod("/src/lib/git.ts");
+        gitApi.files = async () => ["src/App.tsx", "src/lib/terminal-utils.ts", "src/terminal/TerminalManager.ts", "README.md", "src/nuevo-del-agente.ts"];`);
+      await p.shortcut("fileFinder");
+      await p.waitFor(`document.querySelectorAll('#finder-results [role="option"]').length === 5`, "el archivo nuevo aparece al reabrir");
+      await p.press("Escape");
+      await p.waitFor(`!document.querySelector("#finder-results")`, "Esc cierra el buscador");
     },
   },
   {
@@ -612,12 +620,59 @@ const TESTS = [
       await p.waitFor(`document.querySelector("[data-viewer] h1")`, "vuelve renderizado");
       await p.click("[data-viewer] button", "Texto");
       await p.waitFor(`document.querySelector("[data-viewer] .cm-content")?.textContent.includes("# Guía")`, "Texto muestra el Markdown fuente");
+      // «Ambos»: texto y vista previa a la vez, y la vista sigue lo que escribes.
+      await p.click("[data-viewer] button", "Ambos");
+      await p.waitFor(`document.querySelector("[data-viewer] h1")?.textContent === "Guía" && document.querySelector("[data-viewer] .cm-content")`, "muestra el texto y la vista previa");
+      await p.evaluate(`document.querySelector("[data-viewer] .cm-content").focus(), true`);
+      await p.press("ArrowDown");
+      await p.type("## Nuevo título\n");
+      await p.waitFor(`[...document.querySelectorAll("[data-viewer] h2")].some((h) => h.textContent === "Nuevo título")`, "la vista previa se actualiza mientras escribes");
       // ⌃Tab: a la otra pestaña.
       await p.evaluate(`document.querySelector("[data-viewer] .cm-content").focus(), true`);
       await p.press("Tab", 2);
       await p.waitFor(`document.querySelector('[data-viewer] [role="tab"][aria-selected="true"]')?.textContent.includes("b.ts")`, "⌃Tab cambia de pestaña");
       await p.run(`(await mod("/src/lib/project.ts")).closeFileTabs(["docs/GUIA.md", "src/b.ts"]);`);
+      await p.click("button", "Cerrar sin guardar");
       await p.waitFor(`!document.querySelector("[data-viewer]")`, "cerrar todas cierra el visor");
+    },
+  },
+  {
+    name: "visor-acoplado",
+    async run(p) {
+      await p.run(`
+        const { gitApi } = await mod("/src/lib/git.ts");
+        const { useProjectStore } = await mod("/src/store/projectStore.ts");
+        const project = await mod("/src/lib/project.ts");
+        useProjectStore.setState({ cwd: "/repo-e2e", repo: null, viewer: null, fileTabs: [], viewerDock: { docked: false, width: 0.5 } });
+        gitApi.read = async (_root, path) => ({ text: "const a = 1;\\n", size: 13, truncated: false, binary: false, utf8: true, version: "v1", absolute: "/repo-e2e/" + path });
+        gitApi.fileVersion = async () => "v1";
+        await project.openFile("src/a.ts");`);
+      await p.waitFor(`document.querySelector("[data-viewer] .cm-content")`, "abre el archivo encima de las terminales");
+      const covers = await p.evaluate(`(() => {
+        const v = document.querySelector("[data-viewer]").getBoundingClientRect();
+        const t = document.querySelector(".xterm").getBoundingClientRect();
+        return v.left <= t.left + 1 && v.right >= t.right - 1;
+      })()`);
+      if (!covers) throw new Error("Sin acoplar, el visor va encima de las terminales");
+      await p.click('[data-viewer] button[aria-label="Ver junto a las terminales"]');
+      await p.waitFor(`(() => {
+        const v = document.querySelector("[data-viewer]").getBoundingClientRect();
+        const t = [...document.querySelectorAll(".xterm")].find((x) => x.offsetParent).getBoundingClientRect();
+        return t.right <= v.left && t.width > 200 && v.width > 200;
+      })()`, "acoplado, terminales y visor quedan lado a lado");
+      // Con el visor acoplado, la terminal se puede usar sin cerrarlo.
+      await p.evaluate(`[...document.querySelectorAll(".xterm textarea")].find((t) => t.offsetParent)?.focus(), true`);
+      await p.waitFor(`document.activeElement?.closest(".xterm") && document.querySelector("[data-viewer]")`, "la terminal toma el teclado y el visor sigue abierto");
+      // El divisor: ← agranda el visor, doble clic lo deja a la mitad.
+      await p.evaluate(`document.querySelector('[role="separator"][aria-label="Ancho del visor"]').focus(), true`);
+      await p.press("ArrowLeft");
+      await p.waitFor(`document.querySelector('[role="separator"][aria-label="Ancho del visor"]').getAttribute("aria-valuenow") === "55"`, "← agranda el visor");
+      await p.dblclick('[role="separator"][aria-label="Ancho del visor"]');
+      await p.waitFor(`document.querySelector('[role="separator"][aria-label="Ancho del visor"]').getAttribute("aria-valuenow") === "50"`, "doble clic: a la mitad");
+      await p.click('[data-viewer] button[aria-label="Ver encima de las terminales"]');
+      await p.waitFor(`!document.querySelector('[role="separator"][aria-label="Ancho del visor"]')`, "vuelve a ir encima");
+      await p.run(`(await mod("/src/lib/project.ts")).closeFileTabs(["src/a.ts"]);`);
+      await p.waitFor(`!document.querySelector("[data-viewer]")`, "se cierra");
     },
   },
   {

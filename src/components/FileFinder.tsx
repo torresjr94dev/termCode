@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { CaseSensitive, FileText, Folder, FolderSearch, History, Regex, Search, TextSearch, WholeWord, X } from "lucide-react";
 import { useUiStore, type FinderMode, type FinderRequest } from "../store/uiStore";
 import { useProjectStore } from "../store/projectStore";
-import { absolutePath, openFile, openInEditor, projectFiles, projectRoot, recentFiles } from "../lib/project";
+import { absolutePath, cachedProjectFiles, openFile, openInEditor, projectFiles, projectRoot, recentFiles } from "../lib/project";
 import { actions } from "../lib/actions";
 import { foldersOf, parseFileQuery, rankEntries, splitByRanges, textRows, type RankedEntry, type TextRow } from "../lib/finderModel";
 import { gitApi, type SearchResult } from "../lib/git";
@@ -68,7 +68,8 @@ const FinderPanel: React.FC<{ request: FinderRequest; onClosed: () => void }> = 
   const [customDir, setCustomDir] = useState<string | null>(request.dir && request.dir !== here ? request.dir : null);
   const [fileQuery, setFileQuery] = useState(request.mode === "files" ? (request.query ?? "") : "");
   const [text, setText] = useState(() => ({ ...lastText, query: request.mode === "text" && request.query ? request.query : lastText.query }));
-  const [files, setFiles] = useState<string[] | null>(null);
+  // Lo que ya se conocía, al instante; la lista nueva llega enseguida y la reemplaza.
+  const [files, setFiles] = useState<string[] | null>(() => cachedProjectFiles());
   const [filesError, setFilesError] = useState<string | null>(null);
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -93,7 +94,7 @@ const FinderPanel: React.FC<{ request: FinderRequest; onClosed: () => void }> = 
 
   useEffect(() => {
     let alive = true;
-    projectFiles()
+    projectFiles({ fresh: true })
       .then((list) => alive && setFiles(list))
       .catch((err: unknown) => alive && setFilesError(err instanceof Error ? err.message : String(err)));
     return () => {

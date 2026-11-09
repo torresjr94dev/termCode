@@ -1,6 +1,6 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { warn as logWarn } from "@tauri-apps/plugin-log";
-import { useProjectStore, initialRepoState, sameSource, type DiffSource, type FileTab, type ProjectTab } from "../store/projectStore";
+import { clampDock, useProjectStore, initialRepoState, sameSource, type DiffSource, type FileTab, type ProjectTab } from "../store/projectStore";
 import { useTerminalStore } from "../store/terminalStore";
 import { useUiStore } from "../store/uiStore";
 import { terminalManager } from "../terminal/TerminalManager";
@@ -321,7 +321,7 @@ export function setTabDirty(root: string, path: string, dirty: boolean) {
   syncUnsavedFlag();
 }
 
-export function setTabMarkdown(path: string, markdown: "preview" | "source") {
+export function setTabMarkdown(path: string, markdown: NonNullable<FileTab["markdown"]>) {
   const root = projectRoot();
   if (root) updateTab(root, path, { markdown });
 }
@@ -458,7 +458,7 @@ export interface FileTarget {
   line?: number;
   column?: number;
   length?: number;
-  markdown?: "preview" | "source";
+  markdown?: FileTab["markdown"];
 }
 
 let jumpSeq = 0;
@@ -471,8 +471,9 @@ export async function openFile(path: string, target?: number | FileTarget) {
   const root = projectRoot();
   if (!root) return;
   const { line, column, length, markdown } = typeof target === "number" ? { line: target } : (target ?? {});
-  // Saltar a una línea es cosa del texto: un Markdown pasa a mostrarse como texto.
-  addTab(root, path, markdown ?? (line ? "source" : undefined));
+  // Saltar a una línea es cosa del texto: un Markdown pasa a mostrarse como texto (o sigue en «Ambos»).
+  const showsText = findFileTab(root, path)?.markdown === "split";
+  addTab(root, path, markdown ?? (line && !showsText ? "source" : undefined));
   rememberRecent(root, path);
   const jump = line ? ++jumpSeq : undefined;
   const current = project().viewer;
@@ -791,6 +792,18 @@ export async function sendReview() {
     terminals.setActivePane(target);
   }
   toast(`Revisión pegada en ${pane?.title ?? "el agente"}: léela y pulsa Enter para mandarla.`);
+}
+
+/** El visor junto a las terminales (lado a lado) o encima de ellas. */
+export function toggleViewerDock() {
+  const dock = project().viewerDock;
+  project().set({ viewerDock: { ...dock, docked: !dock.docked } });
+}
+
+export function setViewerDockWidth(width: number) {
+  const dock = project().viewerDock;
+  const next = clampDock(width);
+  if (next !== dock.width) project().set({ viewerDock: { ...dock, width: next } });
 }
 
 /** Vuelve a las terminales. Las pestañas quedan abiertas (con lo no guardado): se retoman desde Archivos o ⌘P. */
@@ -1275,10 +1288,17 @@ export async function saveConflict(path: string, content: string) {
 
 let filesCache: { root: string; at: number; files: string[] } | null = null;
 
-export async function projectFiles(): Promise<string[]> {
+/** La última lista de este proyecto, aunque sea vieja: el buscador la muestra al instante mientras trae la nueva. */
+export function cachedProjectFiles(): string[] | null {
+  const root = projectRoot();
+  return root && filesCache?.root === root ? filesCache.files : null;
+}
+
+/** `fresh`: sin caché (al abrir el buscador: un agente pudo crear archivos hace un segundo). */
+export async function projectFiles({ fresh = false } = {}): Promise<string[]> {
   const root = projectRoot();
   if (!root) return [];
-  if (filesCache?.root === root && Date.now() - filesCache.at < 30_000) return filesCache.files;
+  if (!fresh && filesCache?.root === root && Date.now() - filesCache.at < 30_000) return filesCache.files;
   const files = await gitApi.files(root);
   filesCache = { root, at: Date.now(), files };
   return files;

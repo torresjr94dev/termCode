@@ -1,15 +1,80 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useProjectStore } from "../../store/projectStore";
-import { closeViewer, cycleFileTab, projectRoot, stepDiff } from "../../lib/project";
+import { closeViewer, cycleFileTab, projectRoot, setViewerDockWidth, stepDiff } from "../../lib/project";
+import { cn } from "../../lib/layout";
 import { FileTabs } from "./viewer/FileTabs";
 import { DiffView } from "./viewer/DiffView";
 import { FileView } from "./viewer/FileView";
 import { ConflictView } from "./viewer/ConflictView";
 import { OutputView } from "./viewer/OutputView";
 
-/** Hoja sobre el área de terminales: diff de un archivo o vista previa. Esc cierra. */
+const KEYBOARD_STEP = 0.05;
+
+/**
+ * Divisor entre las terminales y el visor acoplado (como el de los paneles).
+ * Arrastrar cambia el ancho; doble clic lo deja a la mitad.
+ */
+const DockDivider: React.FC<{ width: number }> = ({ width }) => {
+  const [dragging, setDragging] = useState(false);
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const area = e.currentTarget.closest("main");
+    if (e.button !== 0 || !area) return;
+    e.preventDefault();
+    const handle = e.currentTarget;
+    const rect = area.getBoundingClientRect();
+    handle.setPointerCapture(e.pointerId);
+    setDragging(true);
+    let frame = 0;
+    const onMove = (ev: PointerEvent) => {
+      cancelAnimationFrame(frame);
+      // Un cambio por frame; el ResizeObserver de cada terminal hace el fit.
+      frame = requestAnimationFrame(() => setViewerDockWidth((rect.right - ev.clientX) / rect.width));
+    };
+    const onEnd = () => {
+      cancelAnimationFrame(frame);
+      setDragging(false);
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onEnd);
+      handle.removeEventListener("pointercancel", onEnd);
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onEnd);
+    handle.addEventListener("pointercancel", onEnd);
+  };
+
+  return (
+    <div
+      role="separator"
+      tabIndex={0}
+      aria-label="Ancho del visor"
+      aria-orientation="vertical"
+      aria-valuemin={25}
+      aria-valuemax={75}
+      aria-valuenow={Math.round(width * 100)}
+      title="Arrastra para cambiar el ancho · doble clic: a la mitad"
+      data-dragging={dragging || undefined}
+      onPointerDown={onPointerDown}
+      onDoubleClick={() => setViewerDockWidth(0.5)}
+      onKeyDown={(e) => {
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+        e.preventDefault();
+        // El divisor está a la izquierda del visor: ← lo agranda.
+        setViewerDockWidth(width + (e.key === "ArrowLeft" ? KEYBOARD_STEP : -KEYBOARD_STEP));
+      }}
+      className="divider z-10"
+    />
+  );
+};
+
+/**
+ * Diff de un archivo, el archivo o la salida de un comando. Encima de las
+ * terminales, o acoplado a su lado para verlas a la vez (al agente que lo
+ * edita, por ejemplo). Esc cierra.
+ */
 export const Viewer: React.FC = () => {
   const viewer = useProjectStore((s) => s.viewer);
+  const dock = useProjectStore((s) => s.viewerDock);
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
   const target = viewer
@@ -27,7 +92,7 @@ export const Viewer: React.FC = () => {
   if (!viewer) return null;
   const root = projectRoot();
 
-  return (
+  const sheet = (
     <div
       role="dialog"
       aria-label={
@@ -54,13 +119,24 @@ export const Viewer: React.FC = () => {
           cycleFileTab(e.shiftKey ? -1 : 1);
         }
       }}
-      className="absolute inset-0 z-30 flex animate-fade-in flex-col overflow-hidden rounded-xl border border-line bg-canvas"
+      className={cn(
+        "@container flex animate-fade-in flex-col overflow-hidden rounded-xl border border-line bg-canvas",
+        dock.docked ? "relative h-full min-w-0 flex-1" : "absolute inset-0 z-30",
+      )}
     >
       {viewer.kind === "diff" && <DiffView viewer={viewer} bodyRef={bodyRef} />}
       {viewer.kind === "file" && root && <FileTabs root={root} active={viewer.path} />}
       {viewer.kind === "file" && <FileView viewer={viewer} bodyRef={bodyRef} />}
       {viewer.kind === "conflict" && <ConflictView key={viewer.path} viewer={viewer} bodyRef={bodyRef} />}
       {viewer.kind === "output" && <OutputView key={viewer.id} viewer={viewer} bodyRef={bodyRef} />}
+    </div>
+  );
+
+  if (!dock.docked) return sheet;
+  return (
+    <div className="flex h-full shrink-0" style={{ width: `${dock.width * 100}%` }}>
+      <DockDivider width={dock.width} />
+      {sheet}
     </div>
   );
 };

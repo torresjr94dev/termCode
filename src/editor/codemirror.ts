@@ -120,6 +120,8 @@ export interface EditorOptions {
   session?: EditorSession;
   onDirtyChange: (dirty: boolean) => void;
   onSave: () => void;
+  /** Cada cambio del texto (la vista previa en vivo de Markdown). */
+  onDocChange?: () => void;
 }
 
 /**
@@ -201,7 +203,9 @@ export function createEditor(parent: HTMLElement, options: EditorOptions): Edito
     language.of([]),
     editable.of([EditorState.readOnly.of(options.readOnly), EditorView.editable.of(!options.readOnly)]),
     EditorView.updateListener.of((update) => {
-      if (update.docChanged && saved) setDirty(!update.state.doc.eq(saved));
+      if (!update.docChanged) return;
+      if (saved) setDirty(!update.state.doc.eq(saved));
+      options.onDocChange?.();
     }),
     EditorView.contentAttributes.of({ "aria-label": `Editor de ${options.path}` }),
   ];

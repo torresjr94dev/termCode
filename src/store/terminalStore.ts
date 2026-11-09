@@ -51,6 +51,10 @@ export interface PersistedSession {
   isSidebarOpen: boolean;
   /** Panel de proyecto abierto o plegado en su riel (falta en sesiones de versiones anteriores). */
   isProjectOpen?: boolean;
+  /** Pestañas del visor (sin su contenido: vuelven limpias, leídas del disco). */
+  fileTabs?: Array<{ root: string; path: string; markdown?: "preview" | "split" | "source" }>;
+  /** Visor junto a las terminales y su ancho. */
+  viewerDock?: { docked: boolean; width: number };
 }
 
 /** Lo necesario para reabrir algo cerrado (⌘⇧T): la shell ya murió, la carpeta no. */

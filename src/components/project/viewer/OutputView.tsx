@@ -8,7 +8,7 @@ import { formatDuration } from "../../../lib/format";
 import { cn } from "../../../lib/layout";
 import { sysLabel } from "../../../lib/shortcuts";
 import { IconButton, Kbd } from "../../ui";
-import { Notice } from "./parts";
+import { DockToggle, Notice } from "./parts";
 
 type EditorHandle = ReturnType<(typeof import("../../../editor/codemirror"))["createEditor"]>;
 
@@ -100,6 +100,7 @@ export const OutputView: React.FC<{
         )}
         <IconButton icon={Copy} label="Copiar la salida" size="sm" onClick={() => void copy()} />
         <span className="mx-1 h-4 w-px bg-line" aria-hidden="true" />
+        <DockToggle />
         <IconButton icon={X} label="Cerrar" shortcut="esc" size="sm" onClick={closeViewer} />
       </div>
       {(viewer.truncated || viewer.cwd) && (

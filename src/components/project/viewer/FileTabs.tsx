@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { Copy, FolderOpen, SquarePen, X, XCircle } from "lucide-react";
+import { Copy, CornerDownLeft, FolderOpen, SquarePen, X, XCircle } from "lucide-react";
 import { useProjectStore } from "../../../store/projectStore";
 import { useUiStore } from "../../../store/uiStore";
-import { absolutePath, closeFileTabs, openFile, openInEditor } from "../../../lib/project";
+import { absolutePath, closeFileTabs, openFile, openInEditor, pastePath } from "../../../lib/project";
 import { IS_TAURI } from "../../../lib/ipc";
 import { cn } from "../../../lib/layout";
 import { showContextMenu } from "../../ContextMenu";
@@ -69,6 +69,7 @@ export const FileTabs: React.FC<{ root: string; active: string }> = ({ root, act
                 { label: "Cerrar todas", onSelect: () => void closeFileTabs(tabs.map((t) => t.path)) },
                 "separator",
                 { label: "Abrir en tu editor", icon: SquarePen, onSelect: () => void openInEditor(tab.path) },
+                { label: "Pegar la ruta en la terminal", icon: CornerDownLeft, disabled: !abs, onSelect: () => abs && pastePath(abs) },
                 { label: "Copiar ruta", icon: Copy, disabled: !abs, onSelect: () => abs && void copy(abs) },
                 { label: "Copiar ruta relativa", onSelect: () => void copy(tab.path) },
                 ...(IS_TAURI && abs ? [{ label: revealLabel(), icon: FolderOpen, onSelect: () => void revealItemInDir(abs).catch(() => {}) }] : []),
