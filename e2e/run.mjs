@@ -595,6 +595,14 @@ const TESTS = [
       await p.waitFor(`document.querySelector('[data-viewer] input[type="checkbox"]')?.checked === true`, "las tareas son casillas");
       const xss = await p.evaluate(`window.__xss === undefined && !document.querySelector("[data-viewer] script") && document.querySelector("[data-viewer]").textContent.includes("<script>")`);
       if (!xss) throw new Error("El HTML del Markdown no debe ejecutarse ni insertarse");
+      // Sobre un enlace no aparece el menú nativo («Abrir enlace» navegaría la vista y cerraría las terminales).
+      const linkMenu = await p.evaluate(`(() => {
+        const link = [...document.querySelectorAll("[data-viewer] a")].find((a) => a.textContent === "código");
+        const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+        link.dispatchEvent(ev);
+        return ev.defaultPrevented && !link.hasAttribute("href");
+      })()`);
+      if (!linkMenu) throw new Error("Un enlace del Markdown no debe ofrecer el menú nativo ni tener href");
       // Un enlace relativo abre el archivo en su pestaña, en la línea del #L.
       await p.click("[data-viewer] a", "código");
       await p.waitFor(`document.querySelectorAll('[data-viewer] [role="tab"]').length === 2`, "abre una segunda pestaña");

@@ -153,18 +153,24 @@ export const MarkdownPreview: React.FC<{ path: string; text: string }> = ({ path
         case "a": {
           const href = attrs.href;
           if (!href) return <span key={key}>{kids()}</span>;
+          // Sin `href` real: el webview no tiene nada que abrir, arrastrar ni navegar.
           return (
             <a
               key={key}
-              href={href}
+              role="link"
+              tabIndex={0}
+              data-href={href}
               title={attrs.title ?? href}
-              draggable={false}
               onClick={(e) => {
                 e.preventDefault();
                 follow(href);
               }}
-              onAuxClick={(e) => e.preventDefault()}
-              className="text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent"
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                follow(href);
+              }}
+              className="cursor-pointer text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent focus-visible:outline-2 focus-visible:outline-accent"
             >
               {kids()}
             </a>

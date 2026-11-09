@@ -78,9 +78,10 @@ async function syncContext() {
         void refreshStashes();
         void detectCloud(repo.root);
       }
-      // Otra raíz (otro repo, o sin repo y otra carpeta): el árbol empieza de cero.
+      // Otra raíz (otro repo, o sin repo y otra carpeta): el árbol empieza de cero
+      // y el visor se cierra (lo editado espera en su pestaña, que es de la raíz vieja).
       if (projectRoot() !== previousRoot) {
-        project().set({ tree: {}, expanded: {} });
+        project().set({ tree: {}, expanded: {}, viewer: null });
         const { isOpen, tab } = project();
         if (isOpen && tab === "files") void loadDir("");
         if (isOpen && tab === "history" && repo) void loadLog(true);
@@ -272,6 +273,11 @@ const tabKey = (root: string, path: string) => `${root}\u0000${path}`;
 
 export function storeEditorSession(root: string, path: string, stored: StoredEditor) {
   sessions.set(tabKey(root, path), stored);
+}
+
+/** La sesión guardada de esa pestaña, sin tomarla. */
+export function peekEditorSession(root: string, path: string): StoredEditor | undefined {
+  return sessions.get(tabKey(root, path));
 }
 
 /** La sesión guardada de esa pestaña (y se olvida: ahora la tiene el editor). */
@@ -504,13 +510,11 @@ export type SaveResult = { status: "saved"; version: string } | { status: "confl
  * editó (si otro cambió el archivo después, no se pisa: «conflict»); null
  * sobrescribe a sabiendas.
  */
-export async function saveFile(path: string, content: string, expectedVersion: string | null): Promise<SaveResult> {
-  const root = projectRoot();
-  if (!root) return { status: "error" };
+export async function saveFile(root: string, path: string, content: string, expectedVersion: string | null): Promise<SaveResult> {
   try {
     const version = await gitApi.writeFile(root, path, content, expectedVersion);
     const now = project().viewer;
-    if (now?.kind === "file" && now.path === path && now.preview) {
+    if (now?.kind === "file" && now.path === path && now.preview && projectRoot() === root) {
       project().set({ viewer: { ...now, preview: { ...now.preview, text: content, version } } });
     }
     void refreshStatus();
@@ -523,14 +527,12 @@ export async function saveFile(path: string, content: string, expectedVersion: s
   }
 }
 
-/** Relee el archivo del disco (otro lo cambió). */
-export async function reloadFile(path: string): Promise<FilePreview | null> {
-  const root = projectRoot();
-  if (!root) return null;
+/** Relee el archivo del disco (otro lo cambió). `root`: la del editor, no la de ahora. */
+export async function reloadFile(root: string, path: string): Promise<FilePreview | null> {
   try {
     const preview = await gitApi.read(root, path);
     const now = project().viewer;
-    if (now?.kind === "file" && now.path === path) project().set({ viewer: { ...now, preview } });
+    if (now?.kind === "file" && now.path === path && projectRoot() === root) project().set({ viewer: { ...now, preview } });
     return preview;
   } catch (err) {
     toast(errorText(err), "error");
@@ -539,9 +541,7 @@ export async function reloadFile(path: string): Promise<FilePreview | null> {
 }
 
 /** ¿Cambió en disco desde `version`? (null si no se pudo saber). */
-export async function fileChangedOnDisk(path: string, version: string): Promise<boolean | null> {
-  const root = projectRoot();
-  if (!root) return null;
+export async function fileChangedOnDisk(root: string, path: string, version: string): Promise<boolean | null> {
   try {
     return (await gitApi.fileVersion(root, path)) !== version;
   } catch {

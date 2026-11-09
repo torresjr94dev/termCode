@@ -240,9 +240,11 @@ export function createEditor(parent: HTMLElement, options: EditorOptions): Edito
     snapshot: () => ({ text: view.state.sliceDoc(), doc: view.state.doc }),
     replaceText(text) {
       const head = view.state.selection.main.head;
+      // El largo del documento, no el del texto: con CRLF, cada fin de línea cuenta 2 en el texto y 1 aquí.
+      const next = view.state.toText(text);
       view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: text },
-        selection: EditorSelection.cursor(Math.min(head, text.length)),
+        changes: { from: 0, to: view.state.doc.length, insert: next },
+        selection: EditorSelection.cursor(Math.min(head, next.length)),
       });
       saved = view.state.doc;
       setDirty(false);

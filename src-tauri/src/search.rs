@@ -114,6 +114,9 @@ fn build_regex(q: &SearchQuery) -> Result<Regex, String> {
     };
     RegexBuilder::new(&pattern)
         .case_insensitive(!q.case_sensitive)
+        // ^ y $ por línea también en el filtro previo, que mira el archivo entero.
+        .multi_line(true)
+        .crlf(true)
         .size_limit(4 * 1024 * 1024)
         .dfa_size_limit(8 * 1024 * 1024)
         .build()
@@ -453,6 +456,18 @@ mod tests {
             ..q(r"let \w+ = \d")
         };
         assert_eq!(paths(&run(&dir, regex)), vec!["src/main.rs"]);
+
+        // ^ y $ son de cada línea, no del archivo (el filtro previo lo mira entero).
+        let anchored = SearchQuery {
+            regex: true,
+            ..q(r"^\s+let total")
+        };
+        assert_eq!(paths(&run(&dir, anchored)), vec!["src/main.rs"]);
+        let at_end = SearchQuery {
+            regex: true,
+            ..q(r"1;$")
+        };
+        assert_eq!(paths(&run(&dir, at_end)), vec!["src/main.rs"]);
 
         let literal = q("{total}");
         assert_eq!(

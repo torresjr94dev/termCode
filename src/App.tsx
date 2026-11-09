@@ -150,9 +150,11 @@ function useNativeMenuGuard() {
     const onContextMenu = (e: MouseEvent) => {
       if (e.defaultPrevented || (import.meta.env.DEV && e.shiftKey)) return;
       const target = e.target instanceof Element ? e.target : null;
-      if (target?.closest("input, textarea, [contenteditable]:not([contenteditable='false']), .cm-editor, .xterm")) return;
+      // Sobre un enlace el menú nativo trae «Abrir enlace», que navega la vista: nunca.
+      const onLink = Boolean(target?.closest("a[href]"));
+      if (!onLink && target?.closest("input, textarea, [contenteditable]:not([contenteditable='false']), .cm-editor, .xterm")) return;
       const selection = window.getSelection();
-      if (target && selection && !selection.isCollapsed && selection.toString().trim() && selection.containsNode(target, true)) return;
+      if (!onLink && target && selection && !selection.isCollapsed && selection.toString().trim() && selection.containsNode(target, true)) return;
       e.preventDefault();
       useUiStore.getState().closeContextMenu();
     };

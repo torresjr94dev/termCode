@@ -8,6 +8,7 @@ import {
   fileChangedOnDisk,
   findFileTab,
   isMarkdownPath,
+  peekEditorSession,
   openInEditor,
   pastePath,
   projectRoot,
@@ -208,6 +209,8 @@ const TextFile: React.FC<{
   // Solo lo que había al abrir: el componente se monta de nuevo por archivo.
   const initial = useRef({ text: preview.text, version: preview.version, readOnly: !editable, stored: takeEditorSession(root, path) });
   const saveRef = useRef<(force?: boolean) => void>(() => {});
+  /** Un guardado puede terminar después de cambiar de pestaña. */
+  const mounted = useRef(true);
   const [ready, setReady] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -220,10 +223,14 @@ const TextFile: React.FC<{
   // pestaña ya estaba abierta, retoma su texto, cursor y deshacer.
   useEffect(() => {
     let disposed = false;
+    mounted.current = true;
+    // StrictMode monta dos veces: la sesión que devolvió la primera limpieza se retoma aquí.
+    const pending = takeEditorSession(root, path) ?? initial.current.stored;
     import("../../../editor/codemirror")
       .then(({ createEditor }) => {
         if (disposed || !hostRef.current) return;
-        const { text, version, readOnly, stored } = initial.current;
+        const { text, version, readOnly } = initial.current;
+        const stored = pending;
         // Sin cambios y con el archivo igual en disco se retoma; si alguien lo cambió, se abre lo nuevo.
         const resume = stored && (stored.dirty || stored.version === version) ? stored : undefined;
         if (resume) baseVersion.current = resume.version;
@@ -247,10 +254,13 @@ const TextFile: React.FC<{
       .catch((err: unknown) => setLoadError(err instanceof Error ? err.message : String(err)));
     return () => {
       disposed = true;
+      mounted.current = false;
       const editor = editorRef.current;
       // La pestaña sigue abierta (se cambió a otra, Esc, otro repo): se guarda tal cual.
-      if (editor && findFileTab(root, path)) {
-        storeEditorSession(root, path, { session: editor.session(), version: baseVersion.current, dirty: editor.isDirty() });
+      if (findFileTab(root, path)) {
+        if (editor) storeEditorSession(root, path, { session: editor.session(), version: baseVersion.current, dirty: editor.isDirty() });
+        // El editor no llegó a crearse (se fue antes de que cargara CodeMirror): la sesión vuelve a su sitio.
+        else if (pending) storeEditorSession(root, path, pending);
       }
       editor?.destroy();
       editorRef.current = null;
@@ -278,8 +288,21 @@ const TextFile: React.FC<{
     busyRef.current = true;
     setSaving(true);
     const snapshot = editor.snapshot();
-    const result = await saveFile(path, snapshot.text, force ? null : baseVersion.current);
+    const result = await saveFile(root, path, snapshot.text, force ? null : baseVersion.current);
     busyRef.current = false;
+    if (!mounted.current) {
+      // Se cambió de pestaña mientras guardaba: la sesión que quedó esperando pasa a esta
+      // versión (si no, al volver avisaría de un «cambio en disco» que fue el tuyo).
+      const stored = peekEditorSession(root, path);
+      if (result.status === "saved" && stored) {
+        const session = stored.session as EditorSession;
+        const doc = (session.json as { doc?: unknown }).doc;
+        const dirty = doc !== snapshot.text;
+        storeEditorSession(root, path, { session: { ...session, saved: snapshot.text }, version: result.version, dirty });
+        setTabDirty(root, path, dirty);
+      }
+      return;
+    }
     setSaving(false);
     if (result.status === "saved") {
       baseVersion.current = result.version;
@@ -295,7 +318,7 @@ const TextFile: React.FC<{
   });
 
   const reload = async () => {
-    const fresh = await reloadFile(path);
+    const fresh = await reloadFile(root, path);
     if (!fresh) return;
     editorRef.current?.replaceText(fresh.text);
     baseVersion.current = fresh.version;
@@ -309,14 +332,14 @@ const TextFile: React.FC<{
     if (!ready) return;
     const check = async () => {
       if (document.visibilityState !== "visible" || busyRef.current) return;
-      const changed = await fileChangedOnDisk(path, baseVersion.current);
+      const changed = await fileChangedOnDisk(root, path, baseVersion.current);
       const editor = editorRef.current;
       if (!changed || !editor || busyRef.current) return;
       if (editor.isDirty()) {
         setDiskChanged(true);
         return;
       }
-      const fresh = await reloadFile(path);
+      const fresh = await reloadFile(root, path);
       if (fresh && !editor.isDirty()) {
         editor.replaceText(fresh.text);
         baseVersion.current = fresh.version;
@@ -329,7 +352,7 @@ const TextFile: React.FC<{
       clearInterval(timer);
       window.removeEventListener("focus", check);
     };
-  }, [ready, path]);
+  }, [ready, path, root]);
 
   // "Guardado" se ve un momento y se va.
   useEffect(() => {

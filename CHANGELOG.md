@@ -15,9 +15,10 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ### Corregido
 
-- El clic derecho fuera de la terminal y de los campos de texto mostraba el menú del webview, cuyo «Recargar» cerraba todas las terminales y agentes. Ya no aparece; donde hay algo útil que hacer, hay un menú propio.
+- El clic derecho fuera de la terminal y de los campos de texto mostraba el menú del webview, cuyo «Recargar» cerraba todas las terminales y agentes. Ya no aparece; donde hay algo útil que hacer, hay un menú propio. Además, la vista de la app ya no puede navegar a una página externa o a un archivo (un «Abrir enlace», un enlace arrastrado), que también las cerraba.
 - Guardar desde el visor un archivo con fin de línea CRLF lo convertía entero a LF.
-- Cambiar a una pestaña de terminal de otro repo con un archivo a medio editar en el visor descartaba los cambios sin preguntar.
+- Cambiar a una pestaña de terminal de otro repo con un archivo a medio editar en el visor descartaba los cambios sin preguntar. Y fuera de un repo, si la terminal se iba a otra carpeta con un archivo del mismo nombre, el visor podía guardar sobre ese otro archivo.
+- Recargar desde el disco un archivo CRLF con el cursor cerca del final fallaba en silencio y el visor se quedaba con el texto viejo.
 
 ## [0.6.0] - 2026-10-29
 

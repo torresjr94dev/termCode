@@ -100,22 +100,34 @@ describe("visor de archivos", () => {
     vi.mocked(gitApi.read).mockResolvedValue(preview("x", "v1"));
     await openFile("a.ts");
     vi.mocked(gitApi.writeFile).mockResolvedValueOnce("v2");
-    expect(await saveFile("a.ts", "y", "v1")).toEqual({ status: "saved", version: "v2" });
+    expect(await saveFile("/repo", "a.ts", "y", "v1")).toEqual({ status: "saved", version: "v2" });
     expect(gitApi.writeFile).toHaveBeenLastCalledWith("/repo", "a.ts", "y", "v1");
     expect(project().viewer).toMatchObject({ preview: { text: "y", version: "v2" } });
 
     vi.mocked(gitApi.writeFile).mockRejectedValueOnce(new Error("El archivo cambió en disco desde que lo abriste."));
-    expect(await saveFile("a.ts", "z", "v2")).toEqual({ status: "conflict" });
+    expect(await saveFile("/repo", "a.ts", "z", "v2")).toEqual({ status: "conflict" });
     vi.mocked(gitApi.writeFile).mockResolvedValueOnce("v4");
-    expect(await saveFile("a.ts", "z", null)).toEqual({ status: "saved", version: "v4" });
+    expect(await saveFile("/repo", "a.ts", "z", null)).toEqual({ status: "saved", version: "v4" });
     expect(gitApi.writeFile).toHaveBeenLastCalledWith("/repo", "a.ts", "z", null);
 
     vi.mocked(gitApi.fileVersion).mockResolvedValueOnce("v4");
-    expect(await fileChangedOnDisk("a.ts", "v4")).toBe(false);
+    expect(await fileChangedOnDisk("/repo", "a.ts", "v4")).toBe(false);
     vi.mocked(gitApi.fileVersion).mockResolvedValueOnce("v5");
-    expect(await fileChangedOnDisk("a.ts", "v4")).toBe(true);
+    expect(await fileChangedOnDisk("/repo", "a.ts", "v4")).toBe(true);
     vi.mocked(gitApi.fileVersion).mockRejectedValueOnce(new Error("no existe"));
-    expect(await fileChangedOnDisk("a.ts", "v4")).toBeNull();
+    expect(await fileChangedOnDisk("/repo", "a.ts", "v4")).toBeNull();
+  });
+
+  it("guarda en la raíz del editor aunque el panel ya siga a otra carpeta", async () => {
+    vi.mocked(gitApi.read).mockResolvedValue(preview("x", "v1"));
+    await openFile("todo.md");
+    // La terminal se fue a otra carpeta (sin repo) que también tiene un todo.md.
+    useProjectStore.setState({ cwd: "/otra" });
+    vi.mocked(gitApi.writeFile).mockResolvedValueOnce("v2");
+    await saveFile("/repo", "todo.md", "mío", "v1");
+    expect(gitApi.writeFile).toHaveBeenLastCalledWith("/repo", "todo.md", "mío", "v1");
+    // El visor (de la otra raíz) no se toca con lo guardado en esta.
+    expect(project().viewer).toMatchObject({ preview: { text: "x", version: "v1" } });
   });
 
   it("salta a la coincidencia de una búsqueda y cada salto cuenta aunque sea a la misma línea", async () => {
