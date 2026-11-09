@@ -28,7 +28,7 @@ fn version_of(meta: &std::fs::Metadata) -> String {
     format!("{modified}:{}", meta.len())
 }
 
-fn resolve(root: &str, rel: &str) -> Result<(PathBuf, PathBuf), String> {
+pub(crate) fn resolve(root: &str, rel: &str) -> Result<(PathBuf, PathBuf), String> {
     let root = Path::new(root);
     if !root.is_absolute() {
         return Err("Ruta de proyecto inválida.".into());
@@ -150,7 +150,7 @@ const SKIP_DIRS: &[&str] = &[
 /// Every file of the project for the ⌘P finder, relative and `/`-separated.
 /// In a repo: tracked + untracked not ignored (git already knows); elsewhere a
 /// bounded walk that skips hidden and heavy folders.
-fn files(root: &str) -> Result<Vec<String>, String> {
+pub(crate) fn files(root: &str) -> Result<Vec<String>, String> {
     let (canonical_root, _) = resolve(root, "")?;
     if canonical_root.join(".git").exists() {
         let out = git::git(

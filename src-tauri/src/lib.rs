@@ -15,6 +15,7 @@ mod proc;
 mod proctree;
 mod pty;
 mod quick;
+mod search;
 mod shell_integration;
 mod shells;
 mod ssh;
@@ -213,6 +214,7 @@ pub fn run() {
             fs::fs_read_image,
             fs::fs_version,
             fs::fs_write,
+            search::fs_search,
             clipboard::clipboard_files,
             clipboard::clipboard_save_image,
             clipboard::clipboard_image,

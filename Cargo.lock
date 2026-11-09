@@ -4454,6 +4454,7 @@ dependencies = [
  "objc2-foundation",
  "parking_lot",
  "pty-core",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
