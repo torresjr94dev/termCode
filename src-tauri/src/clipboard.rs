@@ -18,6 +18,8 @@ use tauri::{AppHandle, Manager};
 /// Lo mismo que el visor acepta para previsualizar.
 const MAX_IMAGE: usize = 30 * 1024 * 1024;
 /// Archivos pegados de una vez como máximo (un ⌘A + ⌘C de una carpeta enorme).
+/// En Linux los da el webview (`text/uri-list`): no hay lectura nativa.
+#[cfg(any(target_os = "macos", windows))]
 const MAX_FILES: usize = 256;
 const KEEP: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 

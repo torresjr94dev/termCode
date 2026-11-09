@@ -132,11 +132,12 @@ export const Viewer: React.FC = () => {
     </div>
   );
 
-  if (!dock.docked) return sheet;
+  // Mismo árbol acoplado o no (el contenedor sin caja cuando va encima): si cambiara,
+  // React rehace el visor, el editor se vuelve a crear y le quita el foco a la terminal.
   return (
-    <div className="flex h-full shrink-0" style={{ width: `${dock.width * 100}%` }}>
-      <DockDivider width={dock.width} />
-      {sheet}
+    <div className={dock.docked ? "flex h-full shrink-0" : "contents"} style={dock.docked ? { width: `${dock.width * 100}%` } : undefined}>
+      {dock.docked && <DockDivider key="divider" width={dock.width} />}
+      <React.Fragment key="sheet">{sheet}</React.Fragment>
     </div>
   );
 };
