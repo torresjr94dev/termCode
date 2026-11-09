@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { Asterisk, Columns2, GitBranch, Hexagon, History, Maximize2, Minimize2, Rows2, SquareTerminal, X } from "lucide-react";
+import { Asterisk, Columns2, Ellipsis, GitBranch, Hexagon, History, Maximize2, Minimize2, Rows2, SquareTerminal, X } from "lucide-react";
 import type { AgentKind, PaneNode, ResumableAgent } from "../types/layout";
 import { terminalManager } from "../terminal/TerminalManager";
 import { useRunningCommand } from "../terminal/useRunningCommand";
@@ -21,6 +21,8 @@ import { PortChips } from "./PortChips";
 import { ShellStartup, useWatchedShell } from "./ShellStartup";
 import { useSettingsStore } from "../store/settingsStore";
 import { AgentGlyph, IconButton, Lamp, Ring } from "./ui";
+import { showContextMenu } from "./ContextMenu";
+import type { MenuItem } from "../store/uiStore";
 import { LogoMark } from "./Logo";
 
 interface TerminalPaneProps {
@@ -81,6 +83,20 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
     void action();
   };
 
+  /** Lo mismo que los botones de la barra, en un menú (panel angosto o clic derecho). */
+  const paneMenu = (): MenuItem[] => [
+    ...((isSplit || isZoomed)
+      ? ([{ label: isZoomed ? "Restaurar" : "Maximizar panel", icon: isZoomed ? Minimize2 : Maximize2, hint: shortcutLabel("zoomPane"), onSelect: () => toggleZoom(pane.id) }] satisfies MenuItem[])
+      : []),
+    { label: "Dividir a la derecha", icon: Columns2, hint: shortcutLabel("splitRight"), onSelect: onThisPane(actions.splitRight) },
+    { label: "Dividir hacia abajo", icon: Rows2, hint: shortcutLabel("splitDown"), onSelect: onThisPane(actions.splitDown) },
+    ...(agent || pane.drawer
+      ? ([{ label: pane.drawer?.open ? "Ocultar la terminal del agente" : "Terminal del agente", icon: SquareTerminal, hint: shortcutLabel("agentShell"), onSelect: () => actions.toggleAgentShell(pane.id) }] satisfies MenuItem[])
+      : []),
+    "separator",
+    { label: "Cerrar panel", icon: X, hint: shortcutLabel("closePane"), onSelect: () => actions.closePane(pane.id) },
+  ];
+
   return (
     <section
       aria-label={`Terminal ${pane.title}`}
@@ -106,35 +122,42 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
             setActivePane(pane.id);
             if (movable) startPaneDrag(pane.id, e);
           }}
+          onContextMenu={(e) => showContextMenu(e, `Panel ${pane.title}`, paneMenu())}
           title={movable ? "Arrástralo a otro panel: a un lado lo pega ahí, al centro los intercambia" : undefined}
           // @container: lo secundario (ruta, modelo, costo) se va según el ancho del panel, nunca se encima.
           className={cn(
-            "@container group relative flex h-8 shrink-0 select-none items-center gap-2 border-b border-line pl-3 pr-1.5 transition-colors duration-150",
+            "@container group relative flex h-8 shrink-0 select-none items-center gap-1.5 border-b border-line pl-3 pr-1.5 transition-colors duration-150 @2xs:gap-2",
             isActive ? "text-ink" : "text-ink-3",
             movable && "cursor-grab",
           )}
         >
           {/* Con un solo panel, "activo" no dice nada: el foco solo se marca al dividir. */}
           {(isSplit || agent || hasAttention) && <Lamp state={hasAttention ? "attention" : isActive ? "on" : "off"} />}
+          {/* En una barra diminuta (tres paneles lado a lado) el ícono cede su sitio a lo que se usa. */}
           {agent ? (
-            <AgentGlyph agentType={agent} className="shrink-0 opacity-80" />
+            <AgentGlyph agentType={agent} className="hidden shrink-0 opacity-80 @2xs:block" />
           ) : (
-            <LogoMark className="h-3 w-auto shrink-0 text-ink-2" />
+            <LogoMark className="hidden h-3 w-auto shrink-0 text-ink-2 @2xs:block" />
           )}
           {/* El nombre es lo que se recorta (con un mínimo legible); el contexto y la terminal, nunca. */}
-          <span className="min-w-[2.5rem] truncate text-[12.5px] font-medium">{paneDisplayName(pane, project)}</span>
+          {/* Casi no cede: se recorta solo cuando la ruta ya no tiene nada que dar (o no se ve). */}
+          <span className="min-w-[2.5rem] max-w-[55%] shrink-[0.001] truncate text-[12.5px] font-medium">{paneDisplayName(pane, project)}</span>
           {cwd && (
             <span
               title={branch ? `${cwd}  ·  ${branch}` : cwd}
               // Un agente necesita el ancho para su modelo y contexto: su ruta se va antes.
               className={cn(
-                "hidden min-w-0 shrink-[2] items-center gap-1.5 font-mono text-[11px] text-ink-3",
+                // Cede antes que el nombre del panel: es lo más largo y lo menos necesario.
+                "hidden min-w-0 shrink-[10] items-center gap-1.5 font-mono text-[11px] text-ink-3",
                 agent ? "@2xl:flex" : "@lg:flex",
               )}
             >
-              <span className="min-w-0 truncate">{tildify(cwd, terminalManager.getHome())}</span>
+              {/* Se recorta por el principio: lo que dice dónde estás es el final (…/Personal/termCode). */}
+              <span dir="rtl" className="min-w-0 truncate text-left">
+                <bdi dir="ltr">{tildify(cwd, terminalManager.getHome())}</bdi>
+              </span>
               {branch && (
-                <span className="flex min-w-0 shrink-[2] items-center gap-0.5">
+                <span className="flex max-w-[16ch] shrink-0 items-center gap-0.5">
                   <GitBranch size={10} strokeWidth={2} aria-hidden="true" className="shrink-0 opacity-80" />
                   <span className="truncate">{branch}</span>
                 </span>
@@ -167,41 +190,57 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
               maximizado
             </span>
           )}
-          <span className="flex-1" />
+          <span className="min-w-0 flex-1" />
 
-          {/* Flotan al pasar el cursor: invisibles no le quitan espacio al resto de la cabecera. */}
-          <div className="pointer-events-none absolute inset-y-0 right-1.5 flex items-center rounded-md bg-canvas pl-2 opacity-0 shadow-[-12px_0_12px_var(--color-canvas)] transition-opacity duration-150 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
-            {(isSplit || isZoomed) && (
+          {/*
+            Aparecen al pasar el cursor, pero en su propio sitio: flotando encima tapaban
+            Claude Code, Codex y «terminal» justo cuando ibas a hacer clic en ellos.
+            Angosto, todo va en «⋯» (lo mismo que el clic derecho en la barra).
+          */}
+          <div className="pointer-events-none flex shrink-0 items-center opacity-0 transition-opacity duration-150 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+            <IconButton
+              size="sm"
+              icon={Ellipsis}
+              label="Acciones del panel"
+              className="@md:hidden"
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                useUiStore.getState().openContextMenu({ x: r.left, y: r.bottom + 4, label: `Panel ${pane.title}`, items: paneMenu() });
+              }}
+            />
+            <span className="hidden items-center @md:flex">
+              {(isSplit || isZoomed) && (
+                <IconButton
+                  size="sm"
+                  icon={isZoomed ? Minimize2 : Maximize2}
+                  label={isZoomed ? "Restaurar" : "Maximizar panel"}
+                  shortcut={shortcutLabel("zoomPane")}
+                  onClick={() => toggleZoom(pane.id)}
+                />
+              )}
               <IconButton
                 size="sm"
-                icon={isZoomed ? Minimize2 : Maximize2}
-                label={isZoomed ? "Restaurar" : "Maximizar panel"}
-                shortcut={shortcutLabel("zoomPane")}
-                onClick={() => toggleZoom(pane.id)}
+                icon={Columns2}
+                label="Dividir a la derecha"
+                shortcut={shortcutLabel("splitRight")}
+                onClick={onThisPane(actions.splitRight)}
               />
-            )}
-            <IconButton
-              size="sm"
-              icon={Columns2}
-              label="Dividir a la derecha"
-              shortcut={shortcutLabel("splitRight")}
-              onClick={onThisPane(actions.splitRight)}
-            />
-            <IconButton
-              size="sm"
-              icon={Rows2}
-              label="Dividir hacia abajo"
-              shortcut={shortcutLabel("splitDown")}
-              onClick={onThisPane(actions.splitDown)}
-            />
-            <IconButton
-              size="sm"
-              icon={X}
-              tone="danger"
-              label="Cerrar panel"
-              shortcut={shortcutLabel("closePane")}
-              onClick={() => actions.closePane(pane.id)}
-            />
+              <IconButton
+                size="sm"
+                icon={Rows2}
+                label="Dividir hacia abajo"
+                shortcut={shortcutLabel("splitDown")}
+                onClick={onThisPane(actions.splitDown)}
+              />
+              <IconButton
+                size="sm"
+                icon={X}
+                tone="danger"
+                label="Cerrar panel"
+                shortcut={shortcutLabel("closePane")}
+                onClick={() => actions.closePane(pane.id)}
+              />
+            </span>
           </div>
         </div>
       )}

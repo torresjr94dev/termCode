@@ -17,6 +17,7 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 ### Corregido
 
 - El clic derecho fuera de la terminal y de los campos de texto mostraba el menú del webview, cuyo «Recargar» cerraba todas las terminales y agentes. Ya no aparece; donde hay algo útil que hacer, hay un menú propio. Además, la vista de la app ya no puede navegar a una página externa o a un archivo (un «Abrir enlace», un enlace arrastrado), que también las cerraba.
+- En la barra de cada terminal, con una ruta larga (p. ej. dentro de «Documentos - …’s MacBook Air»), los botones de dividir y cerrar aparecían encima de Claude Code, Codex y «terminal» al pasar el cursor, justo cuando ibas a hacer clic. Ahora tienen su propio sitio; en un panel angosto se juntan en «⋯», y el clic derecho en la barra trae las mismas acciones. La ruta se recorta por el principio (se ve dónde estás, `…/Personal/termCode`), cede antes que el nombre del panel y la rama ya no queda en una letra.
 - Guardar desde el visor un archivo con fin de línea CRLF lo convertía entero a LF.
 - Cambiar a una pestaña de terminal de otro repo con un archivo a medio editar en el visor descartaba los cambios sin preguntar. Y fuera de un repo, si la terminal se iba a otra carpeta con un archivo del mismo nombre, el visor podía guardar sobre ese otro archivo.
 - Recargar desde el disco un archivo CRLF con el cursor cerca del final fallaba en silencio y el visor se quedaba con el texto viejo.

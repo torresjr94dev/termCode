@@ -322,7 +322,19 @@ function makePage(cdp) {
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: to.x, y: to.y, button: "left", buttons: 0, clickCount: 1 });
   };
 
-  return { evaluate, run, waitFor, press, pressMod, shortcut, type, click, screenshot, wheel, dblclick, drag };
+  /** El ratón real sobre el centro de un elemento (dispara :hover, no un evento sintético). */
+  const hover = async (selector) => {
+    const box = await evaluate(`(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    })()`);
+    if (!box) throw new Error(`No encontré ${selector} para pasar el ratón`);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: box.x, y: box.y });
+  };
+
+  return { evaluate, run, waitFor, press, pressMod, shortcut, type, click, screenshot, wheel, dblclick, drag, hover };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1412,7 +1424,7 @@ const TESTS = [
       await p.waitFor(`document.querySelector('[data-pane-id="${id}"] button[aria-pressed]')`, "el botón de terminal está");
       const boxes = await p.evaluate(`(() => {
         const header = document.querySelector('[data-pane-id="${id}"] > div');
-        // Los botones que flotan al pasar el cursor se superponen a propósito: no cuentan.
+        // Todo cuenta, también los botones que aparecen al pasar el cursor: tienen su sitio.
         const items = [...header.children].filter((el) => el.offsetParent !== null && getComputedStyle(el).display !== "none" && getComputedStyle(el).position !== "absolute" && el.getBoundingClientRect().width > 0);
         const box = header.getBoundingClientRect();
         const rects = items.map((el) => ({ text: (el.innerText ?? "").trim(), left: Math.round(el.getBoundingClientRect().left), right: Math.round(el.getBoundingClientRect().right) }));
@@ -1519,6 +1531,72 @@ const TESTS = [
         const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
         const st = useTerminalStore.getState();
         st.closeTab(st.tabs.at(-1).id);`);
+    },
+  },
+  {
+    name: "barra-ruta-larga",
+    async run(p) {
+      // Una carpeta como «~/Documents/Documentos - Jorge’s MacBook Air/…»: la ruta se recorta,
+      // no los botones, y al pasar el cursor los de dividir no tapan Claude Code ni Codex.
+      await p.shortcut("newTab");
+      const id = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        const s = useTerminalStore.getState();
+        const id = s.tabs.find((t) => t.id === s.activeTabId).activePaneId;
+        for (let i = 0; i < 75 && !terminalManager.getTerminal(id); i++) await new Promise((r) => setTimeout(r, 40));
+        s.setAgents({ claude: "/x/claude", codex: "/x/codex", gh: null, editors: [], claudeSettingsPath: "/x/claude-settings.json", mcpConfigPath: null });
+        const inst = terminalManager.instances.get(id);
+        terminalManager.receiveForTesting(id, "\\x1b]7;file://h/Users/e2e/Documents/Documentos%20-%20Jorge%E2%80%99s%20MacBook%20Air/Development/Personal/un-proyecto-con-nombre-largo/termCode\\x07\\x1b]133;A\\x07% ");
+        await new Promise((resolve) => inst.term.write("", resolve));
+        return id;`);
+      const launcher = `[data-pane-id="${id}"] [data-pane-bar] button[aria-label="Abrir Codex CLI en este panel"]`;
+      await p.waitFor(`document.querySelector('${launcher}')`, "la barra ofrece los agentes");
+      await p.hover(`[data-pane-id="${id}"] [data-pane-bar]`);
+      await p.hover(launcher);
+      await p.waitFor(`getComputedStyle(document.querySelector('[data-pane-id="${id}"] [data-pane-bar] button[aria-label="Dividir a la derecha"]').closest(".pointer-events-none")).opacity === "1"`, "al pasar el cursor aparecen los controles del panel");
+      const reach = await p.evaluate(`(() => {
+        const bar = document.querySelector('[data-pane-id="${id}"] [data-pane-bar]');
+        const out = {};
+        for (const name of ["Claude Code", "Codex CLI"]) {
+          const b = bar.querySelector('button[aria-label="Abrir ' + name + ' en este panel"]');
+          const r = b.getBoundingClientRect();
+          const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          out[name] = Boolean(hit && b.contains(hit));
+        }
+        // La ruta se recorta por el principio: el final (dónde estás) se ve.
+        const path = bar.querySelector('[dir="rtl"]');
+        const text = path.firstElementChild.firstChild;
+        const range = document.createRange();
+        range.setStart(text, text.length - 8);
+        range.setEnd(text, text.length);
+        const tail = range.getBoundingClientRect();
+        const box = path.getBoundingClientRect();
+        out.truncated = path.scrollWidth > path.clientWidth;
+        // El nombre del panel no se recorta mientras la ruta tenga de dónde ceder.
+        const name = path.parentElement.previousElementSibling;
+        out.nameWhole = name.scrollWidth <= name.clientWidth;
+        out.tailVisible = tail.left >= box.left - 1 && tail.right <= box.right + 1;
+        return out;
+      })()`);
+      if (!reach["Claude Code"] || !reach["Codex CLI"]) throw new Error(`Los botones de agente quedan tapados: ${JSON.stringify(reach)}`);
+      if (!reach.tailVisible) throw new Error(`El final de la ruta debe verse: ${JSON.stringify(reach)}`);
+      if (!reach.nameWhole) throw new Error(`La ruta debe ceder antes que el nombre del panel: ${JSON.stringify(reach)}`);
+      await p.screenshot("barra-ruta-larga");
+      // Clic derecho en la barra: las mismas acciones en un menú.
+      await p.evaluate(`(() => {
+        const bar = document.querySelector('[data-pane-id="${id}"] [data-pane-bar]');
+        const r = bar.getBoundingClientRect();
+        bar.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.left + 40, clientY: r.top + 10 }));
+        return true;
+      })()`);
+      await p.waitFor(`[...document.querySelectorAll('[role="menu"] [role="menuitem"]')].some((b) => b.textContent.includes("Dividir a la derecha"))`, "el clic derecho trae las acciones del panel");
+      await p.press("Escape");
+      await p.waitFor(`!document.querySelector('[role="menu"]')`, "Esc cierra el menú");
+      await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const s = useTerminalStore.getState();
+        s.closeTab(s.activeTabId);`);
     },
   },
   {
