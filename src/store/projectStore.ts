@@ -33,6 +33,17 @@ export type DiffSource =
       paneId?: string;
     };
 
+/** Un archivo abierto en el visor (pestaña). */
+export interface FileTab {
+  /** Raíz del proyecto en que se abrió: cada repo ve las suyas. */
+  root: string;
+  path: string;
+  /** Cambios sin guardar (en el editor visible o en el que espera en otra pestaña). */
+  dirty: boolean;
+  /** Markdown: renderizado o el texto. */
+  markdown?: "preview" | "source";
+}
+
 export type Viewer =
   | {
       kind: "diff";
@@ -47,6 +58,11 @@ export type Viewer =
       kind: "file";
       path: string;
       line?: number;
+      /** Coincidencia que seleccionar en `line` (UTF-16, como cuenta CodeMirror). */
+      column?: number;
+      length?: number;
+      /** Cambia en cada salto pedido (aunque sea a la misma línea). */
+      jump?: number;
       preview?: FilePreview;
       /** Imágenes: blob URL con los bytes (se libera al cerrar o cambiar de archivo). */
       image?: { url: string; bytes: number };
@@ -103,6 +119,8 @@ interface ProjectState {
   draftBeforeAmend: string;
   busy: Busy;
   viewer: Viewer | null;
+  /** Pestañas del visor, de todos los repos (la barra muestra las de la raíz actual). */
+  fileTabs: FileTab[];
   isPrDialogOpen: boolean;
   isBranchPickerOpen: boolean;
   /** Comentarios por línea aún sin mandar (sobreviven a cerrar el visor). */
@@ -143,6 +161,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
   amendBase: null,
   draftBeforeAmend: "",
   busy: null,
+  fileTabs: [],
   isPrDialogOpen: false,
   isBranchPickerOpen: false,
   notes: [],

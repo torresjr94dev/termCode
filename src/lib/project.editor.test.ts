@@ -23,8 +23,24 @@ vi.mock("./git", async (importOriginal) => {
 const { gitApi } = await import("./git");
 const { useProjectStore } = await import("../store/projectStore");
 const { useUiStore } = await import("../store/uiStore");
-const { absolutePath, closeViewer, confirmDiscard, fileChangedOnDisk, imageMime, openFile, openFileAbsolute, registerUnsaved, saveFile } =
-  await import("./project");
+const {
+  MAX_FILE_TABS,
+  absolutePath,
+  closeActiveFileTab,
+  closeFileTabs,
+  closeViewer,
+  cycleFileTab,
+  fileChangedOnDisk,
+  hasUnsavedEdits,
+  imageMime,
+  openFile,
+  openFileAbsolute,
+  recentFiles,
+  saveFile,
+  setTabDirty,
+  storeEditorSession,
+  takeEditorSession,
+} = await import("./project");
 
 const project = () => useProjectStore.getState();
 const preview = (text: string, version = "v1") => ({
@@ -39,10 +55,11 @@ const preview = (text: string, version = "v1") => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  registerUnsaved(null);
   useUiStore.setState({ confirm: null, toast: null });
-  useProjectStore.setState({ cwd: "/repo", repo: null, viewer: null });
+  useProjectStore.setState({ cwd: "/repo", repo: null, viewer: null, fileTabs: [] });
 });
+
+const tabPaths = () => project().fileTabs.map((t) => `${t.root}:${t.path}${t.dirty ? "*" : ""}`);
 
 describe("visor de archivos", () => {
   it("abre rutas absolutas del proyecto, también con la raíz de Windows", async () => {
@@ -79,49 +96,109 @@ describe("visor de archivos", () => {
     expect(project().viewer).toMatchObject({ path: "a.ts", line: 2 });
   });
 
-  it("guarda con la versión que leyó y detecta cambios ajenos", async () => {
+  it("guarda contra la versión sobre la que se editó y detecta cambios ajenos", async () => {
     vi.mocked(gitApi.read).mockResolvedValue(preview("x", "v1"));
     await openFile("a.ts");
     vi.mocked(gitApi.writeFile).mockResolvedValueOnce("v2");
-    expect(await saveFile("a.ts", "y")).toBe("saved");
+    expect(await saveFile("a.ts", "y", "v1")).toEqual({ status: "saved", version: "v2" });
     expect(gitApi.writeFile).toHaveBeenLastCalledWith("/repo", "a.ts", "y", "v1");
     expect(project().viewer).toMatchObject({ preview: { text: "y", version: "v2" } });
 
     vi.mocked(gitApi.writeFile).mockRejectedValueOnce(new Error("El archivo cambió en disco desde que lo abriste."));
-    expect(await saveFile("a.ts", "z")).toBe("conflict");
+    expect(await saveFile("a.ts", "z", "v2")).toEqual({ status: "conflict" });
     vi.mocked(gitApi.writeFile).mockResolvedValueOnce("v4");
-    expect(await saveFile("a.ts", "z", true)).toBe("saved");
+    expect(await saveFile("a.ts", "z", null)).toEqual({ status: "saved", version: "v4" });
     expect(gitApi.writeFile).toHaveBeenLastCalledWith("/repo", "a.ts", "z", null);
 
     vi.mocked(gitApi.fileVersion).mockResolvedValueOnce("v4");
-    expect(await fileChangedOnDisk("a.ts")).toBe(false);
+    expect(await fileChangedOnDisk("a.ts", "v4")).toBe(false);
     vi.mocked(gitApi.fileVersion).mockResolvedValueOnce("v5");
-    expect(await fileChangedOnDisk("a.ts")).toBe(true);
+    expect(await fileChangedOnDisk("a.ts", "v4")).toBe(true);
+    vi.mocked(gitApi.fileVersion).mockRejectedValueOnce(new Error("no existe"));
+    expect(await fileChangedOnDisk("a.ts", "v4")).toBeNull();
   });
 
-  it("no pierde cambios sin preguntar", async () => {
-    vi.mocked(gitApi.read).mockResolvedValue(preview("x"));
-    await openFile("a.ts");
-    registerUnsaved({ path: "a.ts", isDirty: () => true });
+  it("salta a la coincidencia de una búsqueda y cada salto cuenta aunque sea a la misma línea", async () => {
+    vi.mocked(gitApi.read).mockResolvedValue(preview("uno\ndos\n"));
+    await openFile("a.ts", { line: 2, column: 1, length: 2 });
+    const first = project().viewer;
+    expect(first).toMatchObject({ path: "a.ts", line: 2, column: 1, length: 2 });
+    await openFile("a.ts", { line: 2, column: 1, length: 2 });
+    const second = project().viewer;
+    expect(second?.kind === "file" && first?.kind === "file" && second.jump !== first.jump).toBe(true);
+    expect(recentFiles()[0]).toBe("a.ts");
+  });
+});
 
-    // Cancelar: el visor sigue abierto.
+describe("pestañas del visor", () => {
+  beforeEach(() => {
+    vi.mocked(gitApi.read).mockImplementation(async (_root, path) => ({ ...preview(`contenido de ${path}`), absolute: `/repo/${path}` }));
+  });
+
+  it("cada archivo abre su pestaña, sin preguntar ni perder lo editado en las otras", async () => {
+    await openFile("a.ts");
+    setTabDirty("/repo", "a.ts", true);
+    await openFile("b.ts");
+    expect(useUiStore.getState().confirm).toBeNull();
+    expect(tabPaths()).toEqual(["/repo:a.ts*", "/repo:b.ts"]);
+    expect(project().viewer).toMatchObject({ path: "b.ts" });
+    cycleFileTab(1);
+    await vi.waitFor(() => expect(project().viewer).toMatchObject({ path: "a.ts" }));
+  });
+
+  it("Esc vuelve a las terminales sin cerrar pestañas (lo no guardado sigue ahí)", async () => {
+    await openFile("a.ts");
+    setTabDirty("/repo", "a.ts", true);
     closeViewer();
-    await vi.waitFor(() => expect(useUiStore.getState().confirm).not.toBeNull());
+    expect(useUiStore.getState().confirm).toBeNull();
+    expect(project().viewer).toBeNull();
+    expect(hasUnsavedEdits()).toBe(true);
+  });
+
+  it("cerrar una pestaña con cambios pregunta; al cerrarla se pasa a la vecina", async () => {
+    await openFile("a.ts");
+    await openFile("b.ts");
+    await openFile("c.ts");
+    await openFile("b.ts");
+    setTabDirty("/repo", "b.ts", true);
+
+    closeActiveFileTab();
+    await vi.waitFor(() => expect(useUiStore.getState().confirm?.confirmLabel).toBe("Cerrar sin guardar"));
     useUiStore.getState().resolveConfirm(false);
     await Promise.resolve();
-    expect(project().viewer?.kind).toBe("file");
+    expect(tabPaths()).toContain("/repo:b.ts*");
 
-    // Abrir otro archivo y aceptar: se descarta.
-    const opening = openFile("b.ts");
-    await vi.waitFor(() => expect(useUiStore.getState().confirm?.confirmLabel).toBe("Descartar cambios"));
+    closeActiveFileTab();
+    await vi.waitFor(() => expect(useUiStore.getState().confirm).not.toBeNull());
     useUiStore.getState().resolveConfirm(true);
-    await opening;
-    expect(project().viewer).toMatchObject({ path: "b.ts" });
+    await vi.waitFor(() => expect(project().viewer).toMatchObject({ path: "c.ts" }));
+    expect(tabPaths()).toEqual(["/repo:a.ts", "/repo:c.ts"]);
+    expect(hasUnsavedEdits()).toBe(false);
+
+    await closeFileTabs(["a.ts", "c.ts"]);
+    expect(project().viewer).toBeNull();
+    expect(tabPaths()).toEqual([]);
   });
 
-  it("sin cambios no pregunta nada", async () => {
-    registerUnsaved({ path: "a.ts", isDirty: () => false });
-    expect(await confirmDiscard()).toBe(true);
-    expect(useUiStore.getState().confirm).toBeNull();
+  it("con demasiadas pestañas se cierra la más vieja que no tenga cambios", async () => {
+    await openFile("f0.ts");
+    setTabDirty("/repo", "f0.ts", true);
+    for (let i = 1; i <= MAX_FILE_TABS; i++) await openFile(`f${i}.ts`);
+    const paths = project().fileTabs.map((t) => t.path);
+    expect(paths).toHaveLength(MAX_FILE_TABS);
+    expect(paths).toContain("f0.ts");
+    expect(paths).not.toContain("f1.ts");
+  });
+
+  it("otro repo no pierde lo que se editaba: la pestaña y su sesión esperan", async () => {
+    await openFile("a.ts");
+    setTabDirty("/repo", "a.ts", true);
+    storeEditorSession("/repo", "a.ts", { session: { json: 1 }, version: "v1", dirty: true });
+    useProjectStore.setState({ cwd: "/otro", viewer: null });
+    await openFile("x.ts");
+    expect(tabPaths()).toEqual(["/repo:a.ts*", "/otro:x.ts"]);
+    expect(hasUnsavedEdits()).toBe(true);
+    expect(takeEditorSession("/repo", "a.ts")).toEqual({ session: { json: 1 }, version: "v1", dirty: true });
+    expect(takeEditorSession("/repo", "a.ts")).toBeUndefined();
   });
 });

@@ -1,8 +1,40 @@
 import React, { useEffect, useMemo, useRef } from "react";
-import { ChevronRight, CornerDownLeft, FolderUp, RefreshCw } from "lucide-react";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import {
+  ChevronRight,
+  Code2,
+  Copy,
+  CornerDownLeft,
+  FileSearch,
+  FileText,
+  FolderOpen,
+  FolderUp,
+  RefreshCw,
+  Search,
+  SquarePen,
+  SquareTerminal,
+  TextSearch,
+  X,
+} from "lucide-react";
 import { useProjectStore } from "../../store/projectStore";
+import type { MenuItem } from "../../store/uiStore";
 import type { FsEntry } from "../../lib/git";
-import { absolutePath, loadDir, openFile, pastePath, toggleDir } from "../../lib/project";
+import {
+  absolutePath,
+  closeFileTabs,
+  copyText,
+  isMarkdownPath,
+  loadDir,
+  openFile,
+  openInEditor,
+  pastePath,
+  toggleDir,
+} from "../../lib/project";
+import { openFinder, searchInFolder } from "../../lib/finder";
+import { IS_TAURI } from "../../lib/ipc";
+import { revealLabel } from "../../lib/platformLabels";
+import { shortcutLabel } from "../../lib/shortcuts";
+import { showContextMenu } from "../ContextMenu";
 import { actions } from "../../lib/actions";
 import { breadcrumbs, parentDir } from "../../lib/cd";
 import { relativeInside } from "../../lib/paths";
@@ -33,6 +65,47 @@ function useHere(root: string | null): string | null {
   if (!root || !cwd) return null;
   const rel = relativeInside(cwd, root);
   return rel === null ? null : rel.replace(/\\/g, "/");
+}
+
+/** Lo común a archivos y carpetas: rutas y el gestor de archivos del sistema. */
+function pathItems(rel: string): MenuItem[] {
+  const abs = absolutePath(rel);
+  return [
+    { label: "Pegar la ruta en la terminal", icon: CornerDownLeft, disabled: !abs, onSelect: () => abs && pastePath(abs) },
+    { label: "Copiar ruta", icon: Copy, disabled: !abs, onSelect: () => abs && void copyText(abs) },
+    { label: "Copiar ruta relativa", disabled: !rel, onSelect: () => void copyText(rel, "Ruta relativa copiada.") },
+    ...(IS_TAURI && abs
+      ? ([{ label: revealLabel(), icon: FolderOpen, onSelect: () => void revealItemInDir(abs).catch(() => {}) }] satisfies MenuItem[])
+      : []),
+  ];
+}
+
+const parentOf = (rel: string) => (rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "");
+
+function entryMenu(entry: FsEntry, expanded: boolean, goHere: () => void): MenuItem[] {
+  if (entry.isDir) {
+    return [
+      { label: expanded ? "Contraer" : "Expandir", icon: ChevronRight, onSelect: () => toggleDir(entry.path) },
+      { label: "Ir aquí en la terminal (cd)", icon: SquareTerminal, onSelect: goHere },
+      "separator",
+      { label: "Buscar texto en esta carpeta…", icon: TextSearch, onSelect: () => searchInFolder(entry.path, "text") },
+      { label: "Buscar archivo en esta carpeta…", icon: FileSearch, onSelect: () => searchInFolder(entry.path, "files") },
+      "separator",
+      ...pathItems(entry.path),
+    ];
+  }
+  const parent = parentOf(entry.path);
+  return [
+    { label: "Abrir", icon: FileText, onSelect: () => void openFile(entry.path) },
+    ...(isMarkdownPath(entry.path)
+      ? ([{ label: "Abrir como texto", icon: Code2, onSelect: () => void openFile(entry.path, { markdown: "source" }) }] satisfies MenuItem[])
+      : []),
+    { label: "Abrir en tu editor", icon: SquarePen, onSelect: () => void openInEditor(entry.path) },
+    "separator",
+    { label: parent ? `Buscar texto en ${parent.split("/").pop()}/…` : "Buscar texto en el proyecto…", icon: TextSearch, onSelect: () => searchInFolder(parent, "text") },
+    "separator",
+    ...pathItems(entry.path),
+  ];
 }
 
 export const FilesTab: React.FC = () => {
@@ -74,6 +147,17 @@ export const FilesTab: React.FC = () => {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <button
+        type="button"
+        onClick={() => openFinder("text")}
+        title={`Buscar texto dentro de los archivos  ${shortcutLabel("searchText")}`}
+        className="mx-2 mt-2 flex h-7 shrink-0 items-center gap-2 rounded-md border border-line bg-raised px-2 text-left text-[12px] text-ink-3 transition-colors duration-150 hover:border-line-strong hover:text-ink-2 focus-visible:outline-2 focus-visible:outline-accent"
+      >
+        <Search size={13} strokeWidth={1.75} aria-hidden="true" className="shrink-0" />
+        <span className="min-w-0 flex-1 truncate">Buscar en archivos…</span>
+        <span className="shrink-0 font-mono text-[10.5px] tracking-wide">{shortcutLabel("searchText")}</span>
+      </button>
+      <OpenFiles root={root} />
       <div className="flex h-8 shrink-0 items-center gap-1 pl-2 pr-1.5">
         <IconButton
           icon={FolderUp}
@@ -86,11 +170,81 @@ export const FilesTab: React.FC = () => {
         {cwd ? <Breadcrumbs path={cwd} /> : <span className="flex-1" />}
         <IconButton icon={RefreshCw} label="Recargar archivos" size="sm" onClick={refresh} />
       </div>
-      <div role="tree" aria-label="Archivos del proyecto" className="min-h-0 flex-1 overflow-y-auto pb-3">
+      <div
+        role="tree"
+        aria-label="Archivos del proyecto"
+        onContextMenu={(e) =>
+          showContextMenu(e, "Proyecto", [
+            { label: "Buscar texto en el proyecto…", icon: TextSearch, hint: shortcutLabel("searchText"), onSelect: () => searchInFolder("", "text") },
+            { label: "Buscar archivo…", icon: FileSearch, hint: shortcutLabel("fileFinder"), onSelect: () => searchInFolder("", "files") },
+            "separator",
+            { label: "Recargar archivos", icon: RefreshCw, onSelect: refresh },
+          ])
+        }
+        className="min-h-0 flex-1 overflow-y-auto pb-3"
+      >
         <TreeLevel path="" depth={0} here={here} />
       </div>
       <p className="shrink-0 border-t border-line px-3 py-1.5 text-[11px] text-ink-3">Doble clic en una carpeta: la terminal va ahí (cd).</p>
     </div>
+  );
+};
+
+/** Las pestañas del visor de este proyecto: para volver a ellas después de Esc. */
+const OpenFiles: React.FC<{ root: string }> = ({ root }) => {
+  const all = useProjectStore((s) => s.fileTabs);
+  const viewing = useProjectStore((s) => (s.viewer?.kind === "file" ? s.viewer.path : null));
+  const tabs = useMemo(() => all.filter((t) => t.root === root), [all, root]);
+  if (!tabs.length) return null;
+  const dirty = tabs.filter((t) => t.dirty).length;
+  return (
+    <section aria-label="Archivos abiertos" className="mt-2 shrink-0 border-b border-line pb-1.5">
+      <div className="flex h-6 items-center px-3 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-ink-3">
+        <span className="flex-1">
+          Abiertos <span className="font-mono font-normal tabular-nums">{tabs.length}</span>
+          {dirty > 0 && <span className="ml-1.5 font-normal normal-case tracking-normal text-accent">· {dirty} sin guardar</span>}
+        </span>
+        <button
+          type="button"
+          onClick={() => void closeFileTabs(tabs.map((t) => t.path))}
+          className="rounded px-1 text-[10.5px] font-normal normal-case tracking-normal text-ink-3 hover:bg-hover hover:text-ink"
+        >
+          Cerrar todos
+        </button>
+      </div>
+      <ul className="max-h-[132px] overflow-y-auto">
+        {tabs.map((tab) => {
+          const slash = tab.path.lastIndexOf("/");
+          const active = tab.path === viewing;
+          return (
+            <li key={tab.path} className="group relative flex items-center">
+              <button
+                type="button"
+                onClick={() => void openFile(tab.path)}
+                title={tab.path}
+                className={cn(
+                  "flex h-[24px] min-w-0 flex-1 items-center gap-1.5 pl-3 pr-8 text-left transition-colors duration-150",
+                  active ? "bg-press text-ink" : "text-ink-2 hover:bg-hover hover:text-ink",
+                )}
+              >
+                <FileText size={12} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-ink-3" />
+                <span className="shrink-0 font-mono text-[12px]">{tab.path.slice(slash + 1)}</span>
+                <span className="min-w-0 truncate font-mono text-[10.5px] text-ink-3">{slash >= 0 ? tab.path.slice(0, slash) : ""}</span>
+                {tab.dirty && <span aria-label="Sin guardar" className="ml-auto size-1.5 shrink-0 rounded-full bg-accent" />}
+              </button>
+              <button
+                type="button"
+                aria-label={`Cerrar ${tab.path}`}
+                onClick={() => void closeFileTabs([tab.path])}
+                className="absolute right-1.5 grid size-5 place-items-center rounded text-ink-3 opacity-0 transition-opacity duration-150 hover:bg-press hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
+              >
+                <X size={11} strokeWidth={2} aria-hidden="true" />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 };
 
@@ -200,6 +354,7 @@ const TreeRow: React.FC<{ entry: FsEntry; depth: number; marks: ReturnType<typeo
             else if (e.detail < 2) toggleDir(entry.path);
           }}
           onDoubleClick={entry.isDir ? goHere : undefined}
+          onContextMenu={(e) => showContextMenu(e, entry.isDir ? `Carpeta ${entry.name}` : `Archivo ${entry.name}`, entryMenu(entry, expanded, goHere))}
           title={entry.isDir ? `${entry.path}\nDoble clic: cd aquí` : entry.path}
           style={{ paddingLeft: 10 + depth * 14 }}
           className={cn(

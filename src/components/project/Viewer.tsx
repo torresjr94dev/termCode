@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { useProjectStore } from "../../store/projectStore";
-import { closeViewer, stepDiff } from "../../lib/project";
+import { closeViewer, cycleFileTab, projectRoot, stepDiff } from "../../lib/project";
+import { FileTabs } from "./viewer/FileTabs";
 import { DiffView } from "./viewer/DiffView";
 import { FileView } from "./viewer/FileView";
 import { ConflictView } from "./viewer/ConflictView";
@@ -24,6 +25,7 @@ export const Viewer: React.FC = () => {
   }, [target]);
 
   if (!viewer) return null;
+  const root = projectRoot();
 
   return (
     <div
@@ -46,11 +48,16 @@ export const Viewer: React.FC = () => {
         } else if (viewer.kind === "diff" && e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
           e.preventDefault();
           stepDiff(e.key === "ArrowDown" ? 1 : -1);
+        } else if (viewer.kind === "file" && e.key === "Tab" && e.ctrlKey && !e.metaKey && !e.altKey) {
+          // ⌃Tab / ⌃⇧Tab: pestaña siguiente / anterior.
+          e.preventDefault();
+          cycleFileTab(e.shiftKey ? -1 : 1);
         }
       }}
       className="absolute inset-0 z-30 flex animate-fade-in flex-col overflow-hidden rounded-xl border border-line bg-canvas"
     >
       {viewer.kind === "diff" && <DiffView viewer={viewer} bodyRef={bodyRef} />}
+      {viewer.kind === "file" && root && <FileTabs root={root} active={viewer.path} />}
       {viewer.kind === "file" && <FileView viewer={viewer} bodyRef={bodyRef} />}
       {viewer.kind === "conflict" && <ConflictView key={viewer.path} viewer={viewer} bodyRef={bodyRef} />}
       {viewer.kind === "output" && <OutputView key={viewer.id} viewer={viewer} bodyRef={bodyRef} />}

@@ -4,6 +4,21 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ## [Sin publicar]
 
+### Añadido
+
+- Buscar texto dentro de los archivos: ⇧⌘F (Ctrl+Shift+Alt+F en Windows y Linux), la caja «Buscar en archivos…» de Archivos o la lupa del panel de proyecto. Busca en todo el proyecto, en la carpeta donde está la terminal o en la que elijas desde el clic derecho del árbol, con distinguir mayúsculas, palabra completa y expresión regular (de tiempo lineal: ningún patrón la cuelga). Los resultados van por archivo con la coincidencia resaltada, y Enter abre el archivo con esa coincidencia seleccionada. Respeta `.gitignore`, se salta binarios y archivos de más de 2 MB, y no lee los que solo están en iCloud u OneDrive (los descargaría); dice cuántos se saltó. Recuerda la última búsqueda y, si tenías texto seleccionado en la terminal, empieza con él.
+- ⌘P encuentra también carpetas (Enter busca dentro, ⌘Enter va ahí con `cd`), se limita a la carpeta de la terminal o a la que elijas, muestra primero lo último que abriste y entiende `archivo:línea` (`App.tsx:120`, como lo imprimen tsc y los linters). Tab cambia entre archivos y texto sin cerrar el buscador.
+- Pestañas en el visor: cada archivo abre la suya y cambiar de pestaña conserva lo no guardado, el cursor y el deshacer. ⌃Tab y ⌃⇧Tab las recorren, ⌘W cierra la que ves (con cambios, pregunta) y el clic central también. Esc vuelve a las terminales sin cerrarlas: siguen en «Abiertos», arriba de Archivos, con las que tienen cambios marcadas.
+- Vista previa de Markdown: README, notas y planes de los agentes se abren renderizados (títulos, tablas, listas de tareas, bloques de código con color e imágenes del proyecto), con «Texto» para editarlos (⇧⌘V alterna). Los enlaces a otros archivos los abren en el visor (`#L12` incluido), los externos van al navegador y el HTML del archivo se muestra como texto, nunca se ejecuta.
+- Pegar capturas e imágenes con ⌘V (Ctrl+V en Windows y Linux): se guardan en un archivo y se pega su ruta, así Claude Code y Codex las adjuntan. Un archivo copiado en Finder o el Explorador pega su ruta, como en Terminal.app.
+- Clic derecho en el árbol de archivos: abrir, abrir en tu editor, buscar texto o archivos en esa carpeta, ir ahí con `cd`, pegar o copiar la ruta (absoluta o relativa) y mostrar en Finder. En las pestañas: cerrar, cerrar las demás o todas.
+
+### Corregido
+
+- El clic derecho fuera de la terminal y de los campos de texto mostraba el menú del webview, cuyo «Recargar» cerraba todas las terminales y agentes. Ya no aparece; donde hay algo útil que hacer, hay un menú propio.
+- Guardar desde el visor un archivo con fin de línea CRLF lo convertía entero a LF.
+- Cambiar a una pestaña de terminal de otro repo con un archivo a medio editar en el visor descartaba los cambios sin preguntar.
+
 ## [0.6.0] - 2026-10-29
 
 ### Añadido

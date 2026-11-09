@@ -16,7 +16,7 @@ import {
   lineNumbers,
   rectangularSelection,
 } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { defaultKeymap, history, historyField, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, HighlightStyle, indentOnInput, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
@@ -116,10 +116,22 @@ export interface EditorOptions {
   doc: string;
   path: string;
   readOnly: boolean;
-  /** Línea a la que saltar al abrir (1 = primera). */
-  line?: number;
+  /** Lo que tenía la pestaña al dejar de verse: se retoma tal cual (en vez de `doc`). */
+  session?: EditorSession;
   onDirtyChange: (dirty: boolean) => void;
   onSave: () => void;
+}
+
+/**
+ * Una pestaña que deja de verse. El estado va en JSON (texto, selección y
+ * deshacer) y se rehace con extensiones nuevas: las viejas apuntan a los
+ * callbacks de un componente que ya no existe.
+ */
+export interface EditorSession {
+  json: unknown;
+  /** Lo que hay en disco (con su fin de línea): decide si hay cambios sin guardar. */
+  saved: string;
+  scrollTop: number;
 }
 
 /** Foto inmutable del documento: lo que se manda a guardar. */
@@ -138,7 +150,9 @@ export interface EditorHandle {
    */
   markSaved(snapshot: Snapshot): void;
   isDirty(): boolean;
-  goToLine(line: number): void;
+  /** Va a la línea (1 = primera) y, con `column`/`length`, selecciona ese tramo. */
+  goTo(line: number, column?: number, length?: number): void;
+  session(): EditorSession;
   setReadOnly(readOnly: boolean): void;
   focus(): void;
   destroy(): void;
@@ -156,47 +170,51 @@ export function createEditor(parent: HTMLElement, options: EditorOptions): Edito
     options.onDirtyChange(next);
   };
 
-  const view = new EditorView({
-    parent,
-    state: EditorState.create({
-      doc: options.doc,
-      extensions: [
-        // Un archivo CRLF se guarda CRLF: sin esto CodeMirror lo normalizaría a LF.
-        options.doc.includes("\r\n") ? EditorState.lineSeparator.of("\r\n") : [],
-        lineNumbers(),
-        highlightActiveLineGutter(),
-        highlightSpecialChars(),
-        history(),
-        drawSelection(),
-        dropCursor(),
-        EditorState.allowMultipleSelections.of(true),
-        indentOnInput(),
-        syntaxHighlighting(highlight),
-        bracketMatching(),
-        closeBrackets(),
-        rectangularSelection(),
-        crosshairCursor(),
-        highlightActiveLine(),
-        highlightSelectionMatches(),
-        keymap.of([
-          { key: "Mod-s", preventDefault: true, run: () => (options.onSave(), true) },
-          ...closeBracketsKeymap,
-          ...defaultKeymap,
-          ...searchKeymap,
-          ...historyKeymap,
-          indentWithTab,
-        ]),
-        theme,
-        language.of([]),
-        editable.of([EditorState.readOnly.of(options.readOnly), EditorView.editable.of(!options.readOnly)]),
-        EditorView.updateListener.of((update) => {
-          if (update.docChanged && saved) setDirty(!update.state.doc.eq(saved));
-        }),
-        EditorView.contentAttributes.of({ "aria-label": `Editor de ${options.path}` }),
-      ],
+  const baseText = options.session?.saved ?? options.doc;
+  const extensions: Extension[] = [
+    // Un archivo CRLF se guarda CRLF: sin esto CodeMirror lo normalizaría a LF.
+    baseText.includes("\r\n") ? EditorState.lineSeparator.of("\r\n") : [],
+    lineNumbers(),
+    highlightActiveLineGutter(),
+    highlightSpecialChars(),
+    history(),
+    drawSelection(),
+    dropCursor(),
+    EditorState.allowMultipleSelections.of(true),
+    indentOnInput(),
+    syntaxHighlighting(highlight),
+    bracketMatching(),
+    closeBrackets(),
+    rectangularSelection(),
+    crosshairCursor(),
+    highlightActiveLine(),
+    highlightSelectionMatches(),
+    keymap.of([
+      { key: "Mod-s", preventDefault: true, run: () => (options.onSave(), true) },
+      ...closeBracketsKeymap,
+      ...defaultKeymap,
+      ...searchKeymap,
+      ...historyKeymap,
+      indentWithTab,
+    ]),
+    theme,
+    language.of([]),
+    editable.of([EditorState.readOnly.of(options.readOnly), EditorView.editable.of(!options.readOnly)]),
+    EditorView.updateListener.of((update) => {
+      if (update.docChanged && saved) setDirty(!update.state.doc.eq(saved));
     }),
-  });
-  saved = view.state.doc;
+    EditorView.contentAttributes.of({ "aria-label": `Editor de ${options.path}` }),
+  ];
+  const state = options.session
+    ? EditorState.fromJSON(options.session.json, { extensions }, { history: historyField })
+    : EditorState.create({ doc: options.doc, extensions });
+  const view = new EditorView({ parent, state });
+  saved = view.state.toText(baseText);
+  setDirty(!view.state.doc.eq(saved));
+  if (options.session) {
+    const top = options.session.scrollTop;
+    requestAnimationFrame(() => view.scrollDOM.scrollTo({ top }));
+  }
 
   const key = languageKey(options.path);
   if (key) {
@@ -207,17 +225,19 @@ export function createEditor(parent: HTMLElement, options: EditorOptions): Edito
       });
   }
 
-  const goToLine = (line: number) => {
+  const goTo = (line: number, column?: number, length?: number) => {
     const target = view.state.doc.line(Math.min(Math.max(1, line), view.state.doc.lines));
+    const from = Math.min(target.from + Math.max(0, column ?? 0), target.to);
+    const to = Math.min(from + Math.max(0, length ?? 0), target.to);
     view.dispatch({
-      selection: EditorSelection.cursor(target.from),
-      effects: EditorView.scrollIntoView(target.from, { y: "center" }),
+      selection: EditorSelection.single(from, to),
+      effects: EditorView.scrollIntoView(from, { y: "center" }),
     });
   };
-  if (options.line) goToLine(options.line);
 
   return {
-    snapshot: () => ({ text: view.state.doc.toString(), doc: view.state.doc }),
+    // sliceDoc respeta el fin de línea del archivo (doc.toString() lo volvería LF y un CRLF cambiaría entero).
+    snapshot: () => ({ text: view.state.sliceDoc(), doc: view.state.doc }),
     replaceText(text) {
       const head = view.state.selection.main.head;
       view.dispatch({
@@ -232,7 +252,12 @@ export function createEditor(parent: HTMLElement, options: EditorOptions): Edito
       setDirty(!view.state.doc.eq(snapshot.doc));
     },
     isDirty: () => dirty,
-    goToLine,
+    goTo,
+    session: () => ({
+      json: view.state.toJSON({ history: historyField }),
+      saved: saved ? saved.sliceString(0, saved.length, view.state.lineBreak) : view.state.sliceDoc(),
+      scrollTop: view.scrollDOM.scrollTop,
+    }),
     setReadOnly(readOnly) {
       view.dispatch({
         effects: editable.reconfigure([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),

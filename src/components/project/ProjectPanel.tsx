@@ -1,5 +1,5 @@
 import React from "react";
-import { CloudAlert, FolderGit2, LayoutTemplate, FolderTree, GitCompareArrows, History, PanelRightClose, PanelRightOpen, RefreshCw, type LucideIcon } from "lucide-react";
+import { CloudAlert, FolderGit2, LayoutTemplate, FolderTree, GitCompareArrows, History, PanelRightClose, PanelRightOpen, RefreshCw, TextSearch, type LucideIcon } from "lucide-react";
 import { useProjectStore, type ProjectTab } from "../../store/projectStore";
 import { closeProject, openProject, retryStatus } from "../../lib/project";
 import { cn } from "../../lib/layout";
@@ -11,6 +11,7 @@ import { HistoryTab } from "./HistoryTab";
 import { basename } from "../../lib/paths";
 import { openWorkspace } from "../../lib/workspace";
 import { WORKSPACE_FILE } from "../../lib/workspaceFile";
+import { openFinder } from "../../lib/finder";
 
 const TABS: Array<{ id: ProjectTab; label: string; icon: LucideIcon }> = [
   { id: "files", label: "Archivos", icon: FolderTree },
@@ -59,6 +60,7 @@ export const ProjectPanel: React.FC = () => {
             Workspace
           </button>
         )}
+        <IconButton icon={TextSearch} label="Buscar en archivos del proyecto" shortcut={shortcutLabel("searchText")} size="sm" onClick={() => openFinder("text")} />
         <IconButton icon={PanelRightClose} label="Plegar panel de proyecto" shortcut={hintFor(tab)} size="sm" onClick={closeProject} />
       </div>
 
@@ -105,6 +107,7 @@ export const ProjectPanel: React.FC = () => {
 const ProjectRail: React.FC<{ changeCount: number }> = ({ changeCount }) => (
   <aside aria-label="Proyecto (plegado)" className="flex h-full w-10 shrink-0 flex-col items-center gap-1 rounded-xl border border-line bg-canvas py-1.5">
     <IconButton icon={PanelRightOpen} label="Mostrar panel de proyecto" onClick={() => openProject(useProjectStore.getState().tab)} />
+    <IconButton icon={TextSearch} label="Buscar en archivos del proyecto" shortcut={shortcutLabel("searchText")} onClick={() => openFinder("text")} />
     <span aria-hidden="true" className="my-0.5 h-px w-5 bg-line" />
     {TABS.map(({ id, label, icon }) => {
       const hint = hintFor(id);

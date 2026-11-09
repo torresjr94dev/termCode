@@ -22,6 +22,7 @@ const GROUPS: Array<{ title: string; items: Array<[ShortcutId | ShortcutId[], st
     title: "Proyecto y git",
     items: [
       ["fileFinder", "Buscar archivo"],
+      ["searchText", "Buscar en archivos"],
       ["projectChanges", "Cambios y commit"],
       ["projectFiles", "Archivos"],
       ["switchBranch", "Cambiar de rama"],

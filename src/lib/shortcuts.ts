@@ -31,6 +31,7 @@ export type ShortcutId =
   | "overview"
   | "missionControl"
   | "fileFinder"
+  | "searchText"
   | "switchBranch"
   | "nextAttention"
   | "agentShell";
@@ -79,6 +80,7 @@ export const SHORTCUTS: Record<ShortcutId, Chord> = {
   overview: { key: "o", shift: true },
   missionControl: { key: "a", shift: true },
   fileFinder: { key: "p" },
+  searchText: { key: "f", shift: true },
   switchBranch: { key: "b", shift: true },
   nextAttention: { key: "j" },
   agentShell: { key: "l" },

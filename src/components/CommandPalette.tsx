@@ -163,7 +163,8 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
       { id: "workspace-open", group: "Proyecto", title: "Abrir workspace del proyecto", hint: ".termcode.json", icon: LayoutTemplate, run: () => void openWorkspace() },
       { id: "workspace-template", group: "Proyecto", title: "Copiar plantilla de .termcode.json", hint: "paneles del proyecto ya armados", icon: LayoutTemplate, run: () => void copyWorkspaceTemplate() },
-      { id: "find-file", group: "Proyecto", title: "Buscar archivo…", icon: FileSearch, shortcut: sc("fileFinder"), run: () => useUiStore.getState().setFinderOpen(true) },
+      { id: "find-file", group: "Proyecto", title: "Buscar archivo…", hint: "o carpeta", icon: FileSearch, shortcut: sc("fileFinder"), run: () => useUiStore.getState().openFinder({ mode: "files" }) },
+      { id: "find-text", group: "Proyecto", title: "Buscar en archivos…", hint: "texto dentro del proyecto", icon: TextSearch, shortcut: sc("searchText"), run: () => useUiStore.getState().openFinder({ mode: "text" }) },
 
       ...(repo
         ? ([

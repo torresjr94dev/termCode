@@ -1,10 +1,10 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { warn as logWarn } from "@tauri-apps/plugin-log";
-import { useProjectStore, initialRepoState, sameSource, type DiffSource, type ProjectTab } from "../store/projectStore";
+import { useProjectStore, initialRepoState, sameSource, type DiffSource, type FileTab, type ProjectTab } from "../store/projectStore";
 import { useTerminalStore } from "../store/terminalStore";
 import { useUiStore } from "../store/uiStore";
 import { terminalManager } from "../terminal/TerminalManager";
-import { gitApi, isStaged, isUnstaged, type GitChange, type StashEntry } from "./git";
+import { gitApi, isStaged, isUnstaged, type FilePreview, type GitChange, type StashEntry } from "./git";
 import { IS_TAURI, ipc, quotePath } from "./ipc";
 import { settingsNow } from "../store/settingsStore";
 import { collectPanes, findOwnerTab, findPane } from "./layout";
@@ -250,36 +250,169 @@ export function toggleDir(path: string) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Editor: cambios sin guardar                                         */
+/* Pestañas del visor y cambios sin guardar                            */
 /* ------------------------------------------------------------------ */
 
-let unsaved: { path: string; isDirty: () => boolean } | null = null;
+/** Pestañas por raíz como máximo: al abrir otra se cierra la más vieja que no tenga cambios. */
+export const MAX_FILE_TABS = 12;
 
-/** El editor abierto se registra para que nada lo cierre con cambios sin preguntar. */
-export function registerUnsaved(entry: { path: string; isDirty: () => boolean } | null) {
-  unsaved = entry;
+/**
+ * Lo que el editor de una pestaña tenía al dejar de verse (otra pestaña, Esc,
+ * otro repo): texto, cursor y deshacer. `version`: la de disco sobre la que
+ * se hicieron esos cambios (la que se exige al guardar).
+ */
+export interface StoredEditor {
+  session: unknown;
+  version: string;
+  dirty: boolean;
 }
 
-export function notifyUnsaved(dirty: boolean) {
-  // El backend lo usa para no cerrar la ventana con trabajo sin guardar.
-  if (IS_TAURI) void ipc.setUnsaved(dirty);
+const sessions = new Map<string, StoredEditor>();
+const tabKey = (root: string, path: string) => `${root}\u0000${path}`;
+
+export function storeEditorSession(root: string, path: string, stored: StoredEditor) {
+  sessions.set(tabKey(root, path), stored);
 }
 
-export const hasUnsavedEdits = () => Boolean(unsaved?.isDirty());
+/** La sesión guardada de esa pestaña (y se olvida: ahora la tiene el editor). */
+export function takeEditorSession(root: string, path: string): StoredEditor | undefined {
+  const key = tabKey(root, path);
+  const stored = sessions.get(key);
+  sessions.delete(key);
+  return stored;
+}
 
-/** `true` si se puede seguir: no hay cambios, o aceptaste descartarlos. */
-export function confirmDiscard(): Promise<boolean> {
-  const pending = unsaved;
-  if (!pending?.isDirty()) return Promise.resolve(true);
+export function findFileTab(root: string | null, path: string): FileTab | undefined {
+  return root ? project().fileTabs.find((t) => t.root === root && t.path === path) : undefined;
+}
+
+export function tabsOfRoot(root: string | null): FileTab[] {
+  return root ? project().fileTabs.filter((t) => t.root === root) : [];
+}
+
+function updateTab(root: string, path: string, patch: Partial<FileTab>) {
+  const tabs = project().fileTabs;
+  const index = tabs.findIndex((t) => t.root === root && t.path === path);
+  if (index === -1) return;
+  const tab = tabs[index];
+  if ((Object.keys(patch) as Array<keyof FileTab>).every((k) => tab[k] === patch[k])) return;
+  const next = [...tabs];
+  next[index] = { ...tab, ...patch };
+  project().set({ fileTabs: next });
+}
+
+let lastUnsaved = false;
+/** El backend no cierra la ventana con trabajo sin guardar: se le avisa solo cuando cambia. */
+function syncUnsavedFlag() {
+  const now = hasUnsavedEdits();
+  if (now === lastUnsaved) return;
+  lastUnsaved = now;
+  if (IS_TAURI) void ipc.setUnsaved(now);
+}
+
+export function setTabDirty(root: string, path: string, dirty: boolean) {
+  updateTab(root, path, { dirty });
+  syncUnsavedFlag();
+}
+
+export function setTabMarkdown(path: string, markdown: "preview" | "source") {
+  const root = projectRoot();
+  if (root) updateTab(root, path, { markdown });
+}
+
+/** Pestañas con cambios sin guardar, de cualquier repo. */
+export const unsavedTabs = () => project().fileTabs.filter((t) => t.dirty);
+export const hasUnsavedEdits = () => unsavedTabs().length > 0;
+
+/** Abre (o reusa) la pestaña; si sobran, cierra la más vieja sin cambios que no sea esta. */
+function addTab(root: string, path: string, markdown?: FileTab["markdown"]) {
+  const tabs = project().fileTabs;
+  if (tabs.some((t) => t.root === root && t.path === path)) {
+    if (markdown) updateTab(root, path, { markdown });
+    return;
+  }
+  let next = [...tabs, { root, path, dirty: false, markdown }];
+  const mine = next.filter((t) => t.root === root);
+  if (mine.length > MAX_FILE_TABS) {
+    const victim = mine.find((t) => !t.dirty && t.path !== path);
+    if (victim) {
+      next = next.filter((t) => t !== victim);
+      sessions.delete(tabKey(victim.root, victim.path));
+    }
+  }
+  project().set({ fileTabs: next });
+}
+
+function askToCloseDirty(paths: string[]): Promise<boolean> {
+  if (!paths.length) return Promise.resolve(true);
   return new Promise((resolve) =>
     useUiStore.getState().askConfirm({
-      title: "¿Descartar los cambios sin guardar?",
-      body: `${pending.path} tiene cambios que no guardaste (${sysLabel("S")} los guarda).`,
-      confirmLabel: "Descartar cambios",
+      title: paths.length === 1 ? `¿Cerrar ${paths[0]} sin guardar?` : `¿Cerrar ${paths.length} archivos sin guardar?`,
+      body: `${paths.join(", ")}: los cambios que no guardaste (${sysLabel("S")}) se pierden.`,
+      confirmLabel: "Cerrar sin guardar",
       onConfirm: () => resolve(true),
       onCancel: () => resolve(false),
     }),
   );
+}
+
+/**
+ * Cierra pestañas de la raíz actual (con cambios, pregunta antes). Si se
+ * cerró la que se ve, pasa a la vecina; sin ninguna, el visor se cierra.
+ */
+export async function closeFileTabs(paths: string[]) {
+  const root = projectRoot();
+  if (!root || !paths.length) return;
+  const before = tabsOfRoot(root);
+  const closing = before.filter((t) => paths.includes(t.path));
+  if (!(await askToCloseDirty(closing.filter((t) => t.dirty).map((t) => t.path)))) return;
+  for (const tab of closing) sessions.delete(tabKey(root, tab.path));
+  project().set({ fileTabs: project().fileTabs.filter((t) => !(t.root === root && paths.includes(t.path))) });
+  syncUnsavedFlag();
+
+  const viewer = project().viewer;
+  if (viewer?.kind !== "file" || !paths.includes(viewer.path)) return;
+  const index = before.findIndex((t) => t.path === viewer.path);
+  const remaining = before.filter((t) => !paths.includes(t.path));
+  const neighbour = remaining[Math.min(index, remaining.length - 1)];
+  if (neighbour) void openFile(neighbour.path);
+  else closeViewer();
+}
+
+/** ⌘W en el visor: la pestaña que se ve. */
+export function closeActiveFileTab() {
+  const viewer = project().viewer;
+  if (viewer?.kind === "file") void closeFileTabs([viewer.path]);
+  else closeViewer();
+}
+
+/** ⌃Tab / ⌃⇧Tab: la pestaña siguiente o la anterior (en círculo). */
+export function cycleFileTab(delta: 1 | -1) {
+  const viewer = project().viewer;
+  const tabs = tabsOfRoot(projectRoot());
+  if (viewer?.kind !== "file" || tabs.length < 2) return;
+  const index = tabs.findIndex((t) => t.path === viewer.path);
+  const next = tabs[(index + delta + tabs.length) % tabs.length];
+  if (next) void openFile(next.path);
+}
+
+/* ------------------------------------------------------------------ */
+/* Recientes (⌘P sin escribir nada)                                    */
+/* ------------------------------------------------------------------ */
+
+const MAX_RECENT = 30;
+const recents = new Map<string, string[]>();
+
+function rememberRecent(root: string, path: string) {
+  const list = (recents.get(root) ?? []).filter((p) => p !== path);
+  list.unshift(path);
+  recents.set(root, list.slice(0, MAX_RECENT));
+}
+
+/** Los últimos archivos abiertos en el visor en este proyecto, el más reciente primero. */
+export function recentFiles(): string[] {
+  const root = projectRoot();
+  return root ? (recents.get(root) ?? []) : [];
 }
 
 /* ------------------------------------------------------------------ */
@@ -305,6 +438,8 @@ export function imageMime(path: string): string | null {
   return dot >= 0 ? (IMAGE_MIME[path.slice(dot + 1).toLowerCase()] ?? null) : null;
 }
 
+export const isMarkdownPath = (path: string) => /\.(md|markdown|mdx)$/i.test(path);
+
 // Las imágenes viven en blob URLs: se liberan en cuanto el visor deja de mostrarlas.
 useProjectStore.subscribe((state, prev) => {
   const before = prev.viewer?.kind === "file" ? prev.viewer.image?.url : undefined;
@@ -312,20 +447,39 @@ useProjectStore.subscribe((state, prev) => {
   if (before && before !== now) URL.revokeObjectURL(before);
 });
 
-export async function openFile(path: string, line?: number) {
+/** A dónde saltar al abrir: una línea y, si viene de una búsqueda, la coincidencia a seleccionar. */
+export interface FileTarget {
+  line?: number;
+  column?: number;
+  length?: number;
+  markdown?: "preview" | "source";
+}
+
+let jumpSeq = 0;
+
+/**
+ * Abre el archivo en su pestaña (la crea si no hay). Cambiar de pestaña no
+ * pierde nada: el editor que deja de verse guarda texto, cursor y deshacer.
+ */
+export async function openFile(path: string, target?: number | FileTarget) {
   const root = projectRoot();
   if (!root) return;
+  const { line, column, length, markdown } = typeof target === "number" ? { line: target } : (target ?? {});
+  // Saltar a una línea es cosa del texto: un Markdown pasa a mostrarse como texto.
+  addTab(root, path, markdown ?? (line ? "source" : undefined));
+  rememberRecent(root, path);
+  const jump = line ? ++jumpSeq : undefined;
   const current = project().viewer;
-  // Mismo archivo (p. ej. ⌘-clic en otra línea): solo se salta, sin perder lo editado.
+  // Mismo archivo (p. ej. ⌘-clic en otra línea): solo se salta, sin releerlo.
   if (current?.kind === "file" && current.path === path && (current.preview || current.image)) {
-    project().set({ viewer: { ...current, line } });
+    project().set({ viewer: { ...current, line, column, length, jump } });
     return;
   }
-  if (!(await confirmDiscard())) return;
-  project().set({ viewer: { kind: "file", path, line } });
+  const position = { line, column, length, jump };
+  project().set({ viewer: { kind: "file", path, ...position } });
   const stillOpen = () => {
     const viewer = project().viewer;
-    return viewer?.kind === "file" && viewer.path === path;
+    return viewer?.kind === "file" && viewer.path === path && projectRoot() === root;
   };
   try {
     const mime = imageMime(path);
@@ -337,57 +491,59 @@ export async function openFile(path: string, line?: number) {
       return;
     }
     const preview = await gitApi.read(root, path);
-    if (stillOpen()) project().set({ viewer: { kind: "file", path, line, preview } });
+    if (stillOpen()) project().set({ viewer: { kind: "file", path, ...position, preview } });
   } catch (err) {
-    if (stillOpen()) project().set({ viewer: { kind: "file", path, line, error: errorText(err) } });
+    if (stillOpen()) project().set({ viewer: { kind: "file", path, ...position, error: errorText(err) } });
   }
 }
 
-export type SaveResult = "saved" | "conflict" | "error";
+export type SaveResult = { status: "saved"; version: string } | { status: "conflict" } | { status: "error" };
 
-/** Guarda lo editado. `force`: sobrescribir aunque el archivo haya cambiado en disco. */
-export async function saveFile(path: string, content: string, force = false): Promise<SaveResult> {
+/**
+ * Guarda lo editado. `expectedVersion`: la versión de disco sobre la que se
+ * editó (si otro cambió el archivo después, no se pisa: «conflict»); null
+ * sobrescribe a sabiendas.
+ */
+export async function saveFile(path: string, content: string, expectedVersion: string | null): Promise<SaveResult> {
   const root = projectRoot();
-  const viewer = project().viewer;
-  if (!root || viewer?.kind !== "file" || viewer.path !== path || !viewer.preview) return "error";
+  if (!root) return { status: "error" };
   try {
-    const version = await gitApi.writeFile(root, path, content, force ? null : viewer.preview.version);
+    const version = await gitApi.writeFile(root, path, content, expectedVersion);
     const now = project().viewer;
     if (now?.kind === "file" && now.path === path && now.preview) {
       project().set({ viewer: { ...now, preview: { ...now.preview, text: content, version } } });
     }
     void refreshStatus();
-    return "saved";
+    return { status: "saved", version };
   } catch (err) {
     const text = errorText(err);
-    if (text.includes("cambió en disco")) return "conflict";
+    if (text.includes("cambió en disco")) return { status: "conflict" };
     toast(text, "error");
-    return "error";
+    return { status: "error" };
   }
 }
 
-/** Relee el archivo del disco (otro lo cambió). Devuelve el contenido nuevo. */
-export async function reloadFile(path: string): Promise<string | null> {
+/** Relee el archivo del disco (otro lo cambió). */
+export async function reloadFile(path: string): Promise<FilePreview | null> {
   const root = projectRoot();
   if (!root) return null;
   try {
     const preview = await gitApi.read(root, path);
     const now = project().viewer;
     if (now?.kind === "file" && now.path === path) project().set({ viewer: { ...now, preview } });
-    return preview.text;
+    return preview;
   } catch (err) {
     toast(errorText(err), "error");
     return null;
   }
 }
 
-/** ¿Cambió en disco desde la versión que tiene el visor? (null si no se pudo saber). */
-export async function fileChangedOnDisk(path: string): Promise<boolean | null> {
+/** ¿Cambió en disco desde `version`? (null si no se pudo saber). */
+export async function fileChangedOnDisk(path: string, version: string): Promise<boolean | null> {
   const root = projectRoot();
-  const viewer = project().viewer;
-  if (!root || viewer?.kind !== "file" || viewer.path !== path || !viewer.preview) return null;
+  if (!root) return null;
   try {
-    return (await gitApi.fileVersion(root, path)) !== viewer.preview.version;
+    return (await gitApi.fileVersion(root, path)) !== version;
   } catch {
     return null;
   }
@@ -412,6 +568,16 @@ export function pastePath(absolute: string) {
   if (!paneId) return;
   terminalManager.paste(paneId, `${quotePath(absolute)} `);
   terminalManager.focus(paneId);
+}
+
+/** Copia una ruta (o cualquier texto) y lo dice. */
+export async function copyText(text: string, done = "Ruta copiada.") {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(done);
+  } catch {
+    toast("No se pudo copiar al portapapeles.", "error");
+  }
 }
 
 export function absolutePath(rel: string): string | null {
@@ -442,7 +608,7 @@ export function sourceForChange(change: GitChange, side: "staged" | "unstaged"):
 export async function openDiff(source: DiffSource, siblings: DiffSource[] = [source]) {
   const root = source.root ?? project().repo?.root;
   if (!root) return;
-  if (!(await confirmDiscard())) return;
+  // Lo que estuviera editándose sigue en su pestaña (con su deshacer).
   project().set({ viewer: { kind: "diff", source, siblings } });
   try {
     const result =
@@ -627,13 +793,11 @@ export async function sendReview() {
   toast(`Revisión pegada en ${pane?.title ?? "el agente"}: léela y pulsa Enter para mandarla.`);
 }
 
+/** Vuelve a las terminales. Las pestañas quedan abiertas (con lo no guardado): se retoman desde Archivos o ⌘P. */
 export function closeViewer() {
-  void confirmDiscard().then((ok) => {
-    if (!ok) return;
-    project().set({ viewer: null });
-    const paneId = activePaneId();
-    if (paneId) terminalManager.focus(paneId);
-  });
+  project().set({ viewer: null });
+  const paneId = activePaneId();
+  if (paneId) terminalManager.focus(paneId);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1058,7 +1222,6 @@ export function finishOperation(abort: boolean) {
 export async function openConflict(path: string) {
   const root = project().repo?.root;
   if (!root) return;
-  if (!(await confirmDiscard())) return;
   project().set({ viewer: { kind: "conflict", path } });
   const stillOpen = () => {
     const viewer = project().viewer;

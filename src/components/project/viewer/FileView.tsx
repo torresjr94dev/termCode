@@ -1,24 +1,31 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { Check, Copy, CornerDownLeft, FolderOpen, Minus, Plus, SquarePen } from "lucide-react";
-import type { Viewer as ViewerState } from "../../../store/projectStore";
+import { BookOpenText, Check, Code2, Copy, CornerDownLeft, FolderOpen, Minus, Plus, SquarePen } from "lucide-react";
+import { useProjectStore, type Viewer as ViewerState } from "../../../store/projectStore";
 import { useUiStore } from "../../../store/uiStore";
 import {
   absolutePath,
   fileChangedOnDisk,
-  notifyUnsaved,
+  findFileTab,
+  isMarkdownPath,
   openInEditor,
   pastePath,
-  registerUnsaved,
+  projectRoot,
   reloadFile,
   saveFile,
+  setTabDirty,
+  setTabMarkdown,
+  storeEditorSession,
+  takeEditorSession,
 } from "../../../lib/project";
 import type { FilePreview } from "../../../lib/git";
 import { IS_TAURI } from "../../../lib/ipc";
 import { cn } from "../../../lib/layout";
 import { IconButton, Kbd } from "../../ui";
 import { Body, Header, Notice } from "./parts";
-import { sysLabel } from "../../../lib/shortcuts";
+import { IS_MAC, sysLabel } from "../../../lib/shortcuts";
+// markdown-it llega bajo demanda, como CodeMirror: no pesa en el arranque.
+const MarkdownPreview = lazy(() => import("./MarkdownPreview").then((m) => ({ default: m.MarkdownPreview })));
 
 /** Acciones comunes de un archivo: tu editor, pegar/copiar la ruta, Finder. */
 const FileActions: React.FC<{ path: string; absolute: string | null; line?: number }> = ({ path, absolute, line }) => {
@@ -57,8 +64,9 @@ export const FileView: React.FC<{
   bodyRef: React.RefObject<HTMLDivElement | null>;
 }> = ({ viewer, bodyRef }) => {
   if (viewer.image) return <ImageFile viewer={viewer} image={viewer.image} bodyRef={bodyRef} />;
-  if (viewer.preview && !viewer.preview.binary) {
-    return <TextFile key={viewer.path} viewer={viewer} preview={viewer.preview} bodyRef={bodyRef} />;
+  const root = projectRoot();
+  if (viewer.preview && !viewer.preview.binary && root) {
+    return <TextFile key={`${root}\u0000${viewer.path}`} viewer={viewer} preview={viewer.preview} root={root} bodyRef={bodyRef} />;
   }
   return (
     <>
@@ -170,24 +178,35 @@ const ImageFile: React.FC<{
 };
 
 /* ------------------------------------------------------------------ */
-/* Texto: editor                                                       */
+/* Texto: editor (y vista previa de Markdown)                          */
 /* ------------------------------------------------------------------ */
 
 type EditorModule = typeof import("../../../editor/codemirror");
 type EditorHandle = ReturnType<EditorModule["createEditor"]>;
+type EditorSession = import("../../../editor/codemirror").EditorSession;
+
+/** ⌘⇧V / Ctrl+Shift+V: alternar vista previa y texto (como en VS Code). */
+const isPreviewToggle = (e: React.KeyboardEvent) =>
+  (IS_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "v";
 
 const TextFile: React.FC<{
   viewer: Extract<ViewerState, { kind: "file" }>;
   preview: FilePreview;
+  root: string;
   bodyRef: React.RefObject<HTMLDivElement | null>;
-}> = ({ viewer, preview, bodyRef }) => {
+}> = ({ viewer, preview, root, bodyRef }) => {
   const path = viewer.path;
   const editable = preview.utf8 && !preview.truncated;
+  const markdown = isMarkdownPath(path);
+  const tabMode = useProjectStore((s) => s.fileTabs.find((t) => t.root === root && t.path === path)?.markdown);
+  const mode = markdown ? (tabMode ?? "preview") : "source";
   const hostRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<EditorHandle | null>(null);
   const busyRef = useRef(false);
-  // Solo el contenido con el que se abrió: el componente se monta de nuevo por archivo.
-  const initial = useRef({ text: preview.text, line: viewer.line, readOnly: !editable });
+  /** Versión de disco sobre la que se edita: la que se exige al guardar. */
+  const baseVersion = useRef(preview.version);
+  // Solo lo que había al abrir: el componente se monta de nuevo por archivo.
+  const initial = useRef({ text: preview.text, version: preview.version, readOnly: !editable, stored: takeEditorSession(root, path) });
   const saveRef = useRef<(force?: boolean) => void>(() => {});
   const [ready, setReady] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -195,43 +214,63 @@ const TextFile: React.FC<{
   const [diskChanged, setDiskChanged] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [previewText, setPreviewText] = useState(preview.text);
 
-  // El editor se crea una vez por archivo (CodeMirror llega bajo demanda).
+  // El editor se crea una vez por archivo (CodeMirror llega bajo demanda). Si la
+  // pestaña ya estaba abierta, retoma su texto, cursor y deshacer.
   useEffect(() => {
     let disposed = false;
     import("../../../editor/codemirror")
       .then(({ createEditor }) => {
         if (disposed || !hostRef.current) return;
+        const { text, version, readOnly, stored } = initial.current;
+        // Sin cambios y con el archivo igual en disco se retoma; si alguien lo cambió, se abre lo nuevo.
+        const resume = stored && (stored.dirty || stored.version === version) ? stored : undefined;
+        if (resume) baseVersion.current = resume.version;
         const handle = createEditor(hostRef.current, {
-          doc: initial.current.text,
+          doc: text,
           path,
-          readOnly: initial.current.readOnly,
-          line: initial.current.line,
+          readOnly,
+          session: resume?.session as EditorSession | undefined,
           onDirtyChange: (next) => {
             setDirty(next);
-            notifyUnsaved(next);
+            setTabDirty(root, path, next);
           },
           onSave: () => saveRef.current(),
         });
         editorRef.current = handle;
-        registerUnsaved({ path, isDirty: handle.isDirty });
+        if (resume?.dirty && resume.version !== version) setDiskChanged(true);
+        setPreviewText(handle.snapshot().text);
         setReady(true);
-        handle.focus();
+        if (mode === "source") handle.focus();
       })
       .catch((err: unknown) => setLoadError(err instanceof Error ? err.message : String(err)));
     return () => {
       disposed = true;
-      editorRef.current?.destroy();
+      const editor = editorRef.current;
+      // La pestaña sigue abierta (se cambió a otra, Esc, otro repo): se guarda tal cual.
+      if (editor && findFileTab(root, path)) {
+        storeEditorSession(root, path, { session: editor.session(), version: baseVersion.current, dirty: editor.isDirty() });
+      }
+      editor?.destroy();
       editorRef.current = null;
-      registerUnsaved(null);
-      notifyUnsaved(false);
     };
-  }, [path]);
+    // `mode` solo decide el foco inicial: cambiarlo no recrea el editor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, root]);
 
-  // ⌘-clic en otra línea del mismo archivo: solo se salta.
+  // Saltos pedidos (⌘-clic en una ruta, un resultado de búsqueda): línea y coincidencia.
   useEffect(() => {
-    if (ready && viewer.line) editorRef.current?.goToLine(viewer.line);
-  }, [ready, viewer.line]);
+    if (ready && viewer.jump && viewer.line) editorRef.current?.goTo(viewer.line, viewer.column, viewer.length);
+  }, [ready, viewer.jump, viewer.line, viewer.column, viewer.length]);
+
+  const switchMode = (next: "preview" | "source") => {
+    if (next === mode) return;
+    if (next === "preview") setPreviewText(editorRef.current?.snapshot().text ?? previewText);
+    setTabMarkdown(path, next);
+    if (next === "source") requestAnimationFrame(() => editorRef.current?.focus());
+    else requestAnimationFrame(() => bodyRef.current?.focus());
+  };
 
   const save = async (force = false) => {
     const editor = editorRef.current;
@@ -239,14 +278,15 @@ const TextFile: React.FC<{
     busyRef.current = true;
     setSaving(true);
     const snapshot = editor.snapshot();
-    const result = await saveFile(path, snapshot.text, force);
+    const result = await saveFile(path, snapshot.text, force ? null : baseVersion.current);
     busyRef.current = false;
     setSaving(false);
-    if (result === "saved") {
+    if (result.status === "saved") {
+      baseVersion.current = result.version;
       editor.markSaved(snapshot);
       setDiskChanged(false);
       setSavedAt(Date.now());
-    } else if (result === "conflict") {
+    } else if (result.status === "conflict") {
       setDiskChanged(true);
     }
   };
@@ -255,11 +295,12 @@ const TextFile: React.FC<{
   });
 
   const reload = async () => {
-    const text = await reloadFile(path);
-    if (text !== null) {
-      editorRef.current?.replaceText(text);
-      setDiskChanged(false);
-    }
+    const fresh = await reloadFile(path);
+    if (!fresh) return;
+    editorRef.current?.replaceText(fresh.text);
+    baseVersion.current = fresh.version;
+    setPreviewText(fresh.text);
+    setDiskChanged(false);
   };
 
   // Un agente (u otra app) cambió el archivo: si no hay cambios tuyos se recarga
@@ -268,15 +309,19 @@ const TextFile: React.FC<{
     if (!ready) return;
     const check = async () => {
       if (document.visibilityState !== "visible" || busyRef.current) return;
-      const changed = await fileChangedOnDisk(path);
+      const changed = await fileChangedOnDisk(path, baseVersion.current);
       const editor = editorRef.current;
       if (!changed || !editor || busyRef.current) return;
       if (editor.isDirty()) {
         setDiskChanged(true);
         return;
       }
-      const text = await reloadFile(path);
-      if (text !== null && !editor.isDirty()) editor.replaceText(text);
+      const fresh = await reloadFile(path);
+      if (fresh && !editor.isDirty()) {
+        editor.replaceText(fresh.text);
+        baseVersion.current = fresh.version;
+        setPreviewText(fresh.text);
+      }
     };
     const timer = setInterval(() => void check(), 2000);
     window.addEventListener("focus", check);
@@ -293,13 +338,7 @@ const TextFile: React.FC<{
     return () => clearTimeout(timer);
   }, [savedAt]);
 
-  const badge = !editable
-    ? "Solo lectura"
-    : dirty
-      ? "● Sin guardar"
-      : savedAt
-        ? "Guardado"
-        : formatBytes(preview.size);
+  const badge = !editable ? "Solo lectura" : dirty ? "● Sin guardar" : savedAt ? "Guardado" : formatBytes(preview.size);
 
   return (
     <>
@@ -316,6 +355,31 @@ const TextFile: React.FC<{
             {saving ? "Guardando…" : "Guardar"}
             <Kbd className="text-on-accent/70">{sysLabel("S")}</Kbd>
           </button>
+        )}
+        {markdown && (
+          <span role="group" aria-label="Cómo ver el Markdown" className="flex rounded-md border border-line p-0.5 font-sans text-[11.5px]">
+            {(
+              [
+                ["preview", "Vista previa", BookOpenText],
+                ["source", "Texto", Code2],
+              ] as const
+            ).map(([id, label, Icon]) => (
+              <button
+                key={id}
+                type="button"
+                aria-pressed={mode === id}
+                title={`${label}  ${IS_MAC ? "⇧⌘V" : "Ctrl+Shift+V"}`}
+                onClick={() => switchMode(id)}
+                className={cn(
+                  "flex h-[22px] items-center gap-1 rounded px-1.5 transition-colors duration-150",
+                  mode === id ? "bg-press text-ink" : "text-ink-3 hover:text-ink-2",
+                )}
+              >
+                <Icon size={12} strokeWidth={1.9} aria-hidden="true" />
+                {label}
+              </button>
+            ))}
+          </span>
         )}
         <FileActions path={path} absolute={preview.absolute} line={viewer.line} />
       </Header>
@@ -339,9 +403,26 @@ const TextFile: React.FC<{
         </p>
       )}
       {loadError && <Notice tone="error">No se pudo cargar el editor: {loadError}</Notice>}
-      <div ref={bodyRef} tabIndex={-1} className="relative min-h-0 flex-1 outline-none">
-        <div ref={hostRef} className="absolute inset-0" />
-        {!ready && !loadError && <p className="absolute left-4 top-4 font-sans text-[13px] text-ink-3">Abriendo…</p>}
+      <div
+        ref={bodyRef}
+        tabIndex={-1}
+        onKeyDown={(e) => {
+          if (markdown && isPreviewToggle(e)) {
+            e.preventDefault();
+            switchMode(mode === "preview" ? "source" : "preview");
+          }
+        }}
+        className="relative min-h-0 flex-1 outline-none"
+      >
+        <div ref={hostRef} className="absolute inset-0" hidden={mode === "preview"} />
+        {mode === "preview" && (
+          <div className="absolute inset-0 overflow-y-auto">
+            <Suspense fallback={<p className="px-8 py-6 font-sans text-[13px] text-ink-3">Abriendo…</p>}>
+              <MarkdownPreview path={path} text={previewText} />
+            </Suspense>
+          </div>
+        )}
+        {!ready && !loadError && mode === "source" && <p className="absolute left-4 top-4 font-sans text-[13px] text-ink-3">Abriendo…</p>}
       </div>
     </>
   );

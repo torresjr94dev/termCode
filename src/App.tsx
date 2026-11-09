@@ -13,6 +13,8 @@ import { PrDialog } from "./components/project/PrDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { MissionControl } from "./components/MissionControl";
 import { FileFinder } from "./components/FileFinder";
+import { ContextMenu } from "./components/ContextMenu";
+import { toggleFinder } from "./lib/finder";
 import { Overview } from "./components/Overview";
 import { ShortcutHints } from "./components/ShortcutHints";
 import { Welcome } from "./components/Welcome";
@@ -25,7 +27,7 @@ import { useUiStore } from "./store/uiStore";
 import { settingsNow } from "./store/settingsStore";
 import { terminalManager } from "./terminal/TerminalManager";
 import { actions } from "./lib/actions";
-import { closeViewer, hasUnsavedEdits, openBranchPicker, openProject } from "./lib/project";
+import { closeActiveFileTab, hasUnsavedEdits, openBranchPicker, openProject, unsavedTabs } from "./lib/project";
 import { ipc } from "./lib/ipc";
 import { IS_TAURI, quotePath } from "./lib/ipc";
 import { pasteFromClipboard } from "./lib/clipboardPaste";
@@ -55,7 +57,8 @@ const SHORTCUT_HANDLERS: Record<Exclude<ShortcutId, "palette">, () => unknown> =
   settings: actions.openSettings,
   overview: () => useUiStore.getState().setOverviewOpen(!useUiStore.getState().isOverviewOpen),
   missionControl: () => useUiStore.getState().setMissionOpen(!useUiStore.getState().isMissionOpen),
-  fileFinder: () => useUiStore.getState().setFinderOpen(!useUiStore.getState().isFinderOpen),
+  fileFinder: () => toggleFinder("files"),
+  searchText: () => toggleFinder("text"),
   switchBranch: openBranchPicker,
   nextAttention: actions.focusNextAttention,
   agentShell: () => actions.toggleAgentShell(),
@@ -133,6 +136,31 @@ function useFileDrop() {
   }, []);
 }
 
+/**
+ * El menú del clic derecho del webview no sirve en una app: fuera de los
+ * campos de texto solo trae «Recargar» (cierra todas las terminales y agentes)
+ * y, sobre un enlace, «Abrir enlace» (saca a la app de su página). Se quita
+ * ahí; donde hay algo que hacer, cada componente abre el suyo (ContextMenu).
+ * Se conserva en campos de texto, el editor y la terminal (Copiar, Pegar) y
+ * sobre texto seleccionado (Copiar). En desarrollo, Shift+clic derecho lo
+ * muestra igual (Inspeccionar elemento).
+ */
+function useNativeMenuGuard() {
+  useEffect(() => {
+    const onContextMenu = (e: MouseEvent) => {
+      if (e.defaultPrevented || (import.meta.env.DEV && e.shiftKey)) return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest("input, textarea, [contenteditable]:not([contenteditable='false']), .cm-editor, .xterm")) return;
+      const selection = window.getSelection();
+      if (target && selection && !selection.isCollapsed && selection.toString().trim() && selection.containsNode(target, true)) return;
+      e.preventDefault();
+      useUiStore.getState().closeContextMenu();
+    };
+    window.addEventListener("contextmenu", onContextMenu);
+    return () => window.removeEventListener("contextmenu", onContextMenu);
+  }, []);
+}
+
 /** Pegar capturas y archivos copiados (xterm solo sabe pegar texto). */
 function useRichPaste() {
   useEffect(() => {
@@ -152,9 +180,10 @@ function useQuitGuard() {
           void ipc.quitApp();
           return;
         }
+        const pending = unsavedTabs().map((t) => t.path);
         useUiStore.getState().askConfirm({
           title: "¿Salir sin guardar?",
-          body: "Hay un archivo con cambios sin guardar en el visor. Si sales ahora, se pierden.",
+          body: `${pending.length === 1 ? "Hay un archivo" : `Hay ${pending.length} archivos`} con cambios sin guardar en el visor (${pending.join(", ")}). Si sales ahora, se pierden.`,
           confirmLabel: "Salir sin guardar",
           onConfirm: () => void ipc.quitApp(),
         });
@@ -180,6 +209,7 @@ export const App: React.FC = () => {
 
   useFileDrop();
   useRichPaste();
+  useNativeMenuGuard();
   useQuitGuard();
 
   const closePalette = useCallback(() => {
@@ -219,12 +249,12 @@ export const App: React.FC = () => {
       }
       // Con la paleta o un diálogo abiertos, el resto de atajos no debe actuar a ciegas.
       if (ui.isPaletteOpen || ui.confirm || ui.isSettingsOpen || !settingsNow().onboardingDone) return;
-      if (ui.isFinderOpen && shortcut !== "fileFinder") return;
+      if (ui.finder && shortcut !== "fileFinder" && shortcut !== "searchText") return;
       if (ui.isOverviewOpen && shortcut !== "overview") return;
       if (ui.isMissionOpen && shortcut !== "missionControl") return;
 
-      // ⌘W con un archivo abierto cierra el archivo, no el panel que está debajo.
-      if (shortcut === "closePane" && target?.closest("[data-viewer]")) closeViewer();
+      // ⌘W en el visor cierra la pestaña del archivo, no el panel que está debajo.
+      if (shortcut === "closePane" && target?.closest("[data-viewer]")) closeActiveFileTab();
       // ⌘W en la terminal acoplada la cierra a ella, no al agente de arriba.
       else if (shortcut === "closePane" && target?.closest("[data-drawer]")) {
         const paneId = target.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
@@ -294,6 +324,7 @@ export const App: React.FC = () => {
       <ApprovalTray />
       <SystemPopover />
       <SshDialog onClosed={focusActivePane} />
+      <ContextMenu />
       <ConfirmDialog onSettled={focusActivePane} />
       <ToastHost />
     </div>
