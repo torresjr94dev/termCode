@@ -2,6 +2,7 @@
 
 pub mod agents;
 mod approvals;
+mod clipboard;
 mod cloud;
 mod codex_status;
 mod editor;
@@ -212,6 +213,9 @@ pub fn run() {
             fs::fs_read_image,
             fs::fs_version,
             fs::fs_write,
+            clipboard::clipboard_files,
+            clipboard::clipboard_save_image,
+            clipboard::clipboard_image,
             editor::open_in_editor,
             editor::fs_existing_files,
             quick::quick_toggle,

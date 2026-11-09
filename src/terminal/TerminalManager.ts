@@ -18,6 +18,7 @@ import type { AgentStatus, PaneShell, ProcessInfo } from "../types/layout";
 import { CommandTracker, commandAgent, withShellFacts, type CommandRecord } from "./commands";
 import { fileLinkProvider, type FileLinkTarget } from "./links";
 import { sanitizePaste } from "./paste";
+import { needsRichPaste, snapshotClipboard, type ClipboardSnapshot } from "./clipboard";
 import { clearEnd, initialClearState, type ClearState } from "./clear";
 import { XTERM_THEMES } from "./themes";
 import { parseProgramStatus, PROGRAM_STATUS_REPLY, type ProgramStatus } from "./programStatus";
@@ -215,6 +216,8 @@ class TerminalManager {
   /** La última terminal que tuvo el teclado: al remontarse (mover, dividir, restaurar) lo recupera solo ella. */
   private focusedId: string | null = null;
   private home: string | null = null;
+  /** Pegar archivos o imágenes (ver `./clipboard`): lo resuelve la app, que tiene el IPC y los avisos. */
+  private richPaste: ((paneId: string, clip: ClipboardSnapshot) => void) | null = null;
   /**
    * Con ConPTY, xterm no debe subir historial a la vista al crecer el panel
    * (ConPTY repinta su pantalla encima y se duplican líneas), y antes de la
@@ -243,6 +246,10 @@ class TerminalManager {
 
   public setStoreHooks(hooks: StoreHooks) {
     this.hooks = hooks;
+  }
+
+  public setRichPasteHandler(handler: ((paneId: string, clip: ClipboardSnapshot) => void) | null) {
+    this.richPaste = handler;
   }
 
   /* ------------------------------------------------------------------ */
@@ -427,6 +434,22 @@ class TerminalManager {
         };
         textarea.addEventListener("focus", onFocus);
         instance.dispose.push(() => textarea.removeEventListener("focus", onFocus));
+      }
+      // xterm solo pega `text/plain`: una captura o un archivo copiado no pegaban nada.
+      // En captura, sobre su elemento, para decidir antes que él (sus oyentes van en la textarea).
+      // (TS cree que sigue sin elemento: lo creó `open()`, justo arriba.)
+      const element = instance.term.element as HTMLElement | undefined;
+      if (element) {
+        const onPaste = (e: ClipboardEvent) => {
+          if (!this.richPaste || !e.clipboardData) return;
+          const clip = snapshotClipboard(e.clipboardData);
+          if (!needsRichPaste(clip)) return;
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          this.richPaste(id, clip);
+        };
+        element.addEventListener("paste", onPaste, { capture: true });
+        instance.dispose.push(() => element.removeEventListener("paste", onPaste, { capture: true }));
       }
     }
 

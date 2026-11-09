@@ -27,7 +27,8 @@ import { terminalManager } from "./terminal/TerminalManager";
 import { actions } from "./lib/actions";
 import { closeViewer, hasUnsavedEdits, openBranchPicker, openProject } from "./lib/project";
 import { ipc } from "./lib/ipc";
-import { IS_TAURI, shellQuote } from "./lib/ipc";
+import { IS_TAURI, quotePath } from "./lib/ipc";
+import { pasteFromClipboard } from "./lib/clipboardPaste";
 import { collectPanes } from "./lib/layout";
 import { IS_MAC, matchShortcut, matchTabIndex, type ShortcutId } from "./lib/shortcuts";
 
@@ -113,7 +114,7 @@ function useFileDrop() {
         if (payload.type === "drop") {
           setDropPane(null);
           if (!paneId || !payload.paths.length) return;
-          terminalManager.paste(paneId, `${payload.paths.map(shellQuote).join(" ")} `);
+          terminalManager.paste(paneId, `${payload.paths.map(quotePath).join(" ")} `);
           useTerminalStore.getState().setActivePane(paneId);
         } else {
           setDropPane(paneId);
@@ -129,6 +130,14 @@ function useFileDrop() {
       disposed = true;
       unlisten?.();
     };
+  }, []);
+}
+
+/** Pegar capturas y archivos copiados (xterm solo sabe pegar texto). */
+function useRichPaste() {
+  useEffect(() => {
+    terminalManager.setRichPasteHandler((paneId, clip) => void pasteFromClipboard(paneId, clip));
+    return () => terminalManager.setRichPasteHandler(null);
   }, []);
 }
 
@@ -170,6 +179,7 @@ export const App: React.FC = () => {
   const isBroadcastEnabled = useTerminalStore((s) => s.isBroadcastEnabled);
 
   useFileDrop();
+  useRichPaste();
   useQuitGuard();
 
   const closePalette = useCallback(() => {

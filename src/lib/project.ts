@@ -5,7 +5,7 @@ import { useTerminalStore } from "../store/terminalStore";
 import { useUiStore } from "../store/uiStore";
 import { terminalManager } from "../terminal/TerminalManager";
 import { gitApi, isStaged, isUnstaged, type GitChange, type StashEntry } from "./git";
-import { IS_TAURI, ipc, shellQuote } from "./ipc";
+import { IS_TAURI, ipc, quotePath } from "./ipc";
 import { settingsNow } from "../store/settingsStore";
 import { collectPanes, findOwnerTab, findPane } from "./layout";
 import { joinPath, relativeInside } from "./paths";
@@ -410,7 +410,7 @@ export function openFileAbsolute(absolute: string, line?: number): boolean {
 export function pastePath(absolute: string) {
   const paneId = activePaneId();
   if (!paneId) return;
-  terminalManager.paste(paneId, `${shellQuote(absolute)} `);
+  terminalManager.paste(paneId, `${quotePath(absolute)} `);
   terminalManager.focus(paneId);
 }
 

@@ -44,16 +44,22 @@ windows-sys = { version = "0.59", features = [
   "Win32_Security_Authorization",
   "Win32_Storage_FileSystem",
   "Win32_System_Console",
+  "Win32_System_DataExchange",
   "Win32_System_IO",
   "Win32_System_LibraryLoader",
+  "Win32_System_Ole",
   "Win32_System_Pipes",
   "Win32_System_Registry",
+  "Win32_UI_Shell",
 ] }
 
 # libproc (macOS) y sysctl: archivos abiertos de Codex y presión de memoria.
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
-# IOKit: uso de la GPU.
+# IOKit: uso de la GPU. AppKit: archivos copiados en Finder (pegar su ruta).
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10.1"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSBitmapImageRep", "NSImageRep", "NSPasteboard", "NSPasteboardItem"] }
