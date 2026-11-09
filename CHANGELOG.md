@@ -4,6 +4,24 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ## [Sin publicar]
 
+### Añadido
+
+- Buscar texto dentro de los archivos: ⇧⌘F (Ctrl+Shift+Alt+F en Windows y Linux), la caja «Buscar en archivos…» de Archivos o la lupa del panel de proyecto. Busca en todo el proyecto, en la carpeta donde está la terminal o en la que elijas desde el clic derecho del árbol, con distinguir mayúsculas, palabra completa y expresión regular (de tiempo lineal: ningún patrón la cuelga). Los resultados van por archivo con la coincidencia resaltada, y Enter abre el archivo con esa coincidencia seleccionada. Respeta `.gitignore`, se salta binarios y archivos de más de 2 MB, y no lee los que solo están en iCloud u OneDrive (los descargaría); dice cuántos se saltó. Recuerda la última búsqueda y, si tenías texto seleccionado en la terminal, empieza con él.
+- ⌘P encuentra también carpetas (Enter busca dentro, ⌘Enter va ahí con `cd`), se limita a la carpeta de la terminal o a la que elijas, muestra primero lo último que abriste y entiende `archivo:línea` (`App.tsx:120`, como lo imprimen tsc y los linters). Trae la lista al día cada vez que lo abres: un archivo que un agente acaba de crear ya aparece. Tab cambia entre archivos y texto sin cerrar el buscador.
+- Pestañas en el visor: cada archivo abre la suya y cambiar de pestaña conserva lo no guardado, el cursor y el deshacer. ⌃Tab y ⌃⇧Tab las recorren, ⌘W cierra la que ves (con cambios, pregunta) y el clic central también. Esc vuelve a las terminales sin cerrarlas: siguen en «Abiertos», arriba de Archivos, con las que tienen cambios marcadas. Al reabrir termCode vuelven las pestañas (sin lo que no guardaste: al salir se pregunta).
+- El visor se acopla junto a las terminales (botón en su barra o «Visor junto a las terminales» en la paleta): ves el archivo, el diff o la salida de un comando y al agente que trabaja en él a la vez, y la terminal sigue a mano sin cerrarlo. El divisor se arrastra (← y → con el teclado, doble clic lo deja a la mitad) y se recuerda.
+- Vista previa de Markdown: README, notas y planes de los agentes se abren renderizados (títulos, tablas, listas de tareas, bloques de código con color e imágenes del proyecto), con «Texto» para editarlos (⇧⌘V alterna) y «Ambos» para editar con la vista previa al lado, que se actualiza mientras escribes. Los enlaces a otros archivos los abren en el visor (`#L12` incluido), los externos van al navegador y el HTML del archivo se muestra como texto, nunca se ejecuta.
+- Pegar capturas e imágenes con ⌘V (Ctrl+V en Windows y Linux): se guardan en un archivo y se pega su ruta, así Claude Code y Codex las adjuntan. Un archivo copiado en Finder o el Explorador pega su ruta, como en Terminal.app.
+- Clic derecho en el árbol de archivos: abrir, abrir en tu editor, buscar texto o archivos en esa carpeta, ir ahí con `cd`, pegar o copiar la ruta (absoluta o relativa) y mostrar en Finder. En las pestañas: cerrar, cerrar las demás o todas.
+
+### Corregido
+
+- El clic derecho fuera de la terminal y de los campos de texto mostraba el menú del webview, cuyo «Recargar» cerraba todas las terminales y agentes. Ya no aparece; donde hay algo útil que hacer, hay un menú propio. Además, la vista de la app ya no puede navegar a una página externa o a un archivo (un «Abrir enlace», un enlace arrastrado), que también las cerraba.
+- En la barra de cada terminal, con una ruta larga (p. ej. dentro de «Documentos - …’s MacBook Air»), los botones de dividir y cerrar aparecían encima de Claude Code, Codex y «terminal» al pasar el cursor, justo cuando ibas a hacer clic. Ahora tienen su propio sitio; en un panel angosto se juntan en «⋯», y el clic derecho en la barra trae las mismas acciones. La ruta se recorta por el principio (se ve dónde estás, `…/Personal/termCode`), cede antes que el nombre del panel y la rama ya no queda en una letra.
+- Guardar desde el visor un archivo con fin de línea CRLF lo convertía entero a LF.
+- Cambiar a una pestaña de terminal de otro repo con un archivo a medio editar en el visor descartaba los cambios sin preguntar. Y fuera de un repo, si la terminal se iba a otra carpeta con un archivo del mismo nombre, el visor podía guardar sobre ese otro archivo.
+- Recargar desde el disco un archivo CRLF con el cursor cerca del final fallaba en silencio y el visor se quedaba con el texto viejo.
+
 ## [0.6.0] - 2026-10-29
 
 ### Añadido

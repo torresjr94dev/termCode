@@ -131,6 +131,46 @@ export interface FilePreview {
   absolute: string;
 }
 
+export interface SearchOptions {
+  query: string;
+  caseSensitive: boolean;
+  wholeWord: boolean;
+  regex: boolean;
+  /** Carpeta dentro de la raíz (`""` = todo el proyecto). */
+  dir: string;
+}
+
+export interface LineMatch {
+  /** Empieza en 1. */
+  line: number;
+  /** Inicio de la coincidencia en la línea (UTF-16, como cuenta CodeMirror). */
+  column: number;
+  length: number;
+  /** La línea sin sangría (o un tramo, si es muy larga). */
+  preview: string;
+  /** Coincidencias dentro de `preview`: `[inicio, fin)`. */
+  ranges: Array<[number, number]>;
+}
+
+export interface FileMatches {
+  path: string;
+  matches: LineMatch[];
+  /** El archivo tiene más coincidencias que las devueltas. */
+  more: boolean;
+}
+
+export interface SearchResult {
+  files: FileMatches[];
+  total: number;
+  searched: number;
+  /** Se cortó: demasiadas coincidencias o se acabó el tiempo. */
+  truncated: boolean;
+  /** Otra búsqueda la reemplazó. */
+  cancelled: boolean;
+  /** Saltados sin leer: más de 2 MB o solo en la nube (iCloud). */
+  skipped: number;
+}
+
 export interface VerifyResult {
   /** `null`: no terminó (tiempo agotado o señal). */
   code: number | null;
@@ -203,6 +243,8 @@ export const gitApi = {
   writeFile: (root: string, path: string, content: string, expectedVersion: string | null) =>
     call<string>("fs_write", { root, path, content, expectedVersion }),
   fileVersion: (root: string, path: string) => call<string>("fs_version", { root, path }),
+  /** Texto dentro de los archivos. `id` creciente: una búsqueda nueva cancela la anterior. */
+  search: (root: string, query: SearchOptions, id: number) => call<SearchResult>("fs_search", { root, query, id }),
 };
 
 /** Cambio preparado (en el índice). */

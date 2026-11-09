@@ -2,6 +2,7 @@
 
 pub mod agents;
 mod approvals;
+mod clipboard;
 mod cloud;
 mod codex_status;
 mod editor;
@@ -14,6 +15,7 @@ mod proc;
 mod proctree;
 mod pty;
 mod quick;
+mod search;
 mod shell_integration;
 mod shells;
 mod ssh;
@@ -93,6 +95,20 @@ pub fn avoid_blank_webview() {
     }
 }
 
+/// Navigating the app's webview away (a stray «Open Link», a dragged URL)
+/// reloads the page, and that closes every terminal and agent. External links
+/// go to the browser through the opener plugin, never here.
+fn leaves_the_app(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "http" | "https" => !matches!(
+            url.host_str(),
+            Some("localhost" | "127.0.0.1" | "tauri.localhost" | "ipc.localhost")
+        ),
+        "file" | "data" | "javascript" | "vbscript" | "ftp" | "mailto" => true,
+        _ => false,
+    }
+}
+
 /// With `panic = "abort"` a panic takes every session down with it: make sure
 /// it reaches the log file first.
 fn install_panic_logger() {
@@ -120,6 +136,17 @@ pub fn run() {
                 .level(log::LevelFilter::Info)
                 .max_file_size(2 * 1024 * 1024)
                 .rotation_strategy(RotationStrategy::KeepSome(3))
+                .build(),
+        )
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("navigation-guard")
+                .on_navigation(|_, url| {
+                    let blocked = leaves_the_app(url);
+                    if blocked {
+                        log::warn!("navigation blocked: {}", url.scheme());
+                    }
+                    !blocked
+                })
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
@@ -212,6 +239,10 @@ pub fn run() {
             fs::fs_read_image,
             fs::fs_version,
             fs::fs_write,
+            search::fs_search,
+            clipboard::clipboard_files,
+            clipboard::clipboard_save_image,
+            clipboard::clipboard_image,
             editor::open_in_editor,
             editor::fs_existing_files,
             quick::quick_toggle,
@@ -252,6 +283,32 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use serde_json::Value;
+
+    #[test]
+    fn keeps_the_webview_on_the_app() {
+        let leaves = |u: &str| super::leaves_the_app(&tauri::Url::parse(u).unwrap());
+        // La app: macOS/Linux, Windows, el servidor de desarrollo.
+        for ok in [
+            "tauri://localhost/",
+            "http://tauri.localhost/index.html",
+            "https://tauri.localhost/",
+            "http://localhost:1420/",
+            "http://127.0.0.1:1420/src/main.tsx",
+            "about:blank",
+        ] {
+            assert!(!leaves(ok), "{ok}");
+        }
+        for bad in [
+            "https://github.com/x",
+            "http://evil.localhost.example.com/",
+            "file:///etc/passwd",
+            "data:text/html,<script>1</script>",
+            "javascript:alert(1)",
+            "mailto:a@b.c",
+        ] {
+            assert!(leaves(bad), "{bad}");
+        }
+    }
 
     /// Lo que cada sistema pone a su manera: vibrancy y barra superpuesta en
     /// macOS; Mica y sin marco en Windows; marco del sistema y opaca en Linux.

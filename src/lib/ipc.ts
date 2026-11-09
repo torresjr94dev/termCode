@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ApprovalDecision, ApprovalRequest } from "../store/approvalStore";
+import { IS_WINDOWS } from "./shortcuts";
 import type { AgentActivity, AgentAttention, AgentSessionEvent, AgentStatus, AgentsInfo, ProcessUsage, ShellInfo, SystemStats, UsageSnapshot } from "../types/layout";
 
 /** `false` en un navegador normal (p. ej. el harness de pruebas): todo se vuelve no-op. */
@@ -73,6 +74,18 @@ export const ipc = {
   onApprovalClosed: (handler: (closed: { id: string }) => void) => on("approval-closed", handler),
   paneSetTitle: (paneId: string, title: string) => call<void>("pane_set_title", { paneId, title }),
   setUnsaved: (unsaved: boolean) => call<void>("editor_set_unsaved", { unsaved }),
+  /** Rutas de lo copiado en Finder o el Explorador (vacío si no hay). */
+  clipboardFiles: () => call<string[]>("clipboard_files"),
+  /** Respaldo: la imagen del portapapeles del sistema, guardada (null si no hay). */
+  clipboardImage: async (): Promise<string | null> => {
+    if (!IS_TAURI) return null;
+    return invoke<string | null>("clipboard_image");
+  },
+  /** Guarda una imagen pegada y devuelve su ruta. Lanza un error legible. */
+  async saveClipboardImage(bytes: Uint8Array): Promise<string> {
+    if (!IS_TAURI) throw new Error("Solo disponible en la app de escritorio.");
+    return invoke<string>("clipboard_save_image", bytes);
+  },
   quitApp: () => call<void>("app_quit"),
   onQuitRequested: (handler: () => void) => on<null>("quit-requested", handler),
 };
@@ -80,6 +93,11 @@ export const ipc = {
 /** Comillas POSIX: rutas con espacios o comillas llegan intactas a la shell. */
 export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/** Una ruta lista para pegar en la shell del sistema (PowerShell en Windows). */
+export function quotePath(value: string): string {
+  return IS_WINDOWS ? powershellQuote(value) : shellQuote(value);
 }
 
 /**

@@ -220,6 +220,7 @@ function makePage(cdp) {
   const KEYS = {
     Enter: { code: "Enter", vk: 13 },
     Escape: { code: "Escape", vk: 27 },
+    Tab: { code: "Tab", vk: 9 },
     ArrowUp: { code: "ArrowUp", vk: 38 },
     ArrowDown: { code: "ArrowDown", vk: 40 },
     ArrowLeft: { code: "ArrowLeft", vk: 37 },
@@ -321,7 +322,19 @@ function makePage(cdp) {
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: to.x, y: to.y, button: "left", buttons: 0, clickCount: 1 });
   };
 
-  return { evaluate, run, waitFor, press, pressMod, shortcut, type, click, screenshot, wheel, dblclick, drag };
+  /** El ratón real sobre el centro de un elemento (dispara :hover, no un evento sintético). */
+  const hover = async (selector) => {
+    const box = await evaluate(`(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    })()`);
+    if (!box) throw new Error(`No encontré ${selector} para pasar el ratón`);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: box.x, y: box.y });
+  };
+
+  return { evaluate, run, waitFor, press, pressMod, shortcut, type, click, screenshot, wheel, dblclick, drag, hover };
 }
 
 /* ------------------------------------------------------------------ */
@@ -519,6 +532,211 @@ const TESTS = [
       await p.screenshot("buscador-cursor");
       await p.press("Escape");
       await p.waitFor(`!document.querySelector("#finder-results")`, "Esc cierra el buscador");
+      // Un agente crea un archivo: al reabrir ⌘P ya está (no espera a que caduque la caché).
+      await p.run(`
+        const { gitApi } = await mod("/src/lib/git.ts");
+        gitApi.files = async () => ["src/App.tsx", "src/lib/terminal-utils.ts", "src/terminal/TerminalManager.ts", "README.md", "src/nuevo-del-agente.ts"];`);
+      await p.shortcut("fileFinder");
+      await p.waitFor(`document.querySelectorAll('#finder-results [role="option"]').length === 5`, "el archivo nuevo aparece al reabrir");
+      await p.press("Escape");
+      await p.waitFor(`!document.querySelector("#finder-results")`, "Esc cierra el buscador");
+    },
+  },
+  {
+    name: "buscador-texto",
+    async run(p) {
+      await p.run(`
+        const { gitApi } = await mod("/src/lib/git.ts");
+        const { useProjectStore } = await mod("/src/store/projectStore.ts");
+        useProjectStore.setState({ cwd: "/repo-e2e", repo: null, viewer: null, fileTabs: [] });
+        window.__searches = [];
+        gitApi.files = async () => ["src/App.tsx", "src/lib/total.ts", "README.md"];
+        gitApi.read = async (_root, path) => ({ text: "const a = 1;\\nexport const total = a + 1;\\n", size: 40, truncated: false, binary: false, utf8: true, version: "v1", absolute: "/repo-e2e/" + path });
+        gitApi.search = async (_root, query, id) => {
+          window.__searches.push({ ...query, id });
+          return {
+            files: [
+              { path: "src/lib/total.ts", more: false, matches: [
+                { line: 2, column: 13, length: 5, preview: "export const total = a + 1;", ranges: [[13, 18]] },
+              ] },
+              { path: "README.md", more: false, matches: [
+                { line: 7, column: 3, length: 5, preview: "El total del mes", ranges: [[3, 8]] },
+              ] },
+            ],
+            total: 2, searched: 3, truncated: false, cancelled: false, skipped: 1,
+          };
+        };`);
+      await p.shortcut("searchText");
+      await p.waitFor(`document.querySelector('[role="dialog"][aria-label="Buscar en archivos"]')`, "⇧⌘F abre la búsqueda de texto");
+      await p.type("total");
+      await p.waitFor(`document.querySelectorAll('#finder-results [role="option"]').length === 2`, "lista las líneas que coinciden");
+      await p.waitFor(`document.querySelector('[role="status"]')?.textContent.includes("2 líneas en 2 archivos")`, "resume lo encontrado");
+      await p.waitFor(`document.querySelector('[role="status"]')?.textContent.includes("1 sin leer")`, "avisa de lo que no leyó (iCloud)");
+      await p.waitFor(`document.querySelector('#finder-results mark')?.textContent === "total"`, "resalta la coincidencia");
+      const last = await p.evaluate(`window.__searches[window.__searches.length - 1]`);
+      if (last.query !== "total" || last.dir !== "" || last.regex) throw new Error(`Búsqueda inesperada: ${JSON.stringify(last)}`);
+
+      // Opciones: expresión regular.
+      await p.evaluate(`[...document.querySelectorAll('button[aria-pressed]')].find((b) => b.title.startsWith("Expresión regular")).click(), true`);
+      await p.waitFor(`window.__searches.some((s) => s.regex)`, "con .* busca como expresión regular");
+      await p.evaluate(`[...document.querySelectorAll('button[aria-pressed]')].filter((b) => b.getAttribute("aria-pressed") === "true").forEach((b) => b.click()), true`);
+
+      // Enter abre el archivo en la línea con la coincidencia seleccionada.
+      await p.evaluate(`document.querySelector('[role="dialog"] input').focus(), true`);
+      await p.press("Enter");
+      await p.waitFor(`!document.querySelector("#finder-results")`, "Enter cierra el buscador");
+      await p.waitFor(`document.querySelector("[data-viewer] .cm-activeLine")?.textContent.includes("export const total")`, "abre en la línea de la coincidencia");
+      await p.waitFor(`document.querySelector('[data-viewer] [role="tab"][aria-selected="true"]')?.textContent.includes("total.ts")`, "en su pestaña");
+
+      // Tab cambia a archivos sin cerrar; Esc cierra.
+      await p.shortcut("searchText");
+      await p.waitFor(`document.querySelector('[role="dialog"] input')?.value === "total"`, "recuerda la última búsqueda");
+      await p.press("Tab");
+      await p.waitFor(`document.querySelector('[role="dialog"][aria-label="Buscar archivo"]')`, "Tab pasa a buscar archivos");
+      await p.press("Escape");
+      await p.waitFor(`!document.querySelector("#finder-results")`, "Esc cierra");
+      await p.run(`(await mod("/src/lib/project.ts")).closeFileTabs(["src/lib/total.ts"]);`);
+      await p.waitFor(`!document.querySelector("[data-viewer]")`, "sin pestañas, sin visor");
+    },
+  },
+  {
+    name: "pestanas-y-markdown",
+    async run(p) {
+      await p.run(`
+        const { gitApi } = await mod("/src/lib/git.ts");
+        const { useProjectStore } = await mod("/src/store/projectStore.ts");
+        const project = await mod("/src/lib/project.ts");
+        useProjectStore.setState({ cwd: "/repo-e2e", repo: null, viewer: null, fileTabs: [] });
+        const md = "# Guía\\n\\nVer [uso](#uso) y [código](../src/b.ts#L2).\\n\\n<script>window.__xss = 1</script>\\n\\n## Uso\\n\\n- [x] hecho\\n\\n\`\`\`ts\\nconst x = 1;\\n\`\`\`\\n";
+        gitApi.read = async (_root, path) => ({ text: path.endsWith(".md") ? md : "uno\\ndos\\ntres\\n", size: 50, truncated: false, binary: false, utf8: true, version: "v1", absolute: "/repo-e2e/" + path });
+        gitApi.fileVersion = async () => "v1";
+        await project.openFile("docs/GUIA.md");`);
+      await p.waitFor(`document.querySelector("[data-viewer] h1")?.textContent === "Guía"`, "el Markdown se abre renderizado");
+      await p.waitFor(`document.querySelector('[data-viewer] input[type="checkbox"]')?.checked === true`, "las tareas son casillas");
+      const xss = await p.evaluate(`window.__xss === undefined && !document.querySelector("[data-viewer] script") && document.querySelector("[data-viewer]").textContent.includes("<script>")`);
+      if (!xss) throw new Error("El HTML del Markdown no debe ejecutarse ni insertarse");
+      // Sobre un enlace no aparece el menú nativo («Abrir enlace» navegaría la vista y cerraría las terminales).
+      const linkMenu = await p.evaluate(`(() => {
+        const link = [...document.querySelectorAll("[data-viewer] a")].find((a) => a.textContent === "código");
+        const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+        link.dispatchEvent(ev);
+        return ev.defaultPrevented && !link.hasAttribute("href");
+      })()`);
+      if (!linkMenu) throw new Error("Un enlace del Markdown no debe ofrecer el menú nativo ni tener href");
+      // Un enlace relativo abre el archivo en su pestaña, en la línea del #L.
+      await p.click("[data-viewer] a", "código");
+      await p.waitFor(`document.querySelectorAll('[data-viewer] [role="tab"]').length === 2`, "abre una segunda pestaña");
+      await p.waitFor(`document.querySelector("[data-viewer] .cm-activeLine")?.textContent === "dos"`, "en la línea del enlace (#L2)");
+      // Volver a la pestaña del Markdown y pasar a texto.
+      await p.click('[data-viewer] [role="tab"]', "GUIA.md");
+      await p.waitFor(`document.querySelector("[data-viewer] h1")`, "vuelve renderizado");
+      await p.click("[data-viewer] button", "Texto");
+      await p.waitFor(`document.querySelector("[data-viewer] .cm-content")?.textContent.includes("# Guía")`, "Texto muestra el Markdown fuente");
+      // «Ambos»: texto y vista previa a la vez, y la vista sigue lo que escribes.
+      await p.click("[data-viewer] button", "Ambos");
+      await p.waitFor(`document.querySelector("[data-viewer] h1")?.textContent === "Guía" && document.querySelector("[data-viewer] .cm-content")`, "muestra el texto y la vista previa");
+      await p.evaluate(`document.querySelector("[data-viewer] .cm-content").focus(), true`);
+      await p.press("ArrowDown");
+      await p.type("## Nuevo título\n");
+      await p.waitFor(`[...document.querySelectorAll("[data-viewer] h2")].some((h) => h.textContent === "Nuevo título")`, "la vista previa se actualiza mientras escribes");
+      // ⌃Tab: a la otra pestaña.
+      await p.evaluate(`document.querySelector("[data-viewer] .cm-content").focus(), true`);
+      await p.press("Tab", 2);
+      await p.waitFor(`document.querySelector('[data-viewer] [role="tab"][aria-selected="true"]')?.textContent.includes("b.ts")`, "⌃Tab cambia de pestaña");
+      await p.run(`(await mod("/src/lib/project.ts")).closeFileTabs(["docs/GUIA.md", "src/b.ts"]);`);
+      await p.click("button", "Cerrar sin guardar");
+      await p.waitFor(`!document.querySelector("[data-viewer]")`, "cerrar todas cierra el visor");
+    },
+  },
+  {
+    name: "visor-acoplado",
+    async run(p) {
+      await p.run(`
+        const { gitApi } = await mod("/src/lib/git.ts");
+        const { useProjectStore } = await mod("/src/store/projectStore.ts");
+        const project = await mod("/src/lib/project.ts");
+        useProjectStore.setState({ cwd: "/repo-e2e", repo: null, viewer: null, fileTabs: [], viewerDock: { docked: false, width: 0.5 } });
+        gitApi.read = async (_root, path) => ({ text: "const a = 1;\\n", size: 13, truncated: false, binary: false, utf8: true, version: "v1", absolute: "/repo-e2e/" + path });
+        gitApi.fileVersion = async () => "v1";
+        await project.openFile("src/a.ts");`);
+      await p.waitFor(`document.querySelector("[data-viewer] .cm-content")`, "abre el archivo encima de las terminales");
+      const covers = await p.evaluate(`(() => {
+        const v = document.querySelector("[data-viewer]").getBoundingClientRect();
+        const t = document.querySelector(".xterm").getBoundingClientRect();
+        return v.left <= t.left + 1 && v.right >= t.right - 1;
+      })()`);
+      if (!covers) throw new Error("Sin acoplar, el visor va encima de las terminales");
+      await p.click('[data-viewer] button[aria-label="Ver junto a las terminales"]');
+      await p.waitFor(`(() => {
+        const v = document.querySelector("[data-viewer]").getBoundingClientRect();
+        const t = [...document.querySelectorAll(".xterm")].find((x) => x.offsetParent).getBoundingClientRect();
+        return t.right <= v.left && t.width > 200 && v.width > 200;
+      })()`, "acoplado, terminales y visor quedan lado a lado");
+      // Con el visor acoplado, la terminal se puede usar sin cerrarlo.
+      await p.evaluate(`[...document.querySelectorAll(".xterm textarea")].find((t) => t.offsetParent)?.focus(), true`);
+      await p.waitFor(`document.activeElement?.closest(".xterm") && document.querySelector("[data-viewer]")`, "la terminal toma el teclado y el visor sigue abierto");
+      // El divisor: ← agranda el visor, doble clic lo deja a la mitad.
+      await p.evaluate(`document.querySelector('[role="separator"][aria-label="Ancho del visor"]').focus(), true`);
+      await p.press("ArrowLeft");
+      await p.waitFor(`document.querySelector('[role="separator"][aria-label="Ancho del visor"]').getAttribute("aria-valuenow") === "55"`, "← agranda el visor");
+      await p.dblclick('[role="separator"][aria-label="Ancho del visor"]');
+      await p.waitFor(`document.querySelector('[role="separator"][aria-label="Ancho del visor"]').getAttribute("aria-valuenow") === "50"`, "doble clic: a la mitad");
+      await p.click('[data-viewer] button[aria-label="Ver encima de las terminales"]');
+      await p.waitFor(`!document.querySelector('[role="separator"][aria-label="Ancho del visor"]')`, "vuelve a ir encima");
+      await p.run(`(await mod("/src/lib/project.ts")).closeFileTabs(["src/a.ts"]);`);
+      await p.waitFor(`!document.querySelector("[data-viewer]")`, "se cierra");
+    },
+  },
+  {
+    name: "menu-contextual",
+    async run(p) {
+      await p.run(`
+        const { gitApi } = await mod("/src/lib/git.ts");
+        const { useProjectStore } = await mod("/src/store/projectStore.ts");
+        const project = await mod("/src/lib/project.ts");
+        gitApi.list = async (_root, path) => path === "" ? [
+          { name: "src", path: "src", isDir: true, size: 0, ignored: false },
+          { name: "README.md", path: "README.md", isDir: false, size: 10, ignored: false },
+        ] : [];
+        useProjectStore.setState({ cwd: "/repo-e2e", repo: null, viewer: null, isOpen: true, tab: "files", tree: {}, expanded: {} });
+        await project.loadDir("");`);
+      await p.waitFor(`[...document.querySelectorAll('[role="tree"] button')].some((b) => b.textContent.includes("README.md"))`, "el árbol lista los archivos");
+      // Fuera de campos de texto, el menú del webview («Recargar») no aparece.
+      const blocked = await p.evaluate(`(() => {
+        const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
+        document.querySelector("footer, [role='status'], header")?.dispatchEvent(ev);
+        return ev.defaultPrevented;
+      })()`);
+      if (!blocked) throw new Error("El menú nativo con «Recargar» debe quedar bloqueado");
+      const native = await p.evaluate(`(() => {
+        const input = document.createElement("input");
+        document.body.append(input);
+        const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+        input.dispatchEvent(ev);
+        input.remove();
+        return !ev.defaultPrevented;
+      })()`);
+      if (!native) throw new Error("En un campo de texto se conserva el menú nativo (Copiar, Pegar)");
+      // Clic derecho en una carpeta: menú propio con buscar dentro.
+      await p.evaluate(`(() => {
+        const row = [...document.querySelectorAll('[role="tree"] button')].find((b) => b.textContent.trim().startsWith("src"));
+        const r = row.getBoundingClientRect();
+        row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.left + 20, clientY: r.top + 5 }));
+        return true;
+      })()`);
+      await p.waitFor(`document.querySelector('[role="menu"][aria-label="Carpeta src"]')`, "abre el menú de la carpeta");
+      await p.press("ArrowDown");
+      await p.press("Escape");
+      await p.waitFor(`!document.querySelector('[role="menu"]')`, "Esc cierra el menú");
+      await p.evaluate(`(() => {
+        const row = [...document.querySelectorAll('[role="tree"] button')].find((b) => b.textContent.trim().startsWith("src"));
+        row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 300, clientY: 200 }));
+        return true;
+      })()`);
+      await p.click('[role="menu"] [role="menuitem"]', "Buscar texto en esta carpeta");
+      await p.waitFor(`document.querySelector('[role="dialog"][aria-label="Buscar en archivos"] [role="radio"][aria-checked="true"]')?.textContent === "src"`, "busca solo dentro de src");
+      await p.press("Escape");
+      await p.waitFor(`!document.querySelector("#finder-results")`, "Esc cierra");
     },
   },
   {
@@ -578,7 +796,7 @@ const TESTS = [
         const { gitApi } = await mod("/src/lib/git.ts");
         const { useProjectStore } = await mod("/src/store/projectStore.ts");
         const project = await mod("/src/lib/project.ts");
-        useProjectStore.setState({ cwd: "/repo-e2e", repo: null });
+        useProjectStore.setState({ cwd: "/repo-e2e", repo: null, viewer: null, fileTabs: [] });
         window.__writes = [];
         window.__failNext = false;
         gitApi.read = async (_root, path) => ({ text: "export const a = 1;\\n", size: 20, truncated: false, binary: false, utf8: true, version: "v1", absolute: "/repo-e2e/" + path });
@@ -609,12 +827,20 @@ const TESTS = [
       const forced = await p.waitFor(`window.__writes[1]`, "sobrescribe a sabiendas");
       if (forced.expected !== null) throw new Error("Sobrescribir debe ignorar la versión");
 
-      // Esc con cambios: pregunta antes de cerrar.
+      // Esc con cambios: vuelve a las terminales sin perder nada; la pestaña espera en «Abiertos».
       await p.type("y");
       await p.press("Escape");
-      await p.waitFor(`[...document.querySelectorAll("button")].some((b) => b.textContent.includes("Descartar cambios"))`, "pide confirmar");
-      await p.click("button", "Descartar cambios");
+      await p.waitFor(`!document.querySelector("[data-viewer]")`, "Esc cierra el visor sin preguntar");
+      await p.waitFor(`document.querySelector('section[aria-label="Archivos abiertos"]')?.textContent.includes("1 sin guardar")`, "la pestaña sigue con sus cambios");
+      await p.click('section[aria-label="Archivos abiertos"] button', "notas.ts");
+      await p.waitFor(`document.querySelector("[data-viewer] .cm-content")?.textContent.includes("xyexport const")`, "al volver, lo editado sigue ahí");
+      // ⌘W cierra la pestaña: con cambios, pregunta.
+      await p.evaluate(`document.querySelector("[data-viewer] .cm-content").focus(), true`);
+      await p.shortcut("closePane");
+      await p.waitFor(`[...document.querySelectorAll("button")].some((b) => b.textContent.includes("Cerrar sin guardar"))`, "pide confirmar");
+      await p.click("button", "Cerrar sin guardar");
       await p.waitFor(`!document.querySelector("[data-viewer]")`, "se cierra tras confirmar");
+      await p.waitFor(`!document.querySelector('section[aria-label="Archivos abiertos"]')`, "sin pestañas abiertas");
     },
   },
   {
@@ -1198,7 +1424,7 @@ const TESTS = [
       await p.waitFor(`document.querySelector('[data-pane-id="${id}"] button[aria-pressed]')`, "el botón de terminal está");
       const boxes = await p.evaluate(`(() => {
         const header = document.querySelector('[data-pane-id="${id}"] > div');
-        // Los botones que flotan al pasar el cursor se superponen a propósito: no cuentan.
+        // Todo cuenta, también los botones que aparecen al pasar el cursor: tienen su sitio.
         const items = [...header.children].filter((el) => el.offsetParent !== null && getComputedStyle(el).display !== "none" && getComputedStyle(el).position !== "absolute" && el.getBoundingClientRect().width > 0);
         const box = header.getBoundingClientRect();
         const rects = items.map((el) => ({ text: (el.innerText ?? "").trim(), left: Math.round(el.getBoundingClientRect().left), right: Math.round(el.getBoundingClientRect().right) }));
@@ -1305,6 +1531,72 @@ const TESTS = [
         const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
         const st = useTerminalStore.getState();
         st.closeTab(st.tabs.at(-1).id);`);
+    },
+  },
+  {
+    name: "barra-ruta-larga",
+    async run(p) {
+      // Una carpeta como «~/Documents/Documentos - Jorge’s MacBook Air/…»: la ruta se recorta,
+      // no los botones, y al pasar el cursor los de dividir no tapan Claude Code ni Codex.
+      await p.shortcut("newTab");
+      const id = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const { terminalManager } = await mod("/src/terminal/TerminalManager.ts");
+        const s = useTerminalStore.getState();
+        const id = s.tabs.find((t) => t.id === s.activeTabId).activePaneId;
+        for (let i = 0; i < 75 && !terminalManager.getTerminal(id); i++) await new Promise((r) => setTimeout(r, 40));
+        s.setAgents({ claude: "/x/claude", codex: "/x/codex", gh: null, editors: [], claudeSettingsPath: "/x/claude-settings.json", mcpConfigPath: null });
+        const inst = terminalManager.instances.get(id);
+        terminalManager.receiveForTesting(id, "\\x1b]7;file://h/Users/e2e/Documents/Documentos%20-%20Jorge%E2%80%99s%20MacBook%20Air/Development/Personal/un-proyecto-con-nombre-largo/termCode\\x07\\x1b]133;A\\x07% ");
+        await new Promise((resolve) => inst.term.write("", resolve));
+        return id;`);
+      const launcher = `[data-pane-id="${id}"] [data-pane-bar] button[aria-label="Abrir Codex CLI en este panel"]`;
+      await p.waitFor(`document.querySelector('${launcher}')`, "la barra ofrece los agentes");
+      await p.hover(`[data-pane-id="${id}"] [data-pane-bar]`);
+      await p.hover(launcher);
+      await p.waitFor(`getComputedStyle(document.querySelector('[data-pane-id="${id}"] [data-pane-bar] button[aria-label="Dividir a la derecha"]').closest(".pointer-events-none")).opacity === "1"`, "al pasar el cursor aparecen los controles del panel");
+      const reach = await p.evaluate(`(() => {
+        const bar = document.querySelector('[data-pane-id="${id}"] [data-pane-bar]');
+        const out = {};
+        for (const name of ["Claude Code", "Codex CLI"]) {
+          const b = bar.querySelector('button[aria-label="Abrir ' + name + ' en este panel"]');
+          const r = b.getBoundingClientRect();
+          const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          out[name] = Boolean(hit && b.contains(hit));
+        }
+        // La ruta se recorta por el principio: el final (dónde estás) se ve.
+        const path = bar.querySelector('[dir="rtl"]');
+        const text = path.firstElementChild.firstChild;
+        const range = document.createRange();
+        range.setStart(text, text.length - 8);
+        range.setEnd(text, text.length);
+        const tail = range.getBoundingClientRect();
+        const box = path.getBoundingClientRect();
+        out.truncated = path.scrollWidth > path.clientWidth;
+        // El nombre del panel no se recorta mientras la ruta tenga de dónde ceder.
+        const name = path.parentElement.previousElementSibling;
+        out.nameWhole = name.scrollWidth <= name.clientWidth;
+        out.tailVisible = tail.left >= box.left - 1 && tail.right <= box.right + 1;
+        return out;
+      })()`);
+      if (!reach["Claude Code"] || !reach["Codex CLI"]) throw new Error(`Los botones de agente quedan tapados: ${JSON.stringify(reach)}`);
+      if (!reach.tailVisible) throw new Error(`El final de la ruta debe verse: ${JSON.stringify(reach)}`);
+      if (!reach.nameWhole) throw new Error(`La ruta debe ceder antes que el nombre del panel: ${JSON.stringify(reach)}`);
+      await p.screenshot("barra-ruta-larga");
+      // Clic derecho en la barra: las mismas acciones en un menú.
+      await p.evaluate(`(() => {
+        const bar = document.querySelector('[data-pane-id="${id}"] [data-pane-bar]');
+        const r = bar.getBoundingClientRect();
+        bar.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.left + 40, clientY: r.top + 10 }));
+        return true;
+      })()`);
+      await p.waitFor(`[...document.querySelectorAll('[role="menu"] [role="menuitem"]')].some((b) => b.textContent.includes("Dividir a la derecha"))`, "el clic derecho trae las acciones del panel");
+      await p.press("Escape");
+      await p.waitFor(`!document.querySelector('[role="menu"]')`, "Esc cierra el menú");
+      await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const s = useTerminalStore.getState();
+        s.closeTab(s.activeTabId);`);
     },
   },
   {

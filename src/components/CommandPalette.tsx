@@ -48,7 +48,7 @@ import { describeServer, sshAliasCommand, sshServerCommand } from "../lib/ssh";
 import { copyWorkspaceTemplate, openWorkspace } from "../lib/workspace";
 import { useSidebarStore } from "../store/sidebarStore";
 import { actions, AGENTS } from "../lib/actions";
-import { commit, generateCommitMessage, openBranchPicker, openProject, pull, push, reviewAgent, stashPush } from "../lib/project";
+import { commit, generateCommitMessage, openBranchPicker, openProject, pull, push, reviewAgent, stashPush, toggleViewerDock } from "../lib/project";
 import { useUiStore } from "../store/uiStore";
 import { collectPanes as panesOf } from "../lib/layout";
 import { useProjectStore } from "../store/projectStore";
@@ -100,6 +100,7 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const sshHosts = useSidebarStore((s) => s.sshHosts);
   const servers = useSidebarStore((s) => s.servers);
   const repo = useProjectStore((s) => s.repo);
+  const viewerDocked = useProjectStore((s) => s.viewerDock.docked);
   const activePaneId = tabs.find((t) => t.id === activeTabId)?.activePaneId;
 
   const commands = useMemo<Command[]>(
@@ -163,7 +164,16 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
       { id: "workspace-open", group: "Proyecto", title: "Abrir workspace del proyecto", hint: ".termcode.json", icon: LayoutTemplate, run: () => void openWorkspace() },
       { id: "workspace-template", group: "Proyecto", title: "Copiar plantilla de .termcode.json", hint: "paneles del proyecto ya armados", icon: LayoutTemplate, run: () => void copyWorkspaceTemplate() },
-      { id: "find-file", group: "Proyecto", title: "Buscar archivo…", icon: FileSearch, shortcut: sc("fileFinder"), run: () => useUiStore.getState().setFinderOpen(true) },
+      { id: "find-file", group: "Proyecto", title: "Buscar archivo…", hint: "o carpeta", icon: FileSearch, shortcut: sc("fileFinder"), run: () => useUiStore.getState().openFinder({ mode: "files" }) },
+      {
+        id: "viewer-dock",
+        group: "Vista",
+        title: viewerDocked ? "Visor encima de las terminales" : "Visor junto a las terminales",
+        hint: "archivos y diffs lado a lado",
+        icon: Columns2,
+        run: toggleViewerDock,
+      },
+      { id: "find-text", group: "Proyecto", title: "Buscar en archivos…", hint: "texto dentro del proyecto", icon: TextSearch, shortcut: sc("searchText"), run: () => useUiStore.getState().openFinder({ mode: "text" }) },
 
       ...(repo
         ? ([
@@ -221,7 +231,7 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         run: () => actions.goToTab(index),
       })),
     ],
-    [tabs, activeTabId, activePaneId, isBroadcastEnabled, isSidebarOpen, fontSize, agents, shells, sshHosts, servers, repo, currentTheme],
+    [tabs, activeTabId, activePaneId, isBroadcastEnabled, isSidebarOpen, fontSize, agents, shells, sshHosts, servers, repo, currentTheme, viewerDocked],
   );
 
   const filtered = useMemo(() => {

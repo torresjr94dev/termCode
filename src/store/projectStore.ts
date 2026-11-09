@@ -33,6 +33,50 @@ export type DiffSource =
       paneId?: string;
     };
 
+export interface ViewerDock {
+  docked: boolean;
+  width: number;
+}
+
+/** Ancho del visor acoplado: ni las terminales ni el archivo quedan inservibles. */
+export const DOCK_MIN = 0.25;
+export const DOCK_MAX = 0.75;
+export const clampDock = (width: number) => (Number.isFinite(width) ? Math.min(DOCK_MAX, Math.max(DOCK_MIN, width)) : 0.5);
+
+/** Lo que vuelve del disco al arrancar: solo pestañas con forma válida (rutas relativas sin `..`), sin cambios. */
+export function sanitizeFileTabs(value: unknown, limit = 60): FileTab[] {
+  if (!Array.isArray(value)) return [];
+  const out: FileTab[] = [];
+  for (const raw of value) {
+    if (out.length >= limit) break;
+    const tab = raw as Partial<FileTab> | null;
+    if (typeof tab?.root !== "string" || typeof tab.path !== "string") continue;
+    if (!/^(\/|[A-Za-z]:[\\/])/.test(tab.root) || tab.root.length > 4096) continue;
+    const parts = tab.path.split("/");
+    if (!tab.path || tab.path.length > 4096 || tab.path.includes("\0") || parts.some((p) => !p || p === "." || p === "..")) continue;
+    if (out.some((t) => t.root === tab.root && t.path === tab.path)) continue;
+    const markdown = tab.markdown === "preview" || tab.markdown === "split" || tab.markdown === "source" ? tab.markdown : undefined;
+    out.push({ root: tab.root, path: tab.path, dirty: false, markdown });
+  }
+  return out;
+}
+
+export function sanitizeViewerDock(value: unknown): ViewerDock {
+  const dock = value as Partial<ViewerDock> | null;
+  return { docked: dock?.docked === true, width: clampDock(typeof dock?.width === "number" ? dock.width : 0.5) };
+}
+
+/** Un archivo abierto en el visor (pestaña). */
+export interface FileTab {
+  /** Raíz del proyecto en que se abrió: cada repo ve las suyas. */
+  root: string;
+  path: string;
+  /** Cambios sin guardar (en el editor visible o en el que espera en otra pestaña). */
+  dirty: boolean;
+  /** Markdown: renderizado, el texto o ambos lado a lado. */
+  markdown?: "preview" | "split" | "source";
+}
+
 export type Viewer =
   | {
       kind: "diff";
@@ -47,6 +91,11 @@ export type Viewer =
       kind: "file";
       path: string;
       line?: number;
+      /** Coincidencia que seleccionar en `line` (UTF-16, como cuenta CodeMirror). */
+      column?: number;
+      length?: number;
+      /** Cambia en cada salto pedido (aunque sea a la misma línea). */
+      jump?: number;
       preview?: FilePreview;
       /** Imágenes: blob URL con los bytes (se libera al cerrar o cambiar de archivo). */
       image?: { url: string; bytes: number };
@@ -103,6 +152,13 @@ interface ProjectState {
   draftBeforeAmend: string;
   busy: Busy;
   viewer: Viewer | null;
+  /** Pestañas del visor, de todos los repos (la barra muestra las de la raíz actual). */
+  fileTabs: FileTab[];
+  /**
+   * El visor junto a las terminales (lado a lado) en vez de encima. `width`:
+   * fracción del área que ocupa el visor.
+   */
+  viewerDock: ViewerDock;
   isPrDialogOpen: boolean;
   isBranchPickerOpen: boolean;
   /** Comentarios por línea aún sin mandar (sobreviven a cerrar el visor). */
@@ -143,6 +199,8 @@ export const useProjectStore = create<ProjectState>((set) => ({
   amendBase: null,
   draftBeforeAmend: "",
   busy: null,
+  fileTabs: [],
+  viewerDock: { docked: false, width: 0.5 },
   isPrDialogOpen: false,
   isBranchPickerOpen: false,
   notes: [],

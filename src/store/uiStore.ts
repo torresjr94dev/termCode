@@ -1,5 +1,38 @@
 import { create } from "zustand";
+import type { LucideIcon } from "lucide-react";
 import type { DropZone } from "../lib/layout";
+
+/** Una opción del menú contextual propio (el del webview traía «Recargar», que mata todas las terminales). */
+export type MenuItem =
+  | {
+      label: string;
+      icon?: LucideIcon;
+      /** Atajo o dato a la derecha. */
+      hint?: string;
+      onSelect: () => void;
+      disabled?: boolean;
+    }
+  | "separator";
+
+export interface ContextMenuRequest {
+  /** Coordenadas del clic (CSS, relativas a la ventana). */
+  x: number;
+  y: number;
+  /** Para lectores de pantalla: de qué es el menú. */
+  label: string;
+  items: MenuItem[];
+}
+
+/** Qué busca el buscador: nombres de archivo o texto dentro de ellos. */
+export type FinderMode = "files" | "text";
+
+export interface FinderRequest {
+  mode: FinderMode;
+  /** Carpeta a la que se limita (relativa a la raíz del proyecto); `undefined` = la que tenga elegida. */
+  dir?: string;
+  /** Texto con el que empieza (p. ej. lo seleccionado en la terminal). */
+  query?: string;
+}
 
 export interface ConfirmRequest {
   title: string;
@@ -23,7 +56,9 @@ interface UiState {
   isSettingsOpen: boolean;
   isOverviewOpen: boolean;
   isMissionOpen: boolean;
-  isFinderOpen: boolean;
+  /** El buscador (⌘P archivos, ⌘⇧F texto) abierto y con qué. */
+  finder: FinderRequest | null;
+  contextMenu: ContextMenuRequest | null;
   /** Detalle del sistema (CPU, GPU, memoria, procesos) sobre la barra de estado. */
   isSystemOpen: boolean;
   /** Diálogo de servidor SSH: nuevo o editar uno guardado. */
@@ -43,7 +78,10 @@ interface UiState {
   setSettingsOpen: (open: boolean) => void;
   setOverviewOpen: (open: boolean) => void;
   setMissionOpen: (open: boolean) => void;
-  setFinderOpen: (open: boolean) => void;
+  openFinder: (request: FinderRequest) => void;
+  closeFinder: () => void;
+  openContextMenu: (request: ContextMenuRequest) => void;
+  closeContextMenu: () => void;
   setSystemOpen: (open: boolean) => void;
   setSshDialog: (dialog: { id?: string } | null) => void;
   setShowHints: (show: boolean) => void;
@@ -70,7 +108,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   isSettingsOpen: false,
   isOverviewOpen: false,
   isMissionOpen: false,
-  isFinderOpen: false,
+  finder: null,
+  contextMenu: null,
   isSystemOpen: false,
   sshDialog: null,
   showHints: false,
@@ -84,7 +123,12 @@ export const useUiStore = create<UiState>((set, get) => ({
   setSettingsOpen: (open) => set({ isSettingsOpen: open }),
   setOverviewOpen: (open) => set({ isOverviewOpen: open }),
   setMissionOpen: (open) => set({ isMissionOpen: open }),
-  setFinderOpen: (open) => set({ isFinderOpen: open }),
+  openFinder: (request) => set({ finder: request, contextMenu: null }),
+  closeFinder: () => set({ finder: null }),
+  openContextMenu: (request) => set({ contextMenu: request }),
+  closeContextMenu: () => {
+    if (get().contextMenu) set({ contextMenu: null });
+  },
   setSystemOpen: (open) => set({ isSystemOpen: open }),
   setSshDialog: (dialog) => set({ sshDialog: dialog }),
   setShowHints: (show) => {

@@ -13,6 +13,8 @@ import { PrDialog } from "./components/project/PrDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { MissionControl } from "./components/MissionControl";
 import { FileFinder } from "./components/FileFinder";
+import { ContextMenu } from "./components/ContextMenu";
+import { toggleFinder } from "./lib/finder";
 import { Overview } from "./components/Overview";
 import { ShortcutHints } from "./components/ShortcutHints";
 import { Welcome } from "./components/Welcome";
@@ -25,9 +27,10 @@ import { useUiStore } from "./store/uiStore";
 import { settingsNow } from "./store/settingsStore";
 import { terminalManager } from "./terminal/TerminalManager";
 import { actions } from "./lib/actions";
-import { closeViewer, hasUnsavedEdits, openBranchPicker, openProject } from "./lib/project";
+import { closeActiveFileTab, hasUnsavedEdits, openBranchPicker, openProject, unsavedTabs } from "./lib/project";
 import { ipc } from "./lib/ipc";
-import { IS_TAURI, shellQuote } from "./lib/ipc";
+import { IS_TAURI, quotePath } from "./lib/ipc";
+import { pasteFromClipboard } from "./lib/clipboardPaste";
 import { collectPanes } from "./lib/layout";
 import { IS_MAC, matchShortcut, matchTabIndex, type ShortcutId } from "./lib/shortcuts";
 
@@ -54,7 +57,8 @@ const SHORTCUT_HANDLERS: Record<Exclude<ShortcutId, "palette">, () => unknown> =
   settings: actions.openSettings,
   overview: () => useUiStore.getState().setOverviewOpen(!useUiStore.getState().isOverviewOpen),
   missionControl: () => useUiStore.getState().setMissionOpen(!useUiStore.getState().isMissionOpen),
-  fileFinder: () => useUiStore.getState().setFinderOpen(!useUiStore.getState().isFinderOpen),
+  fileFinder: () => toggleFinder("files"),
+  searchText: () => toggleFinder("text"),
   switchBranch: openBranchPicker,
   nextAttention: actions.focusNextAttention,
   agentShell: () => actions.toggleAgentShell(),
@@ -78,8 +82,10 @@ function isBrowserAccelerator(e: KeyboardEvent): boolean {
 }
 
 function focusActivePane() {
-  // El visor tapa las terminales: el teclado se queda en él (Esc lo cierra, ⌘F busca).
-  if (useProjectStore.getState().viewer) return;
+  // El visor encima de las terminales se queda con el teclado (Esc lo cierra, ⌘F busca);
+  // acoplado a su lado, las terminales siguen a mano.
+  const { viewer, viewerDock } = useProjectStore.getState();
+  if (viewer && !viewerDock.docked) return;
   const { tabs, activeTabId } = useTerminalStore.getState();
   const tab = tabs.find((t) => t.id === activeTabId);
   if (tab) terminalManager.focus(tab.activePaneId);
@@ -113,7 +119,7 @@ function useFileDrop() {
         if (payload.type === "drop") {
           setDropPane(null);
           if (!paneId || !payload.paths.length) return;
-          terminalManager.paste(paneId, `${payload.paths.map(shellQuote).join(" ")} `);
+          terminalManager.paste(paneId, `${payload.paths.map(quotePath).join(" ")} `);
           useTerminalStore.getState().setActivePane(paneId);
         } else {
           setDropPane(paneId);
@@ -132,6 +138,41 @@ function useFileDrop() {
   }, []);
 }
 
+/**
+ * El menú del clic derecho del webview no sirve en una app: fuera de los
+ * campos de texto solo trae «Recargar» (cierra todas las terminales y agentes)
+ * y, sobre un enlace, «Abrir enlace» (saca a la app de su página). Se quita
+ * ahí; donde hay algo que hacer, cada componente abre el suyo (ContextMenu).
+ * Se conserva en campos de texto, el editor y la terminal (Copiar, Pegar) y
+ * sobre texto seleccionado (Copiar). En desarrollo, Shift+clic derecho lo
+ * muestra igual (Inspeccionar elemento).
+ */
+function useNativeMenuGuard() {
+  useEffect(() => {
+    const onContextMenu = (e: MouseEvent) => {
+      if (e.defaultPrevented || (import.meta.env.DEV && e.shiftKey)) return;
+      const target = e.target instanceof Element ? e.target : null;
+      // Sobre un enlace el menú nativo trae «Abrir enlace», que navega la vista: nunca.
+      const onLink = Boolean(target?.closest("a[href]"));
+      if (!onLink && target?.closest("input, textarea, [contenteditable]:not([contenteditable='false']), .cm-editor, .xterm")) return;
+      const selection = window.getSelection();
+      if (!onLink && target && selection && !selection.isCollapsed && selection.toString().trim() && selection.containsNode(target, true)) return;
+      e.preventDefault();
+      useUiStore.getState().closeContextMenu();
+    };
+    window.addEventListener("contextmenu", onContextMenu);
+    return () => window.removeEventListener("contextmenu", onContextMenu);
+  }, []);
+}
+
+/** Pegar capturas y archivos copiados (xterm solo sabe pegar texto). */
+function useRichPaste() {
+  useEffect(() => {
+    terminalManager.setRichPasteHandler((paneId, clip) => void pasteFromClipboard(paneId, clip));
+    return () => terminalManager.setRichPasteHandler(null);
+  }, []);
+}
+
 /** Cerrar la ventana o salir con un archivo sin guardar: se pregunta antes. */
 function useQuitGuard() {
   useEffect(() => {
@@ -143,9 +184,10 @@ function useQuitGuard() {
           void ipc.quitApp();
           return;
         }
+        const pending = unsavedTabs().map((t) => t.path);
         useUiStore.getState().askConfirm({
           title: "¿Salir sin guardar?",
-          body: "Hay un archivo con cambios sin guardar en el visor. Si sales ahora, se pierden.",
+          body: `${pending.length === 1 ? "Hay un archivo" : `Hay ${pending.length} archivos`} con cambios sin guardar en el visor (${pending.join(", ")}). Si sales ahora, se pierden.`,
           confirmLabel: "Salir sin guardar",
           onConfirm: () => void ipc.quitApp(),
         });
@@ -170,6 +212,8 @@ export const App: React.FC = () => {
   const isBroadcastEnabled = useTerminalStore((s) => s.isBroadcastEnabled);
 
   useFileDrop();
+  useRichPaste();
+  useNativeMenuGuard();
   useQuitGuard();
 
   const closePalette = useCallback(() => {
@@ -209,12 +253,12 @@ export const App: React.FC = () => {
       }
       // Con la paleta o un diálogo abiertos, el resto de atajos no debe actuar a ciegas.
       if (ui.isPaletteOpen || ui.confirm || ui.isSettingsOpen || !settingsNow().onboardingDone) return;
-      if (ui.isFinderOpen && shortcut !== "fileFinder") return;
+      if (ui.finder && shortcut !== "fileFinder" && shortcut !== "searchText") return;
       if (ui.isOverviewOpen && shortcut !== "overview") return;
       if (ui.isMissionOpen && shortcut !== "missionControl") return;
 
-      // ⌘W con un archivo abierto cierra el archivo, no el panel que está debajo.
-      if (shortcut === "closePane" && target?.closest("[data-viewer]")) closeViewer();
+      // ⌘W en el visor cierra la pestaña del archivo, no el panel que está debajo.
+      if (shortcut === "closePane" && target?.closest("[data-viewer]")) closeActiveFileTab();
       // ⌘W en la terminal acoplada la cierra a ella, no al agente de arriba.
       else if (shortcut === "closePane" && target?.closest("[data-drawer]")) {
         const paneId = target.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId;
@@ -250,20 +294,22 @@ export const App: React.FC = () => {
         {/* Las tarjetas (terminales, visor, proyecto) flotan sobre el vidrio con 8 px de aire. */}
         <div className="flex min-h-0 flex-1 gap-2 px-2">
           {/* Sin fondo propio: cada panel pinta el suyo (con glass, un solo velo sobre el escritorio). */}
-          <main className="relative min-w-0 flex-1">
-            {tabs.map((tab) => (
-              <div key={tab.id} hidden={tab.id !== activeTabId} className="absolute inset-0">
-                <SplitView node={tab.root} activePaneId={tab.activePaneId} zoomedPaneId={tab.zoomedPaneId} />
-              </div>
-            ))}
-            {/* Broadcast es peligroso: el marco rojo no se puede pasar por alto */}
-            {isBroadcastEnabled && (
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0 z-20 rounded-xl shadow-[inset_0_0_0_1.5px_var(--color-signal)]"
-              />
-            )}
-            {/* Diffs y vistas previas se abren sobre las terminales; el panel queda a mano */}
+          <main className="relative flex min-w-0 flex-1">
+            <div className="relative min-w-0 flex-1">
+              {tabs.map((tab) => (
+                <div key={tab.id} hidden={tab.id !== activeTabId} className="absolute inset-0">
+                  <SplitView node={tab.root} activePaneId={tab.activePaneId} zoomedPaneId={tab.zoomedPaneId} />
+                </div>
+              ))}
+              {/* Broadcast es peligroso: el marco rojo no se puede pasar por alto */}
+              {isBroadcastEnabled && (
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 z-20 rounded-xl shadow-[inset_0_0_0_1.5px_var(--color-signal)]"
+                />
+              )}
+            </div>
+            {/* Diffs, archivos y salidas: encima de las terminales o acoplados a su lado. */}
             <Viewer />
           </main>
           <ProjectPanel />
@@ -284,6 +330,7 @@ export const App: React.FC = () => {
       <ApprovalTray />
       <SystemPopover />
       <SshDialog onClosed={focusActivePane} />
+      <ContextMenu />
       <ConfirmDialog onSettled={focusActivePane} />
       <ToastHost />
     </div>

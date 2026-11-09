@@ -5,7 +5,7 @@ import { QuickApp } from "./QuickApp";
 import { loadSettings, startSettingsSync } from "./lib/settings";
 import { startUpdateChecks } from "./lib/updates";
 import { useTerminalStore } from "./store/terminalStore";
-import { useProjectStore } from "./store/projectStore";
+import { sanitizeFileTabs, sanitizeViewerDock, useProjectStore } from "./store/projectStore";
 import { startBridge } from "./lib/bridge";
 import { IS_MAC, IS_WINDOWS } from "./lib/shortcuts";
 import { startProjectTracking } from "./lib/project";
@@ -74,6 +74,9 @@ async function boot(root: HTMLElement) {
   ]);
   if (session) useTerminalStore.getState().hydrate(session);
   if (session?.isProjectOpen !== undefined) useProjectStore.getState().set({ isOpen: session.isProjectOpen });
+  // Las pestañas del visor vuelven cerradas (el visor no tapa nada al arrancar) y sin cambios.
+  if (session?.fileTabs?.length) useProjectStore.getState().set({ fileTabs: sanitizeFileTabs(session.fileTabs) });
+  if (session?.viewerDock) useProjectStore.getState().set({ viewerDock: sanitizeViewerDock(session.viewerDock) });
   // Antes del primer render: los paneles restaurados se pintan con lo que tenían.
   if (session) await loadBuffers();
 
