@@ -666,12 +666,16 @@ const TESTS = [
         return v.left <= t.left + 1 && v.right >= t.right - 1;
       })()`);
       if (!covers) throw new Error("Sin acoplar, el visor va encima de las terminales");
+      await p.evaluate(`(document.querySelector("[data-viewer] .cm-editor").__antes = true)`);
       await p.click('[data-viewer] button[aria-label="Ver junto a las terminales"]');
       await p.waitFor(`(() => {
         const v = document.querySelector("[data-viewer]").getBoundingClientRect();
         const t = [...document.querySelectorAll(".xterm")].find((x) => x.offsetParent).getBoundingClientRect();
         return t.right <= v.left && t.width > 200 && v.width > 200;
       })()`, "acoplado, terminales y visor quedan lado a lado");
+      // Acoplarlo no rehace el editor (si lo rehiciera, al crearse le quitaría el foco a la terminal).
+      const same = await p.evaluate(`document.querySelector("[data-viewer] .cm-editor")?.__antes === true`);
+      if (!same) throw new Error("Acoplar el visor no debe volver a crear el editor");
       // Con el visor acoplado, la terminal se puede usar sin cerrarlo.
       await p.evaluate(`[...document.querySelectorAll(".xterm textarea")].find((t) => t.offsetParent)?.focus(), true`);
       await p.waitFor(`document.activeElement?.closest(".xterm") && document.querySelector("[data-viewer]")`, "la terminal toma el teclado y el visor sigue abierto");

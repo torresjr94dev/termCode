@@ -378,7 +378,15 @@ mod tests {
         let conn = platform::Conn(&a);
         assert!(!conn.closed());
         drop(b);
-        assert!(conn.closed());
+        // El EOF del otro extremo puede tardar un instante en verse con el sistema cargado
+        // (corría ~1 de cada 25 veces): quien lo usa pregunta de nuevo, así que se espera con plazo.
+        let closed = (0..100).any(|_| {
+            conn.closed() || {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                false
+            }
+        });
+        assert!(closed);
     }
 
     #[test]

@@ -4,6 +4,8 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ## [Sin publicar]
 
+## [0.7.0] - 2026-11-09
+
 ### Añadido
 
 - Buscar texto dentro de los archivos: ⇧⌘F (Ctrl+Shift+Alt+F en Windows y Linux), la caja «Buscar en archivos…» de Archivos o la lupa del panel de proyecto. Busca en todo el proyecto, en la carpeta donde está la terminal o en la que elijas desde el clic derecho del árbol, con distinguir mayúsculas, palabra completa y expresión regular (de tiempo lineal: ningún patrón la cuelga). Los resultados van por archivo con la coincidencia resaltada, y Enter abre el archivo con esa coincidencia seleccionada. Respeta `.gitignore`, se salta binarios y archivos de más de 2 MB, y no lee los que solo están en iCloud u OneDrive (los descargaría); dice cuántos se saltó. Recuerda la última búsqueda y, si tenías texto seleccionado en la terminal, empieza con él.
