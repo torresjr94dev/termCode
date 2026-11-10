@@ -8,6 +8,10 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 - Capturas en el README: la vista principal, Mission Control, la bandeja de aprobaciones, revisar cambios y consumo. Son de datos de demostración y `pnpm capturas` las regenera (a 2x, en WebP) cuando cambia la interfaz.
 
+### Modificado
+
+- Claude Code y Codex se muestran con su logo en lugar del asterisco y el hexágono: en las pestañas, la barra lateral, la barra de cada panel, Mission Control, el consumo, la paleta y los botones para abrirlos. Van en el color del texto, así que en las pestañas siguen tomando el tono de su proyecto.
+
 ### Corregido
 
 - En Windows, al cambiar a una pestaña con un agente (Claude Code o Codex) que abrió termCode, el panel de proyecto se quedaba en la carpeta de la pestaña anterior. Windows no le dice a termCode en qué carpeta está un proceso y el agente no la anuncia como la shell; ahora se usa la carpeta donde se abrió el agente, que no cambia.

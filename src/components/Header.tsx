@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Asterisk, Bell, Check, ChevronDown, GitBranch, Hexagon, Maximize2, PanelLeft, Plus, Search, Settings, X } from "lucide-react";
+import { Bell, Check, ChevronDown, GitBranch, Maximize2, PanelLeft, Plus, Search, Settings, X } from "lucide-react";
+import { ClaudeCodeLogo, CodexLogo } from "./agentLogos";
 import { usePaneAgent, useTerminalStore } from "../store/terminalStore";
 import { useProjectStore } from "../store/projectStore";
 import { useApprovalStore } from "../store/approvalStore";
@@ -194,8 +195,8 @@ const UsageButton: React.FC = () => {
   const now = useNow(30_000);
 
   const readings = [
-    { icon: Asterisk, name: "Claude", ...headline(usage.claude, now) },
-    { icon: Hexagon, name: "Codex", ...headline(usage.codex, now) },
+    { icon: ClaudeCodeLogo, name: "Claude", ...headline(usage.claude, now) },
+    { icon: CodexLogo, name: "Codex", ...headline(usage.codex, now) },
   ];
 
   return (

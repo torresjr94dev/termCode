@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ArrowRight, Asterisk, Hexagon, RefreshCw, X, type LucideIcon } from "lucide-react";
+import { ArrowRight, RefreshCw, X, type LucideIcon } from "lucide-react";
+import { ClaudeCodeLogo, CodexLogo } from "./agentLogos";
 import { useTerminalStore } from "../store/terminalStore";
 import { actions, AGENTS, type AgentKind } from "../lib/actions";
 import { formatAgo, formatTokens, formatUntil } from "../lib/format";
@@ -84,8 +85,8 @@ const UsagePanel: React.FC<UsagePopoverProps> = ({ onClose }) => {
         </div>
 
         <div className="flex flex-col gap-2 px-2 pb-2">
-          <ProviderCard icon={Asterisk} agent="claude" data={usage.claude} now={now} onLaunch={() => launch("claude")} />
-          <ProviderCard icon={Hexagon} agent="codex" data={usage.codex} now={now} onLaunch={() => launch("codex")} />
+          <ProviderCard icon={ClaudeCodeLogo} agent="claude" data={usage.claude} now={now} onLaunch={() => launch("claude")} />
+          <ProviderCard icon={CodexLogo} agent="codex" data={usage.codex} now={now} onLaunch={() => launch("codex")} />
         </div>
       </div>
     </div>

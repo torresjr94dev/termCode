@@ -1,5 +1,6 @@
 import React, { useLayoutEffect, useRef } from "react";
-import { Asterisk, Hexagon, SquareTerminal, type LucideIcon } from "lucide-react";
+import { SquareTerminal, type LucideIcon } from "lucide-react";
+import { ClaudeCodeLogo, CodexLogo } from "./agentLogos";
 import type { PaneNode } from "../types/layout";
 import { cn } from "../lib/layout";
 
@@ -78,8 +79,8 @@ interface AgentGlyphProps {
 /** Icono del tipo de panel. Componente estable (no se crea uno nuevo en cada render). */
 export const AgentGlyph: React.FC<AgentGlyphProps> = ({ agentType, className }) => {
   const props = { size: 13, strokeWidth: 1.75, "aria-hidden": true, className } as const;
-  if (agentType === "claude") return <Asterisk {...props} />;
-  if (agentType === "codex") return <Hexagon {...props} />;
+  if (agentType === "claude") return <ClaudeCodeLogo {...props} />;
+  if (agentType === "codex") return <CodexLogo {...props} />;
   return <SquareTerminal {...props} />;
 };
 
