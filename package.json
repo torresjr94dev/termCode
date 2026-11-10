@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "e2e": "node e2e/run.mjs",
+    "capturas": "node e2e/capturas.mjs",
     "check": "pnpm typecheck && pnpm lint && pnpm test"
   },
   "dependencies": {
