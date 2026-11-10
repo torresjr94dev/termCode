@@ -275,13 +275,36 @@ export function makePage(cdp) {
   };
 
   /** Rueda del ratón real (no un evento sintético de la página) en el centro de un elemento. */
+  /**
+   * La caja de un elemento cuando deja de moverse (igual en dos frames seguidos). El layout
+   * puede ir detrás del DOM: en el runner de CI, tras cambiar el ancho del visor, la caja
+   * siguió en el ancho viejo ~50 ms con el estilo ya nuevo, y un clic medido antes caía al lado.
+   */
+  const settledBox = async (selector, text) => {
+    const read = `new Promise((resolve) => {
+      const measure = () => {
+        const els = [...document.querySelectorAll(${JSON.stringify(selector)})];
+        const el = ${text ? `els.find((e) => e.textContent.trim().includes(${JSON.stringify(text)}))` : "els[0]"};
+        if (!el) return resolve(null);
+        const r = el.getBoundingClientRect();
+        resolve({ left: r.left, top: r.top, width: r.width, height: r.height });
+      };
+      // Dos frames; si la página no pinta (headless la marca oculta a veces), igual mide.
+      const timer = setTimeout(measure, 100);
+      requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(timer); measure(); }));
+    })`;
+    let last = await evaluate(read);
+    for (let i = 0; i < 40 && last; i++) {
+      const box = await evaluate(read);
+      if (box && box.left === last.left && box.top === last.top && box.width === last.width && box.height === last.height) return box;
+      last = box;
+    }
+    return last;
+  };
+
   const wheel = async (selector, deltaY) => {
-    const box = await evaluate(`(() => {
-      const el = document.querySelector(${JSON.stringify(selector)});
-      if (!el) return null;
-      const r = el.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    })()`);
+    const r = await settledBox(selector);
+    const box = r && { x: r.left + r.width / 2, y: r.top + r.height / 2 };
     if (!box) throw new Error(`No encontré ${selector} para la rueda`);
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: box.x, y: box.y });
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: box.x, y: box.y, deltaX: 0, deltaY });
@@ -289,14 +312,14 @@ export function makePage(cdp) {
 
   /** Doble clic real (dos pulsaciones con clickCount 1 y 2), en el centro del primer elemento que coincide. */
   const dblclick = async (selector, text) => {
-    const box = await evaluate(`(() => {
+    await evaluate(`(() => {
       const els = [...document.querySelectorAll(${JSON.stringify(selector)})];
       const el = ${text ? `els.find((e) => e.textContent.trim().includes(${JSON.stringify(text)}))` : "els[0]"};
-      if (!el) return null;
-      el.scrollIntoView({ block: "center" });
-      const r = el.getBoundingClientRect();
-      return { x: r.left + Math.min(40, r.width / 2), y: r.top + r.height / 2 };
+      el?.scrollIntoView({ block: "center" });
+      return true;
     })()`);
+    const r = await settledBox(selector, text);
+    const box = r && { x: r.left + Math.min(40, r.width / 2), y: r.top + r.height / 2 };
     if (!box) throw new Error(`No encontré ${selector}${text ? ` con «${text}»` : ""} para el doble clic`);
     const base = { x: box.x, y: box.y, button: "left" };
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: box.x, y: box.y });
@@ -321,15 +344,11 @@ export function makePage(cdp) {
 
   /** El ratón real sobre el centro de un elemento (dispara :hover, no un evento sintético). */
   const hover = async (selector) => {
-    const box = await evaluate(`(() => {
-      const el = document.querySelector(${JSON.stringify(selector)});
-      if (!el) return null;
-      const r = el.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    })()`);
+    const r = await settledBox(selector);
+    const box = r && { x: r.left + r.width / 2, y: r.top + r.height / 2 };
     if (!box) throw new Error(`No encontré ${selector} para pasar el ratón`);
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: box.x, y: box.y });
   };
 
-  return { evaluate, run, waitFor, press, pressMod, shortcut, type, click, capture, screenshot, wheel, dblclick, drag, hover };
+  return { evaluate, run, waitFor, press, pressMod, shortcut, type, click, capture, screenshot, settledBox, wheel, dblclick, drag, hover };
 }

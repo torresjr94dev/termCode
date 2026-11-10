@@ -66,22 +66,19 @@ const REVIEW_DIFF = [
  * su borde bajo el cursor, y el doble clic «a la mitad» podía caer fuera de él.
  */
 async function dividerFollowsCursor(p, selector, axis) {
-  const at = () =>
-    p.evaluate(`(() => {
-      const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2, edge: ${axis === "x" ? "r.left" : "r.top"} };
-    })()`);
-  const frames = () => p.evaluate(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))`);
+  // Medido cuando la caja dejó de moverse: el layout puede ir detrás del DOM (ver settledBox).
+  const at = async () => {
+    const r = await p.settledBox(selector);
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, edge: axis === "x" ? r.left : r.top };
+  };
   const start = await at();
   await p.drag(start, start, { steps: 1 });
-  await frames();
   const held = await at();
   if (Math.abs(held.edge - start.edge) > 0.5) throw new Error(`Agarrar ${selector} sin moverlo lo corrió ${(held.edge - start.edge).toFixed(1)} px`);
   for (const delta of [30, -30]) {
     const from = await at();
     const to = axis === "x" ? { x: from.x + delta, y: from.y } : { x: from.x, y: from.y + delta };
     await p.drag(from, to, { steps: 3 });
-    await frames();
     const moved = (await at()).edge - from.edge;
     if (Math.abs(moved - delta) > 1.5) throw new Error(`Arrastrar ${selector} ${delta} px lo movió ${moved.toFixed(1)} px`);
   }
