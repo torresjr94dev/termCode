@@ -13,6 +13,34 @@
 
 termCode es una terminal para macOS, Windows y Linux (Tauri + React + xterm.js) pensada para llevar varios agentes a la vez (Claude Code y Codex CLI) sin perder de vista tu repo: ves qué hace cada agente, apruebas sus permisos sin cambiar de panel, revisas sus cambios línea por línea y comparas soluciones en paralelo.
 
+<p align="center">
+  <img src="docs/screenshots/principal.webp" width="100%" alt="termCode con Claude Code trabajando a la izquierda, el servidor de desarrollo y los tests a la derecha, y la barra lateral con las sesiones, las carpetas y el sistema" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/mission-control.webp" width="100%" alt="Mission Control: tres agentes con su estado (trabajando, te necesita, esperando instrucciones), el contexto que les queda, su modelo y su costo" /><br />
+  <sub><b>Mission Control</b> (<code>⇧⌘A</code>): qué hace cada agente, cuál te necesita, cuánto contexto le queda y cuánto lleva gastado.</sub>
+</p>
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <img src="docs/screenshots/aprobaciones.webp" alt="La bandeja de aprobaciones: desde otra pestaña, el cambio completo que Claude Code pide permiso para hacer, con Permitir y Denegar" /><br />
+      <sub><b>Bandeja de aprobaciones</b>: el cambio completo que pide el agente, estés en la pestaña que estés.</sub>
+    </td>
+    <td width="33%" valign="top">
+      <img src="docs/screenshots/revision.webp" alt="Revisar cambios: el diff de lo que hizo el agente desde tu último mensaje, con un comentario en una línea listo para enviarle" /><br />
+      <sub><b>Revisar cambios</b>: comenta líneas del diff y mándale la revisión al agente.</sub>
+    </td>
+    <td width="33%" valign="top">
+      <img src="docs/screenshots/consumo.webp" alt="Consumo de IA: la ventana de 5 h de Claude y Codex contra el tiempo transcurrido, con la proyección del ritmo, la semana y los tokens por hora" /><br />
+      <sub><b>Consumo</b> (<code>⌘U</code>): la ventana de 5 h contra el tiempo transcurrido, la proyección de tu ritmo y la semana.</sub>
+    </td>
+  </tr>
+</table>
+
+<sub>Capturas con datos de demostración, generadas con <code>pnpm capturas</code> (ver <a href="#desarrollo">Desarrollo</a>).</sub>
+
 ## Funciones
 
 ### Agentes
@@ -129,11 +157,14 @@ pnpm tauri dev      # la app de escritorio con recarga en caliente
 |---|---|
 | `pnpm check` | Typecheck, lint y tests unitarios (Vitest) |
 | `pnpm e2e` | Pruebas de punta a punta en Chrome headless (`pnpm e2e -- <nombre>` para una sola) |
+| `pnpm capturas` | Regenera las capturas del README en `docs/screenshots/` (`pnpm capturas -- <escena>` para una sola) |
 | `cargo test --workspace` | Tests de Rust |
 | `cargo clippy --workspace --all-targets -- -D warnings` | Lint de Rust, igual que en CI |
 | `pnpm tauri build` | App empaquetada (`.app` y `.dmg` en macOS; `.exe` de NSIS y `.msi` en Windows; AppImage, `.deb` y `.rpm` en Linux) |
 
 Las e2e no necesitan dependencias: `e2e/run.mjs` levanta Vite, abre Chrome por CDP y simula el backend reemplazando funciones de la página. Si fallan, dejan capturas en `e2e/artifacts/`. En Windows usan Chrome o, si no está, Edge (`CHROME_PATH` elige otro).
+
+Las capturas del README salen de `e2e/capturas.mjs`, con el mismo arnés (`e2e/harness.mjs`): cada escena arranca en una página limpia con datos de demostración y se captura a 2x (1440×900) en WebP. Si cambias la interfaz de algo que sale en ellas, vuelve a correrlo antes del release.
 
 ### Estructura
 
