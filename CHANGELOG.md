@@ -4,6 +4,18 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ## [Sin publicar]
 
+### Añadido
+
+- Capturas en el README: la vista principal, Mission Control, la bandeja de aprobaciones, revisar cambios y consumo. Son de datos de demostración y `pnpm capturas` las regenera (a 2x, en WebP) cuando cambia la interfaz.
+
+### Corregido
+
+- La bandeja de aprobaciones repetía el nombre de la herramienta («Quiere editar Edit», «Quiere ejecutar Bash»). Ahora dice qué quiere hacer el agente y sobre qué: «Quiere editar src/cart/coupons.ts», «Quiere ejecutar un comando». La ruta va relativa solo si está dentro de la carpeta del agente; fuera de ella se ve completa, para que un cambio a `~/.zshrc` no pase por un archivo del proyecto. Las herramientas MCP siguen mostrando su nombre, que es lo que dice qué hacen.
+- En el diff, un fragmento sin la función que git reconoce (p. ej. el que empieza en la primera línea) se titulaba «@@ @@ -1,14 +1,20 @@». Ahora, «@@ -1,14 +1,20».
+- Con más sesiones de las que caben en la barra lateral, la última quedaba cortada justo antes de Carpetas y parecía la última de la lista. Ahora el borde por donde sigue la lista se difumina, y al cambiar a una sesión que quedó fuera de la vista (con ⌘3, por ejemplo) la lista se desplaza hasta ella.
+- Los divisores (entre paneles, del visor acoplado y de la terminal acoplada) saltaban al agarrarlos, hasta 4 px: lo justo para que el doble clic del visor («a la mitad») a veces no hiciera nada. Ahora se mueven lo mismo que el cursor desde donde los agarras.
+- La prueba e2e del visor acoplado fallaba a veces en CI: en el runner, la caja de un elemento va unos milisegundos detrás de su estilo y el doble clic se medía antes. Las pruebas esperan a que la caja deje de moverse antes de usar el ratón.
+
 ## [0.7.0] - 2026-11-09
 
 ### Añadido
