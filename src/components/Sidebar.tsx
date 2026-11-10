@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Asterisk,
   ChevronDown,
@@ -52,6 +52,18 @@ export const Sidebar: React.FC = () => {
   const isOpen = useTerminalStore((s) => s.isSidebarOpen);
   const tabs = useTerminalStore((s) => s.tabs);
   const activeTabId = useTerminalStore((s) => s.activeTabId);
+  const listRef = useRef<HTMLElement | null>(null);
+  const more = useScrollEdges(listRef, isOpen);
+
+  // La sesión activa siempre a la vista: con ⌘3 a una que quedó abajo, la lista baja hasta ella.
+  useEffect(() => {
+    const list = listRef.current;
+    const item = list?.querySelector('[aria-current="page"]')?.closest("li");
+    if (!list || !item) return;
+    const [box, row] = [list.getBoundingClientRect(), item.getBoundingClientRect()];
+    if (row.top < box.top) list.scrollTop -= box.top - row.top + EDGE_FADE;
+    else if (row.bottom > box.bottom) list.scrollTop += row.bottom - box.bottom + EDGE_FADE;
+  }, [activeTabId, tabs, isOpen]);
 
   if (!isOpen) return null;
 
@@ -75,7 +87,19 @@ export const Sidebar: React.FC = () => {
         </button>
       </div>
 
-      <nav aria-label="Pestañas abiertas" className="flex min-h-16 flex-1 flex-col overflow-y-auto px-2 pb-2">
+      {/* Donde la lista sigue fuera de la vista, el borde se difumina: sin eso, una sesión
+          cortada justo antes de «Carpetas» parecía la última. */}
+      <nav
+        ref={listRef}
+        aria-label="Pestañas abiertas"
+        data-more={more.top && more.bottom ? "both" : more.top ? "above" : more.bottom ? "below" : undefined}
+        className={cn(
+          "flex min-h-16 flex-1 flex-col overflow-y-auto px-2 pb-2",
+          more.top && more.bottom && "[mask-image:linear-gradient(to_bottom,transparent,black_28px,black_calc(100%_-_28px),transparent)]",
+          more.top && !more.bottom && "[mask-image:linear-gradient(to_bottom,transparent,black_28px)]",
+          !more.top && more.bottom && "[mask-image:linear-gradient(to_bottom,black_calc(100%_-_28px),transparent)]",
+        )}
+      >
         <SectionLabel aside={tabs.length}>Sesiones</SectionLabel>
         <ul className="flex flex-col gap-0.5">
           {tabs.map((tab, index) => (
@@ -93,6 +117,33 @@ export const Sidebar: React.FC = () => {
     </aside>
   );
 };
+
+/** Lo que mide el difuminado del borde (y el margen al traer una sesión a la vista). */
+const EDGE_FADE = 28;
+
+/** ¿Queda lista arriba o abajo de lo que se ve? Cambia con el scroll y con el alto de la lista o su contenido. */
+function useScrollEdges(ref: React.RefObject<HTMLElement | null>, active: boolean) {
+  const [edges, setEdges] = useState({ top: false, bottom: false });
+  useEffect(() => {
+    const el = ref.current;
+    if (!active || !el) return;
+    const update = () => {
+      const top = el.scrollTop > 1;
+      const bottom = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+      setEdges((prev) => (prev.top === top && prev.bottom === bottom ? prev : { top, bottom }));
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    for (const child of Array.from(el.children)) observer.observe(child);
+    return () => {
+      el.removeEventListener("scroll", update);
+      observer.disconnect();
+    };
+  }, [ref, active]);
+  return edges;
+}
 
 /* ------------------------------------------------------------------ */
 /* Sesión (pestaña) y sus paneles                                      */

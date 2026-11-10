@@ -141,7 +141,8 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
       inHunk = true;
       seenHunk = true;
       hunks.push(`${line}\n`);
-      rows.push({ kind: "hunk", text: hunk[3].trim() || line, hunk: hunks.length - 1 });
+      // La vista antepone «@@»: el texto es la función que git encontró o, sin ella, el rango.
+      rows.push({ kind: "hunk", text: hunk[3].trim() || line.replace(/^@@ | @@.*$/g, ""), hunk: hunks.length - 1 });
       continue;
     }
     if (!seenHunk) header += `${line}\n`;

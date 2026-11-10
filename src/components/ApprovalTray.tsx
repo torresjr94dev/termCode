@@ -2,20 +2,11 @@ import React, { useEffect, useRef, useState } from "react";
 import { ArrowUpRight, Check, ShieldQuestion, X } from "lucide-react";
 import { useApprovalStore, type ApprovalRequest } from "../store/approvalStore";
 import { useTerminalStore } from "../store/terminalStore";
-import { answerInPane, approvalSummary, approvalView, decideApproval, toolLabel, type ApprovalView } from "../lib/approvals";
+import { answerInPane, approvalHeadline, approvalSummary, approvalView, decideApproval, type ApprovalView } from "../lib/approvals";
 import { AGENTS } from "../lib/actions";
 import { cn, findOwnerTab, findPane, tabLabel } from "../lib/layout";
 import { useNow } from "../lib/useNow";
 import { AgentGlyph } from "./ui";
-
-const VERB: Record<ApprovalView["kind"], string> = {
-  command: "Quiere ejecutar",
-  edit: "Quiere editar",
-  write: "Quiere escribir",
-  url: "Quiere abrir",
-  query: "Quiere buscar",
-  raw: "Quiere usar",
-};
 
 /**
  * Permisos pendientes de los agentes, estés donde estés. Nunca toma el foco:
@@ -45,6 +36,7 @@ const ApprovalCard: React.FC<{ request: ApprovalRequest; position: number; total
   const [busy, setBusy] = useState(false);
   const reasonRef = useRef<HTMLInputElement | null>(null);
   const view = approvalView(request.tool, request.input);
+  const headline = approvalHeadline(request.tool, view, request.cwd);
   const remaining = Math.max(0, Math.ceil((request.expiresAt - now) / 1000));
 
   useEffect(() => {
@@ -88,8 +80,13 @@ const ApprovalCard: React.FC<{ request: ApprovalRequest; position: number; total
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5">
-        <p className="mb-1.5 text-[12px] text-ink-2">
-          {VERB[view.kind]} <span className="font-mono text-ink">{toolLabel(request.tool)}</span>
+        <p className="mb-1.5 break-all text-[12px] text-ink-2">
+          {headline.verb}{" "}
+          {headline.target && (
+            <span className="font-mono text-ink" title={view.kind === "edit" || view.kind === "write" ? view.path : undefined}>
+              {headline.target}
+            </span>
+          )}
           {view.kind === "edit" && view.replaceAll && <span className="ml-2 text-[11px] text-accent">· todas las apariciones</span>}
         </p>
         <ApprovalBody view={view} />
@@ -195,24 +192,18 @@ const ApprovalBody: React.FC<{ view: ApprovalView }> = ({ view }) => {
       );
     case "edit":
       return (
-        <>
-          <p className="mb-1.5 break-all font-mono text-[11.5px] text-ink-2">{view.path}</p>
-          <div className="flex flex-col gap-2">
-            {view.edits.map((edit, i) => (
-              <div key={i} className="flex flex-col gap-1">
-                <Pre tone="del" label="Texto que se quita">{edit.before}</Pre>
-                <Pre tone="add" label="Texto que se pone">{edit.after}</Pre>
-              </div>
-            ))}
-          </div>
-        </>
+        <div className="flex flex-col gap-2">
+          {view.edits.map((edit, i) => (
+            <div key={i} className="flex flex-col gap-1">
+              <Pre tone="del" label="Texto que se quita">{edit.before}</Pre>
+              <Pre tone="add" label="Texto que se pone">{edit.after}</Pre>
+            </div>
+          ))}
+        </div>
       );
     case "write":
       return (
-        <>
-          <p className="mb-1.5 break-all font-mono text-[11.5px] text-ink-2">{view.path}</p>
-          <Pre tone="add" label="Contenido completo">{view.content}</Pre>
-        </>
+<Pre tone="add" label="Contenido completo">{view.content}</Pre>
       );
     case "url":
       return (

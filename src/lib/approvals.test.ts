@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../terminal/TerminalManager", () => ({ terminalManager: { kill: vi.fn(), focus: vi.fn() } }));
-const { approvalSummary, approvalView, toolLabel } = await import("./approvals");
+const { approvalHeadline, approvalSummary, approvalView, toolLabel } = await import("./approvals");
 
 describe("approvalView", () => {
   it("shows commands whole, never cut", () => {
@@ -33,6 +33,19 @@ describe("labels", () => {
   it("names MCP tools by server and tool", () => {
     expect(toolLabel("mcp__github__create_issue")).toBe("github · create_issue");
     expect(toolLabel("Bash")).toBe("Bash");
+  });
+
+  it("says what the agent wants without echoing the tool name", () => {
+    const head = (tool: string, input: unknown, cwd: string | null = "/repo") => approvalHeadline(tool, approvalView(tool, input), cwd);
+    expect(head("Bash", { command: "ls" })).toEqual({ verb: "Quiere ejecutar un comando", target: null });
+    expect(head("Edit", { file_path: "/repo/src/a.ts", old_string: "a", new_string: "b" })).toEqual({ verb: "Quiere editar", target: "src/a.ts" });
+    expect(head("Write", { file_path: "/repo/b.md", content: "" })).toEqual({ verb: "Quiere escribir", target: "b.md" });
+    // Fuera de la carpeta del agente, la ruta completa: no se disfraza de archivo del repo.
+    expect(head("Edit", { file_path: "/Users/x/.zshrc", old_string: "a", new_string: "b" }).target).toBe("/Users/x/.zshrc");
+    expect(head("Edit", { file_path: "/repo2/a.ts", old_string: "a", new_string: "b" }).target).toBe("/repo2/a.ts");
+    expect(head("Edit", { file_path: "/repo/a.ts", old_string: "a", new_string: "b" }, null).target).toBe("/repo/a.ts");
+    expect(head("Edit", { file_path: "C:\\repo\\src\\a.ts", old_string: "a", new_string: "b" }, "C:\\repo").target).toBe("src\\a.ts");
+    expect(head("mcp__github__create_issue", { title: "x" })).toEqual({ verb: "Quiere usar", target: "github · create_issue" });
   });
 
   it("summarizes in one line for notifications", () => {

@@ -4,7 +4,7 @@ import { useUiStore } from "../store/uiStore";
 import { settingsNow, useSettingsStore } from "../store/settingsStore";
 import { findOwnerTab } from "./layout";
 import { ipc } from "./ipc";
-import { basename } from "./paths";
+import { basename, relativeInside } from "./paths";
 
 /* ------------------------------------------------------------------ */
 /* Qué pide el agente, en piezas que se pueden mostrar completas       */
@@ -71,6 +71,30 @@ export function approvalView(tool: string, input: unknown): ApprovalView {
 export function toolLabel(tool: string): string {
   const mcp = /^mcp__(.+?)__(.+)$/.exec(tool);
   return mcp ? `${mcp[1]} · ${mcp[2]}` : tool;
+}
+
+/**
+ * El encabezado de la bandeja: qué quiere hacer y sobre qué. El nombre de la
+ * herramienta solo cuando no sabemos qué hace (MCP y demás): «Quiere editar
+ * Edit» no dice nada. Una ruta dentro de la carpeta del agente va relativa;
+ * fuera de ella, completa, para que un `~/.zshrc` no pase por un archivo del repo.
+ */
+export function approvalHeadline(tool: string, view: ApprovalView, cwd: string | null | undefined): { verb: string; target: string | null } {
+  const shown = (path: string) => (cwd ? relativeInside(path, cwd) : null) || path;
+  switch (view.kind) {
+    case "command":
+      return { verb: "Quiere ejecutar un comando", target: null };
+    case "edit":
+      return { verb: "Quiere editar", target: shown(view.path) };
+    case "write":
+      return { verb: "Quiere escribir", target: shown(view.path) };
+    case "url":
+      return { verb: "Quiere abrir una dirección", target: null };
+    case "query":
+      return { verb: "Quiere buscar en la web", target: null };
+    default:
+      return { verb: "Quiere usar", target: toolLabel(tool) };
+  }
 }
 
 /** Una línea para notificaciones y lectores de pantalla (aquí sí se resume). */
