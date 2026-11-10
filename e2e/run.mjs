@@ -615,6 +615,8 @@ const TESTS = [
         window.__focusBefore = document.activeElement;
         useApprovalStore.getState().add({ id: "ap-e2e", paneId: agent.id, tool: "Bash", input: { command: "pnpm add zod", description: "Instala zod" }, cwd: "/repo-e2e", at: Date.now(), expiresAt: Date.now() + 90000 });`);
       await p.waitFor(`document.querySelector('[aria-label="Permisos pendientes"]')?.textContent.includes("pnpm add zod")`, "la bandeja muestra el comando completo");
+      // Dice qué quiere hacer, sin repetir el nombre de la herramienta («Quiere ejecutar Bash»).
+      await p.waitFor(`document.querySelector('[aria-label="Permisos pendientes"]')?.textContent.includes("Quiere ejecutar un comando")`, "el encabezado dice qué quiere hacer");
       await p.waitFor(`document.activeElement === window.__focusBefore`, "la bandeja no roba el foco");
       await p.waitFor(`[...document.querySelectorAll("footer button")].some((b) => b.textContent.includes("1 te necesita"))`, "la barra de estado cuenta al agente bloqueado");
       await p.click('[aria-label="Permisos pendientes"] button', "Denegar…");
@@ -866,6 +868,43 @@ const TESTS = [
       await p.waitFor(`!document.querySelector('section[aria-label="Sistema"]').textContent.includes("RAM")`, "la sección se pliega");
       await p.click('section[aria-label="Sistema"] button[aria-expanded]');
       await p.run(`(await mod("/src/store/terminalStore.ts")).useTerminalStore.getState().toggleSidebar();`);
+    },
+  },
+  {
+    name: "barra-lateral-desborde",
+    async run(p) {
+      // Más sesiones de las que caben: el borde por donde sigue la lista se difumina y la
+      // sesión activa siempre se ve entera (antes una quedaba cortada y parecía la última).
+      const ids = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const s = () => useTerminalStore.getState();
+        if (!s().isSidebarOpen) s().toggleSidebar();
+        const before = s().tabs.map((t) => t.id);
+        const active = s().activeTabId;
+        for (let i = 0; i < 8; i++) s().createTab({ title: "extra " + i });
+        return { first: before[0], active, added: s().tabs.map((t) => t.id).filter((id) => !before.includes(id)) };`);
+      const list = `document.querySelector('nav[aria-label="Pestañas abiertas"]')`;
+      const activeVisible = `(() => {
+        const nav = ${list};
+        const item = nav?.querySelector('[aria-current="page"]')?.closest("li");
+        if (!nav || !item) return false;
+        const [box, row] = [nav.getBoundingClientRect(), item.getBoundingClientRect()];
+        return row.top >= box.top - 1 && row.bottom <= box.bottom + 1;
+      })()`;
+      await p.waitFor(`${list}?.dataset.more === "above"`, "con la última activa, el borde de arriba avisa que hay más");
+      await p.waitFor(activeVisible, "la última sesión, activa, se ve entera");
+      await p.run(`(await mod("/src/store/terminalStore.ts")).useTerminalStore.getState().setActiveTab(${JSON.stringify(ids.first)});`);
+      await p.waitFor(`${list}?.dataset.more === "below"`, "con la primera activa, avisa el borde de abajo");
+      await p.waitFor(activeVisible, "la primera sesión, activa, se ve entera");
+      const mask = await p.evaluate(`getComputedStyle(${list}).maskImage || getComputedStyle(${list}).webkitMaskImage`);
+      if (!/gradient/.test(mask)) throw new Error(`El borde no se difumina: ${mask}`);
+      await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const s = () => useTerminalStore.getState();
+        for (const id of ${JSON.stringify(ids.added)}) s().closeTab(id);
+        s().setActiveTab(${JSON.stringify(ids.active)});
+        s().toggleSidebar();`);
+      await p.waitFor(`!${list}`, "la barra lateral se cierra");
     },
   },
   {

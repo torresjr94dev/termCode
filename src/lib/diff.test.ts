@@ -26,6 +26,12 @@ describe("parseUnifiedDiff", () => {
     expect(parsed.rows[0]).toEqual({ kind: "hunk", text: "export function saludo() {", hunk: 0 });
   });
 
+  it("names a hunk without git's function context by its range, without repeating @@", () => {
+    const bare = parseUnifiedDiff("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,14 +1,20 @@\n-a\n+b\n");
+    expect(bare.rows[0]).toEqual({ kind: "hunk", text: "-1,14 +1,20", hunk: 0 });
+    expect(parseUnifiedDiff("@@ -3 +3 @@\n-a\n+b\n").rows[0].text).toBe("-3 +3");
+  });
+
   it("numbers old and new lines", () => {
     const [, ctx, del, add, ctx2, add2] = parsed.rows;
     expect([ctx.oldNo, ctx.newNo]).toEqual([1, 1]);
