@@ -4,6 +4,8 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ## [Sin publicar]
 
+## [0.7.1] - 2026-11-10
+
 ### Añadido
 
 - Capturas en el README: la vista principal, Mission Control, la bandeja de aprobaciones, revisar cambios y consumo. Son de datos de demostración y `pnpm capturas` las regenera (a 2x, en WebP) cuando cambia la interfaz.
