@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useProjectStore } from "../../store/projectStore";
 import { closeViewer, cycleFileTab, projectRoot, setViewerDockWidth, stepDiff } from "../../lib/project";
 import { cn } from "../../lib/layout";
+import { startDividerDrag } from "../../lib/dividerDrag";
 import { FileTabs } from "./viewer/FileTabs";
 import { DiffView } from "./viewer/DiffView";
 import { FileView } from "./viewer/FileView";
@@ -18,29 +19,18 @@ const DockDivider: React.FC<{ width: number }> = ({ width }) => {
   const [dragging, setDragging] = useState(false);
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    const area = e.currentTarget.closest("main");
-    if (e.button !== 0 || !area) return;
+    if (e.button !== 0) return;
     e.preventDefault();
-    const handle = e.currentTarget;
-    const rect = area.getBoundingClientRect();
-    handle.setPointerCapture(e.pointerId);
     setDragging(true);
-    let frame = 0;
-    const onMove = (ev: PointerEvent) => {
-      cancelAnimationFrame(frame);
-      // Un cambio por frame; el ResizeObserver de cada terminal hace el fit.
-      frame = requestAnimationFrame(() => setViewerDockWidth((rect.right - ev.clientX) / rect.width));
-    };
-    const onEnd = () => {
-      cancelAnimationFrame(frame);
-      setDragging(false);
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", onEnd);
-      handle.removeEventListener("pointercancel", onEnd);
-    };
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", onEnd);
-    handle.addEventListener("pointercancel", onEnd);
+    // El visor (este divisor y la hoja) mide `width` del área: crece al llevar el cursor a la izquierda.
+    startDividerDrag(e.currentTarget, e, {
+      axis: "x",
+      start: width,
+      sized: e.currentTarget.parentElement,
+      sign: -1,
+      onRatio: setViewerDockWidth,
+      onEnd: () => setDragging(false),
+    });
   };
 
   return (

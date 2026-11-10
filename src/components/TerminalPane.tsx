@@ -38,7 +38,6 @@ interface TerminalPaneProps {
 
 export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSplit, isZoomed = false, shellBar = true }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const bodyRef = useRef<HTMLDivElement | null>(null);
   const setActivePane = useTerminalStore((s) => s.setActivePane);
   const status = useTerminalStore((s) => s.agentStatus[pane.id]);
   const hasAttention = useTerminalStore((s) => pane.id in s.attention);
@@ -247,7 +246,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
 
       {pane.resumable && <ResumeBanner paneId={pane.id} resumable={pane.resumable} />}
 
-      <div ref={bodyRef} className="flex min-h-0 w-full flex-1 flex-col">
+      <div className="flex min-h-0 w-full flex-1 flex-col">
         <div
           className="relative min-h-0 w-full"
           style={{ flex: pane.drawer?.open ? `${1 - pane.drawer.ratio} 1 0px` : "1 1 0px" }}
@@ -273,7 +272,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
             </div>
           )}
         </div>
-        {pane.drawer && <DockedShell pane={pane} drawer={pane.drawer} hostRef={bodyRef} />}
+        {pane.drawer && <DockedShell pane={pane} drawer={pane.drawer} />}
       </div>
       {paneDropZone && <DropPreview key={paneDropZone} zone={paneDropZone} />}
     </section>

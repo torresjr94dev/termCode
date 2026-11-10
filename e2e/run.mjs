@@ -60,6 +60,33 @@ const REVIEW_DIFF = [
   "",
 ].join("\n");
 
+/**
+ * Un divisor sigue al cursor desde donde lo agarraste: agarrarlo por el centro sin moverse
+ * no lo corre, y arrastrarlo 30 px lo mueve 30 px (y de vuelta). Antes saltaba hasta dejar
+ * su borde bajo el cursor, y el doble clic «a la mitad» podía caer fuera de él.
+ */
+async function dividerFollowsCursor(p, selector, axis) {
+  const at = () =>
+    p.evaluate(`(() => {
+      const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, edge: ${axis === "x" ? "r.left" : "r.top"} };
+    })()`);
+  const frames = () => p.evaluate(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))`);
+  const start = await at();
+  await p.drag(start, start, { steps: 1 });
+  await frames();
+  const held = await at();
+  if (Math.abs(held.edge - start.edge) > 0.5) throw new Error(`Agarrar ${selector} sin moverlo lo corrió ${(held.edge - start.edge).toFixed(1)} px`);
+  for (const delta of [30, -30]) {
+    const from = await at();
+    const to = axis === "x" ? { x: from.x + delta, y: from.y } : { x: from.x, y: from.y + delta };
+    await p.drag(from, to, { steps: 3 });
+    await frames();
+    const moved = (await at()).edge - from.edge;
+    if (Math.abs(moved - delta) > 1.5) throw new Error(`Arrastrar ${selector} ${delta} px lo movió ${moved.toFixed(1)} px`);
+  }
+}
+
 const TESTS = [
   {
     name: "bienvenida-primera-vez",
@@ -183,6 +210,7 @@ const TESTS = [
     async run(p) {
       await p.shortcut("splitRight");
       await p.waitFor(`document.querySelectorAll(".xterm").length === 2`, "⌘D deja dos terminales");
+      await dividerFollowsCursor(p, '[role="separator"][aria-label="Redimensionar paneles"]', "x");
       await p.shortcut("closePane");
       await p.waitFor(`document.querySelectorAll(".xterm").length === 1`, "cerrar un panel deja uno");
     },
@@ -372,6 +400,7 @@ const TESTS = [
       await p.evaluate(`document.querySelector('[role="separator"][aria-label="Ancho del visor"]').focus(), true`);
       await p.press("ArrowLeft");
       await p.waitFor(`document.querySelector('[role="separator"][aria-label="Ancho del visor"]').getAttribute("aria-valuenow") === "55"`, "← agranda el visor");
+      await dividerFollowsCursor(p, '[role="separator"][aria-label="Ancho del visor"]', "x");
       await p.dblclick('[role="separator"][aria-label="Ancho del visor"]');
       await p.waitFor(`document.querySelector('[role="separator"][aria-label="Ancho del visor"]').getAttribute("aria-valuenow") === "50"`, "doble clic: a la mitad");
       await p.click('[data-viewer] button[aria-label="Ver encima de las terminales"]');
@@ -1012,6 +1041,7 @@ const TESTS = [
       if (layout.agentBottom > layout.drawerTop + 1) throw new Error(`La terminal tapa al agente: ${JSON.stringify(layout)}`);
       if (layout.ratio < 0.2 || layout.ratio > 0.5) throw new Error(`Alto inesperado de la terminal: ${JSON.stringify(layout)}`);
       await p.screenshot("terminal-del-agente");
+      await dividerFollowsCursor(p, '[role="separator"][aria-label="Redimensionar la terminal acoplada"]', "y");
       // Plegar deja la barra (la shell sigue viva) y no divide el panel.
       await p.click('section[aria-label="Terminal acoplada"] button[aria-label="Plegar la terminal"]');
       await p.waitFor(`!document.querySelector('section[aria-label="Terminal acoplada"]') && document.querySelector("[data-drawer] button[aria-label='Mostrar la terminal']")`, "plegada queda la barra");
