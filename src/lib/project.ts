@@ -30,6 +30,12 @@ function activePaneId(): string | undefined {
   return tabs.find((t) => t.id === activeTabId)?.activePaneId;
 }
 
+/** La carpeta con la que se abrió el panel (la de un agente que lanzó termCode: no se mueve de ahí). */
+function launchCwd(paneId: string): string | null {
+  const tab = findOwnerTab(useTerminalStore.getState().tabs, paneId);
+  return (tab && findPane(tab.root, paneId)?.cwd) || null;
+}
+
 /* ------------------------------------------------------------------ */
 /* Seguimiento: el panel siempre refleja dónde está parado el panel   */
 /* activo de la terminal.                                              */
@@ -56,8 +62,11 @@ async function syncContext() {
   try {
     const paneId = activePaneId();
     // OSC 7 (integración con la shell) es instantáneo; si no hay (agentes), se pregunta al proceso.
+    // En Windows el backend no sabe la carpeta de un proceso: un agente que lanzó termCode no
+    // da ninguna de las dos y el panel se quedaba en la pestaña anterior. Entonces, la de arranque.
     const known = paneId ? terminalManager.knownCwd(paneId) : null;
-    const cwd = known ?? (paneId ? (await terminalManager.info(paneId))?.cwd : null) ?? null;
+    const live = known ?? (paneId ? (await terminalManager.info(paneId))?.cwd : null) ?? null;
+    const cwd = live ?? (paneId ? launchCwd(paneId) : null);
     if (cwd && cwd !== project().cwd) {
       const previousRoot = projectRoot();
       const repo = await Promise.race([

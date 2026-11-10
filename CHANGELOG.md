@@ -10,6 +10,7 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ### Corregido
 
+- En Windows, al cambiar a una pestaña con un agente (Claude Code o Codex) que abrió termCode, el panel de proyecto se quedaba en la carpeta de la pestaña anterior. Windows no le dice a termCode en qué carpeta está un proceso y el agente no la anuncia como la shell; ahora se usa la carpeta donde se abrió el agente, que no cambia.
 - La bandeja de aprobaciones repetía el nombre de la herramienta («Quiere editar Edit», «Quiere ejecutar Bash»). Ahora dice qué quiere hacer el agente y sobre qué: «Quiere editar src/cart/coupons.ts», «Quiere ejecutar un comando». La ruta va relativa solo si está dentro de la carpeta del agente; fuera de ella se ve completa, para que un cambio a `~/.zshrc` no pase por un archivo del proyecto. Las herramientas MCP siguen mostrando su nombre, que es lo que dice qué hacen.
 - En el diff, un fragmento sin la función que git reconoce (p. ej. el que empieza en la primera línea) se titulaba «@@ @@ -1,14 +1,20 @@». Ahora, «@@ -1,14 +1,20».
 - Con más sesiones de las que caben en la barra lateral, la última quedaba cortada justo antes de Carpetas y parecía la última de la lista. Ahora el borde por donde sigue la lista se difumina, y al cambiar a una sesión que quedó fuera de la vista (con ⌘3, por ejemplo) la lista se desplaza hasta ella.
