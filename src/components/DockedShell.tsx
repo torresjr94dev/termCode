@@ -4,6 +4,7 @@ import { useTerminalStore } from "../store/terminalStore";
 import { terminalManager } from "../terminal/TerminalManager";
 import { useRunningCommand } from "../terminal/useRunningCommand";
 import { cn } from "../lib/layout";
+import { startDividerDrag } from "../lib/dividerDrag";
 import { tildify } from "../lib/paths";
 import { shortcutLabel } from "../lib/shortcuts";
 import { shortCommand } from "../lib/identity";
@@ -29,9 +30,7 @@ function useShellCwd(id: string): string | null {
 export const DockedShell: React.FC<{
   pane: PaneNode;
   drawer: PaneDrawer;
-  /** Columna del panel: la altura se mide contra ella al arrastrar. */
-  hostRef: React.RefObject<HTMLDivElement | null>;
-}> = ({ pane, drawer, hostRef }) => {
+}> = ({ pane, drawer }) => {
   const termRef = useRef<HTMLDivElement | null>(null);
   const project = useTerminalStore((s) => s.paneProject[pane.id]);
   const toggleDrawer = useTerminalStore((s) => s.toggleDrawer);
@@ -55,28 +54,18 @@ export const DockedShell: React.FC<{
   }, [drawer.id, drawer.open, startCwd]);
 
   const startDrag = (e: React.PointerEvent<HTMLDivElement>) => {
-    const host = hostRef.current;
-    if (e.button !== 0 || !host) return;
+    if (e.button !== 0) return;
     e.preventDefault();
-    const handle = e.currentTarget;
-    const rect = host.getBoundingClientRect();
-    handle.setPointerCapture(e.pointerId);
     setDragging(true);
-    let frame = 0;
-    const onMove = (ev: PointerEvent) => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => setDrawerRatio(pane.id, (rect.bottom - ev.clientY) / rect.height));
-    };
-    const onEnd = () => {
-      cancelAnimationFrame(frame);
-      setDragging(false);
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", onEnd);
-      handle.removeEventListener("pointercancel", onEnd);
-    };
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", onEnd);
-    handle.addEventListener("pointercancel", onEnd);
+    // La terminal acoplada (la sección de abajo) mide `ratio`: crece al subir el cursor.
+    startDividerDrag(e.currentTarget, e, {
+      axis: "y",
+      start: drawer.ratio,
+      sized: e.currentTarget.nextElementSibling,
+      sign: -1,
+      onRatio: (ratio) => setDrawerRatio(pane.id, ratio),
+      onEnd: () => setDragging(false),
+    });
   };
 
   const header = (
