@@ -1027,6 +1027,8 @@ const TESTS = [
         const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
         useTerminalStore.getState().createTab({ title: "Claude Code", agentType: "claude", command: "claude", cwd: "/Users/e2e/repo" });`);
       await p.waitFor(`[...document.querySelectorAll("button")].some((b) => b.textContent.trim() === "terminal")`, "el agente ofrece su terminal");
+      // El logo de Claude Code (no un ícono genérico) en su pestaña y en la barra de su panel.
+      await p.waitFor(`document.querySelector("header .agent-logo-claude-code") && document.querySelector("[data-pane-bar] .agent-logo-claude-code")`, "la pestaña y la barra llevan el logo de Claude Code");
       await p.shortcut("agentShell");
       await p.waitFor(`document.querySelector('section[aria-label="Terminal acoplada"] .xterm')`, "⌘L abre la terminal acoplada con su xterm");
       const layout = await p.evaluate(`(() => {
@@ -1389,6 +1391,7 @@ const TESTS = [
         return id;`);
       await p.waitFor(`document.querySelector('[data-pane-id="${id}"] button[aria-label="Abrir Claude Code en este panel"]')`, "la barra ofrece abrir Claude Code ahí");
       await p.waitFor(`document.querySelector('[data-pane-id="${id}"] button[aria-label="Abrir Codex CLI en este panel"]')`, "y Codex");
+      await p.waitFor(`document.querySelector('[data-pane-id="${id}"] button[aria-label="Abrir Codex CLI en este panel"] .agent-logo-codex')`, "con el logo de Codex");
       await p.screenshot("barra-del-panel");
 
       // Clic en Claude Code: se teclea `claude` en ESA shell (sin dividir), sobre lo que hubiera a medio escribir.

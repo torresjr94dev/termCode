@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Asterisk, Eye, Flag, GitBranch, GitMerge, Hexagon, RotateCcw, Trash2, X } from "lucide-react";
+import { Eye, Flag, GitBranch, GitMerge, RotateCcw, Trash2, X } from "lucide-react";
+import { ClaudeCodeLogo, CodexLogo } from "./agentLogos";
 import { liveAgent, usePaneAgent, useTerminalStore } from "../store/terminalStore";
 import { useUiStore } from "../store/uiStore";
 import { useProjectStore } from "../store/projectStore";
@@ -107,7 +108,7 @@ const MissionPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
                     void actions.openAgentInSplit(agent);
                   }}
                 >
-                  {agent === "claude" ? <Asterisk size={13} aria-hidden="true" /> : <Hexagon size={13} aria-hidden="true" />}
+                  {agent === "claude" ? <ClaudeCodeLogo size={13} aria-hidden="true" /> : <CodexLogo size={13} aria-hidden="true" />}
                   {AGENTS[agent].title}
                 </TextButton>
               ))}
@@ -158,7 +159,7 @@ const AgentCard: React.FC<{ pane: PaneNode; tab: Tab; now: number; onGo: () => v
   const cwd = terminalManager.knownCwd(pane.id) ?? pane.cwd;
   const title = cleanTitle(pane.title);
   const agent = usePaneAgent(pane);
-  const Glyph = agent === "codex" ? Hexagon : Asterisk;
+  const Glyph = agent === "codex" ? CodexLogo : ClaudeCodeLogo;
 
   const go = () => {
     onGo();

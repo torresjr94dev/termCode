@@ -1,5 +1,8 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
-import { LayoutTemplate, Server, ScrollText,
+import {
+  LayoutTemplate,
+  Server,
+  ScrollText,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -23,11 +26,9 @@ import { LayoutTemplate, Server, ScrollText,
   GitPullRequestArrow,
   History,
   Sparkles,
-  Asterisk,
   Columns2,
   Gauge,
   GitBranch,
-  Hexagon,
   PanelLeft,
   Plus,
   Radio,
@@ -42,6 +43,7 @@ import { LayoutTemplate, Server, ScrollText,
   ZoomOut,
   type LucideIcon,
 } from "lucide-react";
+import { ClaudeCodeLogo, CodexLogo } from "./agentLogos";
 import { liveAgent, useTerminalStore } from "../store/terminalStore";
 import { explainFailure, openOutput } from "../lib/output";
 import { describeServer, sshAliasCommand, sshServerCommand } from "../lib/ssh";
@@ -147,7 +149,7 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       { id: "explain", group: "Agentes", title: "Explicar el último error", hint: "comando y salida al agente", icon: Sparkles, run: () => activePaneId && explainFailure(activePaneId) },
 
       ...(["claude", "codex"] as const).flatMap<Command>((agent) => {
-        const icon = agent === "claude" ? Asterisk : Hexagon;
+        const icon = agent === "claude" ? ClaudeCodeLogo : CodexLogo;
         const missing = agents ? !agents[agent] : false;
         const hint = missing ? "no instalado" : undefined;
         const name = AGENTS[agent].title;

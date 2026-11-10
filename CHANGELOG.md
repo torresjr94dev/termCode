@@ -8,6 +8,10 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 - Capturas en el README: la vista principal, Mission Control, la bandeja de aprobaciones, revisar cambios y consumo. Son de datos de demostración y `pnpm capturas` las regenera (a 2x, en WebP) cuando cambia la interfaz.
 
+### Modificado
+
+- Claude Code y Codex se muestran con su logo en lugar del asterisco y el hexágono: en las pestañas, la barra lateral, la barra de cada panel, Mission Control, el consumo, la paleta y los botones para abrirlos. Van en el color del texto, así que en las pestañas siguen tomando el tono de su proyecto.
+
 ### Corregido
 
 - La bandeja de aprobaciones repetía el nombre de la herramienta («Quiere editar Edit», «Quiere ejecutar Bash»). Ahora dice qué quiere hacer el agente y sobre qué: «Quiere editar src/cart/coupons.ts», «Quiere ejecutar un comando». La ruta va relativa solo si está dentro de la carpeta del agente; fuera de ella se ve completa, para que un cambio a `~/.zshrc` no pase por un archivo del proyecto. Las herramientas MCP siguen mostrando su nombre, que es lo que dice qué hacen.

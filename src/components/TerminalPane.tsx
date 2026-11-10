@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
-import { Asterisk, Columns2, Ellipsis, GitBranch, Hexagon, History, Maximize2, Minimize2, Rows2, SquareTerminal, X } from "lucide-react";
+import { Columns2, Ellipsis, GitBranch, History, Maximize2, Minimize2, Rows2, SquareTerminal, X } from "lucide-react";
+import { ClaudeCodeLogo, CodexLogo } from "./agentLogos";
 import type { AgentKind, PaneNode, ResumableAgent } from "../types/layout";
 import { terminalManager } from "../terminal/TerminalManager";
 import { useRunningCommand } from "../terminal/useRunningCommand";
@@ -302,7 +303,7 @@ const DropPreview: React.FC<{ zone: DropZone }> = ({ zone }) => (
   </div>
 );
 
-const LAUNCHER_ICON: Record<AgentKind, typeof Asterisk> = { claude: Asterisk, codex: Hexagon };
+const LAUNCHER_ICON: Record<AgentKind, typeof ClaudeCodeLogo> = { claude: ClaudeCodeLogo, codex: CodexLogo };
 
 /**
  * Claude Code y Codex en este mismo panel: se escriben en su shell, como si lo

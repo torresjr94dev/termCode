@@ -1,11 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
-  Asterisk,
   ChevronDown,
   Columns2,
   Folder,
   GitBranch,
-  Hexagon,
   Pencil,
   Pin,
   PinOff,
@@ -17,6 +15,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import { ClaudeCodeLogo, CodexLogo } from "./agentLogos";
 import { liveAgent, usePaneAgent, useTerminalStore, type PaneProject } from "../store/terminalStore";
 import { useApprovalStore } from "../store/approvalStore";
 import { useProjectStore } from "../store/projectStore";
@@ -217,7 +216,7 @@ const PaneList: React.FC<{ tab: Tab; panes: PaneNode[] }> = ({ tab, panes }) => 
         const focused = pane.id === tab.activePaneId;
         const cwd = paneProject[pane.id]?.cwd ?? pane.cwd;
         const agent = liveAgent({ agentActivity, runningAgent }, pane);
-        const Icon = agent === "codex" ? Hexagon : agent === "claude" ? Asterisk : SquareTerminal;
+        const Icon = agent === "codex" ? CodexLogo : agent === "claude" ? ClaudeCodeLogo : SquareTerminal;
         return (
           <li key={pane.id}>
             <button
@@ -245,7 +244,7 @@ const PaneList: React.FC<{ tab: Tab; panes: PaneNode[] }> = ({ tab, panes }) => 
 /** Ícono de la sesión: el agente o una terminal; el punto es el color estable de su proyecto. */
 const SessionIcon: React.FC<{ pane: PaneNode; project?: PaneProject }> = ({ pane, project }) => {
   const agent = usePaneAgent(pane);
-  const Icon = agent === "codex" ? Hexagon : agent === "claude" ? Asterisk : pane.ssh ? Server : SquareTerminal;
+  const Icon = agent === "codex" ? CodexLogo : agent === "claude" ? ClaudeCodeLogo : pane.ssh ? Server : SquareTerminal;
   return (
     <span
       className={cn(
@@ -437,8 +436,8 @@ const PlaceRow: React.FC<{ path: string; pinned: boolean }> = ({ path, pinned })
   const installed = (agent: AgentKind) => !agents || Boolean(agents[agent]);
   const open: Array<{ icon: LucideIcon; label: string; run: () => void; accent?: boolean; hidden?: boolean }> = [
     { icon: SquareTerminal, label: "Shell aquí, en pestaña nueva", run: () => actions.openHere("shell", path) },
-    { icon: Asterisk, label: `${AGENTS.claude.title} aquí`, run: () => actions.openHere("claude", path), accent: true, hidden: !installed("claude") },
-    { icon: Hexagon, label: `${AGENTS.codex.title} aquí`, run: () => actions.openHere("codex", path), accent: true, hidden: !installed("codex") },
+    { icon: ClaudeCodeLogo, label: `${AGENTS.claude.title} aquí`, run: () => actions.openHere("claude", path), accent: true, hidden: !installed("claude") },
+    { icon: CodexLogo, label: `${AGENTS.codex.title} aquí`, run: () => actions.openHere("codex", path), accent: true, hidden: !installed("codex") },
   ];
   // Las acciones entran en la fila (no flotan encima): al pasar el cursor la ruta del
   // padre cede su sitio y el nombre se recorta, nunca queda tapado.
@@ -619,7 +618,7 @@ const Launcher: React.FC = () => {
         {(["claude", "codex"] as const).map((agent) => (
           <LaunchTile
             key={agent}
-            icon={agent === "claude" ? Asterisk : Hexagon}
+            icon={agent === "claude" ? ClaudeCodeLogo : CodexLogo}
             label={agent === "claude" ? "Claude" : "Codex"}
             accent
             title={installed(agent) === false ? `${AGENTS[agent].title}: no instalado` : `${AGENTS[agent].title} en pestaña nueva`}
