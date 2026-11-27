@@ -1481,6 +1481,14 @@ const TESTS = [
       // Sin arrastrar nada, ninguna pestaña se ve como arrastrada.
       const dimmed = await p.evaluate(`document.querySelectorAll('li[data-slot="tab"].opacity-50').length`);
       if (dimmed) throw new Error(`${dimmed} pestaña(s) atenuadas sin arrastre`);
+      // Historial del foco durante el arrastre: si el editor lo pierde, la falla dice quién se lo llevó.
+      await p.evaluate(`(() => {
+        const desc = (el) => !el || el === document.body ? "BODY" : [el.tagName, el.getAttribute?.("aria-label"), el.closest?.(".xterm") && "xterm", el.closest?.('[role="dialog"]') && "editor"].filter(Boolean).join(":");
+        window.__focusLog = [];
+        const log = (e) => window.__focusLog.push(Math.round(performance.now()) + " " + e.type + " " + desc(e.target) + (e.relatedTarget ? " ↔ " + desc(e.relatedTarget) : ""));
+        document.addEventListener("focusin", log, true);
+        document.addEventListener("focusout", log, true);
+      })()`);
       const from = await p.settledBox(`[data-tab-id="${b}"]`);
       const to = await p.settledBox(`[data-tab-id="${a}"]`);
       await p.drag({ x: from.left + from.width / 2, y: from.top + from.height / 2 }, { x: to.left + to.width / 2, y: to.top + to.height / 2 });
@@ -1492,7 +1500,7 @@ const TESTS = [
           const who = await p.evaluate(`(() => {
             const a = document.activeElement;
             const desc = a ? [a.tagName, a.getAttribute("aria-label"), a.getAttribute("data-group-chip") && "cápsula", a.closest(".xterm") && "xterm"].filter(Boolean).join(" · ") : "nada";
-            return desc + " | hasFocus=" + document.hasFocus() + " | visible=" + document.visibilityState + " | editor=" + Boolean(document.querySelector('[role="dialog"][aria-label^="Editar"]'));
+            return desc + " | hasFocus=" + document.hasFocus() + " | visible=" + document.visibilityState + " | editor=" + Boolean(document.querySelector('[role="dialog"][aria-label^="Editar"]')) + " | " + (navigator.userAgent.match(/Chrome\\/[\\d.]+/)?.[0] ?? "") + " | historial: " + (window.__focusLog ?? []).join(" ; ");
           })()`);
           throw new Error(`${err.message} → foco en: ${who}`);
         });
