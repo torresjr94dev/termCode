@@ -161,6 +161,10 @@ interface ProjectState {
   viewerDock: ViewerDock;
   isPrDialogOpen: boolean;
   isBranchPickerOpen: boolean;
+  /** Dónde se despliega el selector de ramas: bajo la rama de la barra de título o sobre la de Cambios. */
+  branchPickerAt: "header" | "panel";
+  /** Cambio de rama en espera: hay cambios sin commit y hay que decidir qué hacer con ellos. */
+  pendingSwitch: PendingSwitch | null;
   /** Comentarios por línea aún sin mandar (sobreviven a cerrar el visor). */
   notes: ReviewNote[];
   /** `git status` no terminó en este repo (se reintenta con espera creciente). */
@@ -169,6 +173,18 @@ interface ProjectState {
   cloudProvider: string | null;
 
   set: (patch: Partial<ProjectState>) => void;
+}
+
+export interface PendingSwitch {
+  root: string;
+  name: string;
+  create: boolean;
+  /** `origin/x` → rama local `x` que la sigue. */
+  remote: boolean;
+  /** Rama que dejas (null con HEAD suelto). */
+  from: string | null;
+  /** Archivos con cambios (para mostrar cuáles). */
+  files: string[];
 }
 
 export const initialRepoState = {
@@ -203,6 +219,8 @@ export const useProjectStore = create<ProjectState>((set) => ({
   viewerDock: { docked: false, width: 0.5 },
   isPrDialogOpen: false,
   isBranchPickerOpen: false,
+  branchPickerAt: "header",
+  pendingSwitch: null,
   notes: [],
   statusTrouble: null,
   set: (patch) => set(patch),

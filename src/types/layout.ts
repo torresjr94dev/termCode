@@ -85,6 +85,19 @@ export interface Tab {
   activePaneId: string;
   /** Panel maximizado dentro de la pestaña (⌘⇧↵). */
   zoomedPaneId?: string | null;
+  /** Grupo al que pertenece. Las pestañas de un grupo van siempre juntas. */
+  groupId?: string;
+}
+
+export type GroupColor = "gris" | "azul" | "rojo" | "amarillo" | "verde" | "rosa" | "morado" | "cian" | "naranja";
+
+/** Pestañas agrupadas bajo un nombre y un color; plegado, el grupo ocupa una sola cápsula. */
+export interface TabGroup {
+  id: string;
+  /** Puede ir vacío: entonces el grupo es solo su color. */
+  name: string;
+  color: GroupColor;
+  collapsed: boolean;
 }
 
 /* ---- Datos que llegan del backend (ver src-tauri/src/usage) ---- */

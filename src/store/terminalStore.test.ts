@@ -22,7 +22,7 @@ beforeEach(() => {
     root: { id: "pane-test", type: "pane" as const, terminalId: "term-test", title: "zsh" },
     activePaneId: "pane-test",
   };
-  useTerminalStore.setState({ tabs: [fresh], activeTabId: fresh.id, attention: {}, agentStatus: {}, runningAgent: {}, closed: [] });
+  useTerminalStore.setState({ tabs: [fresh], groups: [], activeTabId: fresh.id, attention: {}, agentStatus: {}, runningAgent: {}, closed: [] });
 });
 
 describe("closePane", () => {
@@ -195,5 +195,81 @@ describe("titles, attention and font", () => {
     const created = collectPanes(s().tabs[0].root)[1];
     expect(created).toMatchObject({ cwd: "/repo", agentType: "claude", command: "claude" });
     expect(s().tabs[0].activePaneId).toBe(created.id);
+  });
+});
+
+describe("grupos de pestañas", () => {
+  /** Tres pestañas: [a] [b c] con b y c en un grupo, c activa. */
+  const setup = () => {
+    s().createTab();
+    s().createTab();
+    const [a, b, c] = s().tabs.map((t) => t.id);
+    const group = s().dropTab(c, { kind: "onto", targetId: b });
+    if (!group) throw new Error("no se creó el grupo");
+    return { a, b, c, group };
+  };
+
+  it("soltar una pestaña encima de otra crea un grupo con las dos", () => {
+    const { b, c, group } = setup();
+    expect(s().groups).toHaveLength(1);
+    expect(s().tabs.filter((t) => t.groupId === group).map((t) => t.id)).toEqual([b, c]);
+  });
+
+  it("plegar el grupo de la pestaña activa pasa a la de afuera", () => {
+    const { a, c, group } = setup();
+    expect(s().activeTabId).toBe(c);
+    expect(s().setGroupCollapsed(group, true)).toBe(true);
+    expect(s().activeTabId).toBe(a);
+    expect(s().groups[0].collapsed).toBe(true);
+  });
+
+  it("ir a una pestaña de un grupo plegado lo despliega", () => {
+    const { b, group } = setup();
+    s().setGroupCollapsed(group, true);
+    s().setActiveTab(b);
+    expect(s().groups.find((g) => g.id === group)?.collapsed).toBe(false);
+  });
+
+  it("si el grupo es todo lo que hay, no se pliega", () => {
+    const { a, b, group } = setup();
+    s().joinGroup(a, group);
+    s().setActiveTab(b);
+    expect(s().setGroupCollapsed(group, true)).toBe(false);
+    expect(s().groups[0].collapsed).toBe(false);
+  });
+
+  it("cerrar las pestañas de un grupo lo borra", () => {
+    const { b, c } = setup();
+    s().closeTab(b);
+    expect(s().groups).toHaveLength(1);
+    s().closeTab(c);
+    expect(s().groups).toEqual([]);
+    expect(s().tabs.every((t) => !t.groupId)).toBe(true);
+  });
+
+  it("al restaurar una sesión se reparan grupos rotos y se ve la pestaña activa", () => {
+    const pane = (id: string) => ({ id, type: "pane" as const, terminalId: `t-${id}`, title: "zsh" });
+    s().hydrate({
+      version: 1,
+      tabs: [
+        { id: "x", title: "x", root: pane("px"), activePaneId: "px", groupId: "g" },
+        { id: "y", title: "y", root: pane("py"), activePaneId: "py" },
+        { id: "z", title: "z", root: pane("pz"), activePaneId: "pz", groupId: "g" },
+        { id: "w", title: "w", root: pane("pw"), activePaneId: "pw", groupId: "fantasma" },
+      ],
+      groups: [{ id: "g", name: "API", color: "verde", collapsed: true }],
+      activeTabId: "z",
+      isSidebarOpen: false,
+    });
+    expect(s().tabs.map((t) => `${t.id}${t.groupId ? `@${t.groupId}` : ""}`)).toEqual(["x@g", "z@g", "y", "w"]);
+    expect(s().groups[0].collapsed).toBe(false);
+  });
+
+  it("el nombre se limpia y el color debe ser uno de la paleta", () => {
+    const { group } = setup();
+    s().updateGroup(group, { name: "  Front\u0007end  " });
+    s().updateGroup(group, { color: "fucsia" as never });
+    expect(s().groups[0].name).toBe("Frontend");
+    expect(s().groups[0].color).not.toBe("fucsia");
   });
 });

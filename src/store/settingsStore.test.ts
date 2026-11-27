@@ -29,6 +29,22 @@ describe("settings", () => {
     expect("welcomeBanner" in sanitize({ welcomeBanner: "full" })).toBe(false);
   });
 
+  it("validates the new theme settings", () => {
+    const s = sanitize({ theme: "vidrio", glassImage: "../../etc/passwd", glassTint: 5, glassBlur: -3, themesTried: ["navidad", "hackeo"] });
+    expect(s.theme).toBe("vidrio");
+    expect(s.glassImage).toBeNull();
+    expect([s.glassTint, s.glassBlur]).toEqual([0.92, 0]);
+    expect(s.themesTried).toEqual(["navidad"]);
+    expect(sanitize({ glassImage: "fondo-1795753095452.webp" }).glassImage).toBe("fondo-1795753095452.webp");
+  });
+
+  it("choosing a theme marks it as tried", () => {
+    useSettingsStore.getState().replace({ ...DEFAULT_SETTINGS, themesTried: [] });
+    useSettingsStore.getState().update({ theme: "navidad" });
+    useSettingsStore.getState().update({ theme: "navidad" });
+    expect(useSettingsStore.getState().settings.themesTried).toEqual(["navidad"]);
+  });
+
   it("updates through the store with validation", () => {
     useSettingsStore.getState().update({ fontSize: 15, theme: "papel" });
     expect(useSettingsStore.getState().settings).toMatchObject({ fontSize: 15, theme: "papel" });

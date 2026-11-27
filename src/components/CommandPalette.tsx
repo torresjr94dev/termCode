@@ -1,5 +1,9 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
+  Download,
+  Group,
+  Info,
+  Ungroup,
   LayoutTemplate,
   Server,
   ScrollText,
@@ -54,8 +58,9 @@ import { commit, generateCommitMessage, openBranchPicker, openProject, pull, pus
 import { useUiStore } from "../store/uiStore";
 import { collectPanes as panesOf } from "../lib/layout";
 import { useProjectStore } from "../store/projectStore";
-import { THEME_NAMES, useSettingsStore, type ThemeId } from "../store/settingsStore";
+import { NEW_THEMES, THEME_NAMES, useSettingsStore, type ThemeId } from "../store/settingsStore";
 import { cn, tabLabel } from "../lib/layout";
+import { GROUP_COLOR_NAMES } from "../lib/tabGroups";
 import { shortcutLabel, tabShortcutLabel, type ShortcutId } from "../lib/shortcuts";
 import { Kbd, PromptCaret, PromptCursor } from "./ui";
 
@@ -92,11 +97,13 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const listId = useId();
 
   const tabs = useTerminalStore((s) => s.tabs);
+  const groups = useTerminalStore((s) => s.groups);
   const activeTabId = useTerminalStore((s) => s.activeTabId);
   const isBroadcastEnabled = useTerminalStore((s) => s.isBroadcastEnabled);
   const isSidebarOpen = useTerminalStore((s) => s.isSidebarOpen);
   const fontSize = useSettingsStore((s) => s.settings.fontSize);
   const currentTheme = useSettingsStore((s) => s.settings.theme);
+  const themesTried = useSettingsStore((s) => s.settings.themesTried);
   const agents = useTerminalStore((s) => s.agents);
   const shells = useTerminalStore((s) => s.shells);
   const sshHosts = useSidebarStore((s) => s.sshHosts);
@@ -179,7 +186,7 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
       ...(repo
         ? ([
-            { id: "git-switch", group: "Git", title: "Cambiar de rama…", hint: "o crear una", icon: GitBranch, shortcut: sc("switchBranch"), run: openBranchPicker },
+            { id: "git-switch", group: "Git", title: "Cambiar de rama…", hint: "o crear una", icon: GitBranch, shortcut: sc("switchBranch"), run: () => openBranchPicker() },
             { id: "git-stash", group: "Git", title: "Guardar cambios en el stash", hint: "archivos nuevos incluidos", icon: Archive, run: () => void stashPush() },
             { id: "git-changes", group: "Git", title: "Ver cambios", hint: repo.name, icon: GitBranch, shortcut: sc("projectChanges"), run: () => openProject("changes") },
             { id: "git-history", group: "Git", title: "Ver historial", icon: History, run: () => openProject("history") },
@@ -193,6 +200,8 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       { id: "files", group: "Proyecto", title: "Explorar archivos", icon: FolderTree, shortcut: sc("projectFiles"), run: () => openProject("files") },
 
       { id: "settings", group: "Vista", title: "Ajustes", icon: Settings2, shortcut: sc("settings"), run: actions.openSettings },
+      { id: "about", group: "Vista", title: "Acerca de termCode", hint: "versión, sistema y enlaces", icon: Info, run: () => useUiStore.getState().openAbout(false) },
+      { id: "check-updates", group: "Vista", title: "Buscar actualizaciones", icon: Download, run: () => useUiStore.getState().openAbout(true) },
       { id: "overview", group: "Vista", title: "Ver todos los paneles", hint: "miniaturas en vivo", icon: LayoutGrid, shortcut: sc("overview"), run: () => useUiStore.getState().setOverviewOpen(true) },
       { id: "zoom", group: "Vista", title: "Maximizar / restaurar panel", icon: Maximize2, shortcut: sc("zoomPane"), run: actions.toggleZoom },
       { id: "equalize", group: "Vista", title: "Igualar tamaño de paneles", icon: StretchHorizontal, run: actions.equalizeSplits },
@@ -203,7 +212,7 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         id: `theme-${theme}`,
         group: "Vista",
         title: `Tema: ${THEME_NAMES[theme]}`,
-        hint: theme === currentTheme ? "actual" : undefined,
+        hint: theme === currentTheme ? "actual" : NEW_THEMES.includes(theme) && !themesTried.includes(theme) ? "nuevo" : undefined,
         icon: Palette,
         run: () => useSettingsStore.getState().update({ theme }),
       })),
@@ -232,8 +241,31 @@ const PaletteDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         shortcut: tabShortcutLabel(index),
         run: () => actions.goToTab(index),
       })),
+
+      ...(() => {
+        const active = tabs.find((t) => t.id === activeTabId);
+        const inGroup = active?.groupId ? groups.find((g) => g.id === active.groupId) : undefined;
+        const name = (g: (typeof groups)[number]) => (g.name ? `«${g.name}»` : `${GROUP_COLOR_NAMES[g.color].toLowerCase()}`);
+        return [
+          ...(active
+            ? [
+                { id: "group-new", group: "Pestañas", title: "Añadir pestaña a grupo nuevo", hint: "o arrástrala encima de otra", icon: Group, run: () => useTerminalStore.getState().groupTab(active.id) },
+                ...(inGroup
+                  ? [{ id: "group-leave", group: "Pestañas", title: `Quitar pestaña del grupo ${name(inGroup)}`, icon: Ungroup, run: () => useTerminalStore.getState().leaveGroup(active.id) }]
+                  : []),
+              ]
+            : []),
+          ...groups.map<Command>((g) => ({
+            id: `group-toggle-${g.id}`,
+            group: "Pestañas",
+            title: `${g.collapsed ? "Desplegar" : "Plegar"} grupo ${name(g)}`,
+            icon: Group,
+            run: () => actions.toggleGroup(g.id),
+          })),
+        ] satisfies Command[];
+      })(),
     ],
-    [tabs, activeTabId, activePaneId, isBroadcastEnabled, isSidebarOpen, fontSize, agents, shells, sshHosts, servers, repo, currentTheme, viewerDocked],
+    [tabs, groups, activeTabId, activePaneId, isBroadcastEnabled, isSidebarOpen, fontSize, agents, shells, sshHosts, servers, repo, currentTheme, themesTried, viewerDocked],
   );
 
   const filtered = useMemo(() => {

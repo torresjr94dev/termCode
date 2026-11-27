@@ -101,9 +101,73 @@ const NEON: ITheme = {
   brightWhite: "#f5fbf7",
 };
 
+/**
+ * Navidad: noche de pino con tinta de nieve. El rojo de caramelo es el
+ * cursor; el dorado, la selección (como la estrella del árbol).
+ */
+const NAVIDAD: ITheme = {
+  background: "#0b1512",
+  foreground: "#eef4f0",
+  cursor: "#ff4d6d",
+  cursorAccent: "#0b1512",
+  selectionBackground: "rgba(255, 209, 102, 0.24)",
+  selectionInactiveBackground: "rgba(238, 244, 240, 0.08)",
+  black: "#16241f",
+  red: "#ff5c6c",
+  green: "#4fd182",
+  yellow: "#ffd166",
+  blue: "#7fb2ff",
+  magenta: "#e08ad6",
+  cyan: "#6fd6c8",
+  white: "#dfe9e3",
+  brightBlack: "#7a958a",
+  brightRed: "#ff8a96",
+  brightGreen: "#86e8a8",
+  brightYellow: "#ffe09a",
+  brightBlue: "#a8cbff",
+  brightMagenta: "#f0b3e8",
+  brightCyan: "#9ee8de",
+  brightWhite: "#ffffff",
+};
+
+/**
+ * Vidrio líquido: el fondo real es transparente (lo pone el TerminalManager);
+ * detrás está el vidrio ahumado del panel sobre tu imagen. Colores claros y
+ * saturados para que se lean sobre cualquier fondo.
+ */
+const VIDRIO: ITheme = {
+  background: "#0e1018",
+  foreground: "#f2f5fb",
+  cursor: "#7cc4ff",
+  cursorAccent: "#0e1018",
+  selectionBackground: "rgba(124, 196, 255, 0.28)",
+  selectionInactiveBackground: "rgba(242, 245, 251, 0.1)",
+  black: "#1c2030",
+  red: "#ff6b7a",
+  green: "#6ee7a0",
+  yellow: "#ffd479",
+  blue: "#7cb7ff",
+  magenta: "#d49bff",
+  cyan: "#6fe0e6",
+  white: "#dde3ee",
+  brightBlack: "#959eb3",
+  brightRed: "#ff98a3",
+  brightGreen: "#9ff2c2",
+  brightYellow: "#ffe4a6",
+  brightBlue: "#a9d0ff",
+  brightMagenta: "#e5c1ff",
+  brightCyan: "#a2eef1",
+  brightWhite: "#ffffff",
+};
+
 export const XTERM_THEMES: Record<ThemeId, ITheme> = {
   neon: NEON,
   fosforo: FOSFORO,
   "fosforo-verde": FOSFORO_VERDE,
   papel: PAPEL,
+  navidad: NAVIDAD,
+  vidrio: VIDRIO,
 };
+
+/** Temas cuya terminal es transparente siempre: el velo y lo de atrás los pone la app. */
+export const SEE_THROUGH_THEMES: ReadonlySet<ThemeId> = new Set(["vidrio"]);

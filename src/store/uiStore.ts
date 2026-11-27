@@ -63,6 +63,8 @@ interface UiState {
   isSystemOpen: boolean;
   /** Diálogo de servidor SSH: nuevo o editar uno guardado. */
   sshDialog: { id?: string } | null;
+  /** «Acerca de termCode» abierto; `checkUpdates`: buscar versión nueva al abrir. */
+  about: { checkUpdates: boolean } | null;
   /** ⌘ mantenido: se muestran los atajos sobre la interfaz. */
   showHints: boolean;
   confirm: ConfirmRequest | null;
@@ -84,6 +86,8 @@ interface UiState {
   closeContextMenu: () => void;
   setSystemOpen: (open: boolean) => void;
   setSshDialog: (dialog: { id?: string } | null) => void;
+  openAbout: (checkUpdates?: boolean) => void;
+  closeAbout: () => void;
   setShowHints: (show: boolean) => void;
   askConfirm: (request: ConfirmRequest) => void;
   resolveConfirm: (accepted: boolean) => void;
@@ -112,6 +116,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   contextMenu: null,
   isSystemOpen: false,
   sshDialog: null,
+  about: null,
   showHints: false,
   confirm: null,
   toast: null,
@@ -131,6 +136,9 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
   setSystemOpen: (open) => set({ isSystemOpen: open }),
   setSshDialog: (dialog) => set({ sshDialog: dialog }),
+  // Lo que estuviera abierto encima (paleta, ajustes) se cierra: «Acerca de» va al frente.
+  openAbout: (checkUpdates = false) => set({ about: { checkUpdates }, isPaletteOpen: false, isSettingsOpen: false, contextMenu: null }),
+  closeAbout: () => set({ about: null }),
   setShowHints: (show) => {
     if (get().showHints !== show) set({ showHints: show });
   },

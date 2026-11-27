@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import { IS_MAC } from "../lib/shortcuts";
 
-export type ThemeId = "neon" | "fosforo" | "fosforo-verde" | "papel";
+export type ThemeId = "neon" | "fosforo" | "fosforo-verde" | "papel" | "navidad" | "vidrio";
+
+export const THEME_IDS: readonly ThemeId[] = ["neon", "fosforo", "fosforo-verde", "papel", "navidad", "vidrio"];
 
 /** Nombres para mostrar, en el orden de los selectores. */
 export const THEME_NAMES: Record<ThemeId, string> = {
@@ -9,11 +11,29 @@ export const THEME_NAMES: Record<ThemeId, string> = {
   fosforo: "Fósforo",
   "fosforo-verde": "Fósforo verde",
   papel: "Papel",
+  navidad: "Navidad",
+  vidrio: "Vidrio líquido",
 };
+
+/** Llevan la etiqueta «Nuevo» en Ajustes hasta que los pruebas. */
+export const NEW_THEMES: readonly ThemeId[] = ["navidad", "vidrio"];
+
+/** Nombre de un fondo guardado por el backend (`fondo-<ms>.<ext>`, ver backdrop.rs). */
+export const isBackdropName = (v: unknown): v is string => typeof v === "string" && /^fondo-\d{1,20}\.(png|jpg|gif|webp|avif)$/.test(v);
 export type EditorId = "auto" | "cursor" | "code" | "zed" | "subl" | "system";
 
 export interface Settings {
   theme: ThemeId;
+  /** Temas que ya probaste (pierden la etiqueta «Nuevo»). */
+  themesTried: ThemeId[];
+  /** Navidad: nieve de pixeles cayendo (y el trineo que pasa de vez en cuando). */
+  festiveSnow: boolean;
+  /** Vidrio líquido: tu imagen de fondo (copia guardada por la app); null = el degradado de fábrica. */
+  glassImage: string | null;
+  /** Vidrio líquido: qué tan opaco es el vidrio de los paneles (0.4–0.92). Con fondos claros sube solo para que el texto se lea. */
+  glassTint: number;
+  /** Vidrio líquido: desenfoque de lo que hay detrás, en px (0 = sin desenfoque, lo más ligero). */
+  glassBlur: number;
   fontFamily: string;
   fontSize: number;
   lineHeight: number;
@@ -54,6 +74,11 @@ export const DEFAULT_FONT = '"JetBrains Mono Variable", "JetBrains Mono", ui-mon
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "neon",
+  themesTried: [],
+  festiveSnow: true,
+  glassImage: null,
+  glassTint: 0.62,
+  glassBlur: 24,
   fontFamily: DEFAULT_FONT,
   fontSize: 13,
   lineHeight: 1.15,
@@ -83,6 +108,8 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 export const LIMITS = {
+  glassTint: { min: 0.4, max: 0.92 },
+  glassBlur: { min: 0, max: 48 },
   fontSize: { min: 9, max: 24 },
   lineHeight: { min: 1, max: 1.6 },
   scrollback: { min: 1_000, max: 100_000 },
@@ -101,7 +128,14 @@ export function sanitize(input: unknown): Settings {
   const oneOf = (...options: string[]) => (v: unknown) => typeof v === "string" && options.includes(v);
 
   return {
-    theme: pick("theme", oneOf("neon", "fosforo", "fosforo-verde", "papel")),
+    theme: pick("theme", oneOf(...THEME_IDS)),
+    themesTried: Array.isArray(raw.themesTried)
+      ? THEME_IDS.filter((id) => (raw.themesTried as unknown[]).includes(id))
+      : DEFAULT_SETTINGS.themesTried,
+    festiveSnow: pick("festiveSnow", isBool),
+    glassImage: raw.glassImage === null || isBackdropName(raw.glassImage) ? ((raw.glassImage ?? null) as string | null) : DEFAULT_SETTINGS.glassImage,
+    glassTint: Math.round(clamp(pick("glassTint", isNum), LIMITS.glassTint) * 100) / 100,
+    glassBlur: Math.round(clamp(pick("glassBlur", isNum), LIMITS.glassBlur)),
     fontFamily: pick("fontFamily", (v) => typeof v === "string" && v.trim().length > 0 && v.length < 300),
     fontSize: clamp(pick("fontSize", isNum), LIMITS.fontSize),
     lineHeight: clamp(pick("lineHeight", isNum), LIMITS.lineHeight),
@@ -139,7 +173,13 @@ interface SettingsState {
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
-  update: (patch) => set({ settings: sanitize({ ...get().settings, ...patch }) }),
+  update: (patch) => {
+    const current = get().settings;
+    // Elegir un tema (desde Ajustes o la paleta) es probarlo: pierde la etiqueta «Nuevo».
+    const tried =
+      patch.theme && !current.themesTried.includes(patch.theme) ? { themesTried: [...current.themesTried, patch.theme] } : {};
+    set({ settings: sanitize({ ...current, ...patch, ...tried }) });
+  },
   replace: (settings) => set({ settings: sanitize(settings) }),
 }));
 

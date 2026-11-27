@@ -22,6 +22,7 @@ import process from "node:process";
 import { DIAG, VITE_PORT, connect, makePage, sleep, startChrome, startVite, waitForHttp } from "./harness.mjs";
 
 const filter = process.argv.slice(2).find((a) => a !== "--");
+const CPU_SLOWDOWN = Math.max(1, Number(process.env.E2E_CPU) || 1);
 const TEST_TIMEOUT_MS = 30_000;
 // Tope de toda la corrida: pase lo que pase, CI no se queda esperando horas.
 const RUN_TIMEOUT_MS = 4 * 60_000;
@@ -1466,6 +1467,113 @@ const TESTS = [
       await p.shortcut("closePane");
     },
   },
+  {
+    name: "grupos-de-pestanas",
+    async run(p) {
+      // Arrastrar una pestaña sobre otra las agrupa; el grupo se nombra y se pliega.
+      const [a, b] = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const st = useTerminalStore.getState();
+        st.createTab({ title: "uno" });
+        st.createTab({ title: "dos" });
+        st.createTab({ title: "tres" });
+        return useTerminalStore.getState().tabs.slice(-3, -1).map((t) => t.id);`);
+      // Sin arrastrar nada, ninguna pestaña se ve como arrastrada.
+      const dimmed = await p.evaluate(`document.querySelectorAll('li[data-slot="tab"].opacity-50').length`);
+      if (dimmed) throw new Error(`${dimmed} pestaña(s) atenuadas sin arrastre`);
+      // Historial del foco durante el arrastre: si el editor lo pierde, la falla dice quién se lo llevó.
+      await p.evaluate(`(() => {
+        const desc = (el) => !el || el === document.body ? "BODY" : [el.tagName, el.getAttribute?.("aria-label"), el.closest?.(".xterm") && "xterm", el.closest?.('[role="dialog"]') && "editor"].filter(Boolean).join(":");
+        window.__focusLog = [];
+        const now = () => Math.round(performance.now());
+        const log = (e) => window.__focusLog.push(now() + " " + e.type + " " + desc(e.target) + (e.relatedTarget ? " ↔ " + desc(e.relatedTarget) : ""));
+        document.addEventListener("focusin", log, true);
+        document.addEventListener("focusout", log, true);
+        // Cada focus() del código, con su resultado: si no toma, por qué (desconectado u oculto).
+        const focus = HTMLElement.prototype.focus;
+        window.__restoreFocus = () => (HTMLElement.prototype.focus = focus);
+        HTMLElement.prototype.focus = function (...args) {
+          focus.apply(this, args);
+          const ok = document.activeElement === this;
+          window.__focusLog.push(now() + " focus() " + desc(this) + (ok ? " ok" : " NO TOMÓ (conectado=" + this.isConnected + ", visibility=" + getComputedStyle(this).visibility + ", foco en " + desc(document.activeElement) + ")"));
+        };
+      })()`);
+      const from = await p.settledBox(`[data-tab-id="${b}"]`);
+      const to = await p.settledBox(`[data-tab-id="${a}"]`);
+      await p.drag({ x: from.left + from.width / 2, y: from.top + from.height / 2 }, { x: to.left + to.width / 2, y: to.top + to.height / 2 });
+      await p.waitFor(`document.querySelector('[role="dialog"][aria-label^="Editar"] input')`, "el grupo nuevo abre su editor");
+      // Se escribe sin hacer clic: si el foco no está en el nombre, lo tecleado acabaría en otro sitio (o en la terminal).
+      await p
+        .waitFor(`document.activeElement === document.querySelector('[role="dialog"][aria-label^="Editar"] input')`, "el editor se queda con el foco")
+        .catch(async (err) => {
+          const who = await p.evaluate(`(() => {
+            const a = document.activeElement;
+            const desc = a ? [a.tagName, a.getAttribute("aria-label"), a.getAttribute("data-group-chip") && "cápsula", a.closest(".xterm") && "xterm"].filter(Boolean).join(" · ") : "nada";
+            return desc + " | hasFocus=" + document.hasFocus() + " | visible=" + document.visibilityState + " | editor=" + Boolean(document.querySelector('[role="dialog"][aria-label^="Editar"]')) + " | " + (navigator.userAgent.match(/Chrome\\/[\\d.]+/)?.[0] ?? "") + " | historial: " + (window.__focusLog ?? []).join(" ; ");
+          })()`);
+          throw new Error(`${err.message} → foco en: ${who}`);
+        })
+        .finally(async () => {
+          if (DIAG) console.log(`    [diag] foco: ${await p.evaluate(`(window.__focusLog ?? []).join(" ; ")`)}`);
+          await p.evaluate(`window.__restoreFocus?.()`);
+        });
+      await p.type("API");
+      await p.press("Escape");
+      const group = await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const s = useTerminalStore.getState();
+        const [ga, gb] = [${JSON.stringify(a)}, ${JSON.stringify(b)}].map((id) => s.tabs.find((t) => t.id === id)?.groupId);
+        return { same: Boolean(ga) && ga === gb, group: s.groups.find((g) => g.id === ga) ?? null };`);
+      if (!group.same || group.group?.name !== "API") throw new Error(`No quedaron agrupadas con su nombre: ${JSON.stringify(group)}`);
+      await p.click("[data-group-chip]", "API");
+      await p.waitFor(`!document.querySelector('[data-tab-id="${a}"]') && !document.querySelector('[data-tab-id="${b}"]')`, "plegado esconde sus pestañas");
+      await p.waitFor(`document.querySelector('[data-group-chip]')?.getAttribute("aria-expanded") === "false"`, "la cápsula dice que está plegado");
+      await p.run(`
+        const { useTerminalStore } = await mod("/src/store/terminalStore.ts");
+        const s = useTerminalStore.getState();
+        for (const id of s.tabs.slice(-3).map((t) => t.id)) useTerminalStore.getState().closeTab(id);
+        if (useTerminalStore.getState().groups.length) throw new Error("el grupo debía desaparecer con sus pestañas");`);
+    },
+  },
+  {
+    name: "rama-con-cambios",
+    async run(p) {
+      // Cambiar de rama desde la barra de título con cambios sin commit pregunta qué hacer con ellos.
+      await p.run(`
+        const { gitApi } = await mod("/src/lib/git.ts");
+        const { useProjectStore } = await mod("/src/store/projectStore.ts");
+        const project = await mod("/src/lib/project.ts");
+        const ROOT = "/Users/e2e/tienda";
+        window.__switches = [];
+        gitApi.status = async () => ({ branch: "feat/x", head: "abc1234", upstream: null, ahead: 0, behind: 0, operation: null, changes: [
+          { path: "a.ts", origPath: null, index: ".", worktree: "M", untracked: false, conflicted: false },
+        ] });
+        gitApi.branches = async () => [
+          { name: "feat/x", current: true, remote: false, upstream: null, ahead: 0, behind: 0, updatedAt: 1, subject: "x" },
+          { name: "main", current: false, remote: false, upstream: null, ahead: 0, behind: 0, updatedAt: 1, subject: "base" },
+        ];
+        gitApi.switchCarrying = async (...args) => { window.__switches.push(args); return { leftBehind: false, conflicts: false, keptInStash: false }; };
+        gitApi.stashList = async () => [];
+        gitApi.prStatus = async () => null;
+        gitApi.ciStatus = async () => null;
+        gitApi.log = async () => [];
+        useProjectStore.setState({ cwd: ROOT, repo: { root: ROOT, name: "tienda", remoteUrl: null, webUrl: null, host: "other", defaultBranch: "main" }, isOpen: false });
+        await project.refreshStatus({ force: true });`);
+      await p.click('button[aria-label^="Rama feat/x"]');
+      await p.waitFor(`document.querySelector('[role="dialog"][aria-label="Cambiar de rama"] [role="option"]')`, "el selector se despliega bajo la rama");
+      await p.click('[role="dialog"][aria-label="Cambiar de rama"] [role="option"]', "main");
+      await p.waitFor(`document.querySelector('#switch-title')`, "pregunta qué hacer con los cambios");
+      const first = await p.evaluate(`document.querySelector('[role="radio"][aria-checked="true"]')?.textContent ?? ""`);
+      if (!first.startsWith("Dejar mis cambios")) throw new Error(`Lo seguro (dejarlos) debe venir elegido: ${first}`);
+      await p.press("ArrowDown");
+      await p.waitFor(`document.querySelector('[role="radio"][aria-checked="true"]')?.textContent.startsWith("Llevar")`, "las flechas cambian la opción");
+      await p.press("Enter");
+      const calls = await p.waitFor(`window.__switches.length && window.__switches`, "se cambia de rama llevando los cambios");
+      const [, name, create, remote, mode] = calls[0];
+      if (name !== "main" || create || remote || mode !== "bring") throw new Error(`Cambio inesperado: ${JSON.stringify(calls[0])}`);
+      await p.run(`(await mod("/src/store/projectStore.ts")).useProjectStore.setState({ repo: null, status: null, cwd: null });`);
+    },
+  },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -1502,6 +1610,8 @@ async function main() {
       });
     }
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+    // E2E_CPU=6: la CPU N veces más lenta, como un runner de CI; saca a la luz las carreras de tiempos.
+    if (CPU_SLOWDOWN > 1) await cdp.send("Emulation.setCPUThrottlingRate", { rate: CPU_SLOWDOWN });
     await cdp.send("Page.navigate", { url: `http://127.0.0.1:${VITE_PORT}/` });
     const page = makePage(cdp);
     await page.waitFor(`document.querySelector("#root")?.childElementCount > 0`, "la app arranca", 20_000);

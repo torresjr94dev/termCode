@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { getVersion } from "@tauri-apps/api/app";
-import { X } from "lucide-react";
+import React, { useEffect, useMemo, useRef } from "react";
+import { ImagePlus, Trash2, X } from "lucide-react";
 import {
   DEFAULT_FONT,
   DEFAULT_SETTINGS,
   LIMITS,
+  NEW_THEMES,
   useSettingsStore,
   type EditorId,
   type Settings,
@@ -13,10 +13,11 @@ import {
 import { useTerminalStore } from "../store/terminalStore";
 import { useUiStore } from "../store/uiStore";
 import { cn } from "../lib/layout";
-import { IS_TAURI } from "../lib/ipc";
-import { checkForUpdate, installUpdate, updatesSupported, type UpdateInfo, type UpdateProgress } from "../lib/updates";
 import { IconButton } from "./ui";
 import { LogoMark } from "./Logo";
+import { UpdateControls } from "./About";
+import { PixelSprite } from "./festive/PixelSprite";
+import { chooseBackdrop, clearBackdrop, useBackdropStore } from "../lib/backdrop";
 import { CLICK_MOD, IS_MAC, IS_WINDOWS, shortcutLabel } from "../lib/shortcuts";
 
 /** Fuentes monoespaciadas comunes; solo se ofrecen las que el sistema tiene. */
@@ -38,6 +39,8 @@ const THEMES: Array<{ id: ThemeId; name: string; swatch: [string, string, string
   { id: "fosforo", name: "Fósforo", swatch: ["#0f0e0c", "#e6dfd2", "#ffb224"] },
   { id: "fosforo-verde", name: "Fósforo verde", swatch: ["#0d0f0d", "#d8f0dc", "#6fe39a"] },
   { id: "papel", name: "Papel", swatch: ["#f6f3ec", "#1d1a15", "#8c4b00"] },
+  { id: "navidad", name: "Navidad", swatch: ["#0b1512", "#eef4f0", "#ff4d6d"] },
+  { id: "vidrio", name: "Vidrio líquido", swatch: ["#0c0e16", "#f4f6fb", "#7cc4ff"] },
 ];
 
 const EDITOR_NAMES: Record<string, string> = { cursor: "Cursor", code: "VS Code", zed: "Zed", subl: "Sublime Text" };
@@ -115,30 +118,29 @@ const SettingsPanel: React.FC<{ onClosed: () => void }> = ({ onClosed }) => {
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
           <Section title="Apariencia">
-            <Row label="Tema">
-              <div role="radiogroup" aria-label="Tema" className="flex gap-2">
+            <div>
+              <p className="mb-2 text-[13px] text-ink">Tema</p>
+              <div role="radiogroup" aria-label="Tema" className="grid grid-cols-3 gap-2">
                 {THEMES.map((theme) => (
-                  <button
+                  <ThemeCard
                     key={theme.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={settings.theme === theme.id}
-                    onClick={() => set("theme")(theme.id)}
-                    className={cn(
-                      "flex flex-col items-start gap-1.5 rounded-md border p-2 text-[12px] transition-colors duration-150",
-                      settings.theme === theme.id ? "border-accent text-ink" : "border-line text-ink-2 hover:border-line-strong",
-                    )}
-                  >
-                    <span className="flex h-7 w-24 overflow-hidden rounded-sm border border-line" aria-hidden="true">
-                      <span className="flex-[3]" style={{ background: theme.swatch[0] }} />
-                      <span className="flex-1" style={{ background: theme.swatch[1] }} />
-                      <span className="flex-1" style={{ background: theme.swatch[2] }} />
-                    </span>
-                    {theme.name}
-                  </button>
+                    theme={theme}
+                    selected={settings.theme === theme.id}
+                    isNew={NEW_THEMES.includes(theme.id) && !settings.themesTried.includes(theme.id)}
+                    onSelect={() => set("theme")(theme.id)}
+                  />
                 ))}
               </div>
-            </Row>
+            </div>
+            {settings.theme === "navidad" && (
+              <Toggle
+                label="Nieve y trineo"
+                hint="Copos de pixeles y, de vez en cuando, Santa cruzando el cielo. Los foquitos y adornos se quedan. Con «reducir movimiento» del sistema no se mueve nada"
+                checked={settings.festiveSnow}
+                onChange={set("festiveSnow")}
+              />
+            )}
+            {settings.theme === "vidrio" && <GlassOptions />}
             <Row label="Fuente">
               <Select
                 value={fonts.some((f) => f.family === settings.fontFamily) ? settings.fontFamily : DEFAULT_FONT}
@@ -480,118 +482,151 @@ const ShortcutInput: React.FC<{ value: string; onChange: (v: string) => void }> 
   );
 };
 
-type UpdateState =
-  | { kind: "idle" }
-  | { kind: "checking" }
-  | { kind: "current" }
-  | { kind: "available"; info: UpdateInfo }
-  | { kind: "installing"; info: UpdateInfo; progress: UpdateProgress | null }
-  | { kind: "error"; message: string };
+/** Muestra de un tema: sus colores (o su escena) y su nombre; «Nuevo» hasta que lo pruebas. */
+const ThemeCard: React.FC<{
+  theme: (typeof THEMES)[number];
+  selected: boolean;
+  isNew: boolean;
+  onSelect: () => void;
+}> = ({ theme, selected, isNew, onSelect }) => (
+  <button
+    type="button"
+    role="radio"
+    aria-checked={selected}
+    aria-label={isNew ? `${theme.name} (nuevo)` : theme.name}
+    onClick={onSelect}
+    className={cn(
+      "relative flex min-w-0 flex-col items-start gap-1.5 rounded-md border p-2 text-left text-[12px] transition-colors duration-150",
+      selected ? "border-accent text-ink" : "border-line text-ink-2 hover:border-line-strong",
+    )}
+  >
+    {isNew && (
+      <span className="absolute -right-1.5 -top-1.5 z-10 rounded-full bg-accent px-1.5 py-px text-[9.5px] font-semibold uppercase tracking-[0.06em] text-on-accent shadow-none">
+        Nuevo
+      </span>
+    )}
+    <ThemeSwatch theme={theme} />
+    <span className="truncate">{theme.name}</span>
+  </button>
+);
 
-const formatMb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+const ThemeSwatch: React.FC<{ theme: (typeof THEMES)[number] }> = ({ theme }) => {
+  const [bg, ink, accent] = theme.swatch;
+  if (theme.id === "navidad") {
+    return (
+      <span aria-hidden="true" className="relative flex h-9 w-full items-end justify-center gap-0.5 overflow-hidden rounded-sm border border-line pb-0.5" style={{ background: bg }}>
+        <PixelSprite name="gift2" />
+        <PixelSprite name="tree" />
+        <PixelSprite name="gift" />
+        <span className="absolute inset-x-0 top-0 h-[3px]" style={{ background: "repeating-linear-gradient(90deg,#ff4d6d 0 3px,transparent 3px 7px,#ffd166 7px 10px,transparent 10px 14px,#4fd182 14px 17px,transparent 17px 21px)" }} />
+      </span>
+    );
+  }
+  if (theme.id === "vidrio") {
+    return (
+      <span aria-hidden="true" className="lg-backdrop relative flex h-9 w-full items-center justify-center overflow-hidden rounded-sm border border-line" data-default="">
+        <span
+          className="h-5 w-[70%] rounded-md border border-white/25 shadow-[inset_1px_1px_0_rgb(255_255_255/0.4),0_4px_10px_-4px_rgb(0_0_0/0.6)] backdrop-blur-md"
+          style={{ background: "rgb(12 14 22 / 0.45)" }}
+        >
+          <span className="ml-1.5 mt-1.5 block h-1 w-6 rounded-full" style={{ background: accent }} />
+        </span>
+      </span>
+    );
+  }
+  return (
+    <span className="flex h-9 w-full overflow-hidden rounded-sm border border-line" aria-hidden="true">
+      <span className="flex-[3]" style={{ background: bg }} />
+      <span className="flex-1" style={{ background: ink }} />
+      <span className="flex-1" style={{ background: accent }} />
+    </span>
+  );
+};
 
-/** Versión y actualizaciones (solo en compilaciones firmadas para actualizarse). */
-const AboutSection: React.FC = () => {
-  const [version, setVersion] = useState<string | null>(null);
-  const [supported, setSupported] = useState<boolean | null>(null);
-  const [state, setState] = useState<UpdateState>({ kind: "idle" });
-  const askConfirm = useUiStore((s) => s.askConfirm);
-
-  useEffect(() => {
-    if (!IS_TAURI) return;
-    let alive = true;
-    void Promise.all([getVersion().catch(() => null), updatesSupported()]).then(([v, ok]) => {
-      if (!alive) return;
-      setVersion(v);
-      setSupported(ok);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  const check = async () => {
-    setState({ kind: "checking" });
-    try {
-      const info = await checkForUpdate();
-      setState(info ? { kind: "available", info } : { kind: "current" });
-    } catch (err) {
-      setState({ kind: "error", message: err instanceof Error ? err.message : String(err) });
-    }
-  };
-
-  const install = (info: UpdateInfo) =>
-    askConfirm({
-      title: `¿Instalar termCode ${info.version} y reiniciar?`,
-      body: "termCode se cierra y vuelve a abrir: tus pestañas y carpetas se restauran, pero los procesos que estén corriendo en las terminales terminan.",
-      confirmLabel: "Instalar y reiniciar",
-      onConfirm: () => {
-        setState({ kind: "installing", info, progress: null });
-        installUpdate((progress) => setState({ kind: "installing", info, progress })).catch((err: unknown) =>
-          setState({ kind: "error", message: err instanceof Error ? err.message : String(err) }),
-        );
-      },
-    });
-
-  const percent =
-    state.kind === "installing" && state.progress?.total ? Math.round((state.progress.downloaded / state.progress.total) * 100) : null;
+/** Vidrio líquido: tu imagen de fondo, opacidad y desenfoque del vidrio. */
+const GlassOptions: React.FC = () => {
+  const settings = useSettingsStore((s) => s.settings);
+  const update = useSettingsStore((s) => s.update);
+  const url = useBackdropStore((s) => s.url);
+  const floor = useBackdropStore((s) => s.floor);
+  const loading = useBackdropStore((s) => s.loading);
+  const clamped = floor > settings.glassTint;
+  const pct = (v: number) => `${Math.round(v * 100)} %`;
 
   return (
-    <Section title="Acerca de">
-      <div className="flex items-center gap-3 py-1">
-        <LogoMark title="termCode" className="h-6 w-auto text-ink" />
-        <span className="text-[11.5px] text-ink-3">by CODERGENIUS MX</span>
-      </div>
-      <Row label="termCode" hint={version ? `Versión ${version}` : "Versión de desarrollo"}>
-        {supported ? (
+    <>
+      <Row label="Imagen de fondo" hint="PNG, JPG, WebP, GIF o AVIF, hasta 25 MB. termCode guarda su propia copia">
+        <div className="flex items-center gap-2">
+          <span
+            aria-hidden="true"
+            className="lg-backdrop h-8 w-12 rounded-sm border border-line"
+            data-default={url ? undefined : ""}
+            style={url ? { backgroundImage: `url("${url}")` } : undefined}
+          />
           <button
             type="button"
-            onClick={() => void check()}
-            disabled={state.kind === "checking" || state.kind === "installing"}
-            className="h-7 rounded-md border border-line px-2.5 text-[12px] text-ink-2 hover:bg-hover hover:text-ink disabled:opacity-50"
+            onClick={() => void chooseBackdrop()}
+            disabled={loading}
+            className="flex h-8 items-center gap-1.5 rounded-md border border-line px-2.5 text-[12px] text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink disabled:opacity-50"
           >
-            {state.kind === "checking" ? "Buscando…" : "Buscar actualizaciones"}
+            <ImagePlus size={13} strokeWidth={1.75} aria-hidden="true" />
+            {settings.glassImage ? "Cambiar…" : "Elegir imagen…"}
           </button>
-        ) : (
-          <span className="text-[11.5px] text-ink-3">{supported === null ? "" : "Sin actualizaciones automáticas en esta compilación"}</span>
-        )}
-      </Row>
-      {state.kind === "current" && <p className="text-[12px] text-ink-3">Ya tienes la última versión.</p>}
-      {state.kind === "error" && (
-        <p role="alert" className="text-[12px] text-signal">
-          {state.message}
-        </p>
-      )}
-      {(state.kind === "available" || state.kind === "installing") && (
-        <div className="rounded-md border border-accent/50 bg-accent/[0.06] p-3">
-          <p className="text-[13px] text-ink">
-            termCode {state.info.version} disponible
-            <span className="text-ink-3"> · tienes {state.info.currentVersion}</span>
-          </p>
-          {state.info.notes && (
-            <p className="mt-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap text-[12px] leading-relaxed text-ink-2">{state.info.notes}</p>
+          {settings.glassImage && (
+            <button
+              type="button"
+              aria-label="Quitar la imagen de fondo"
+              title="Quitar (vuelve el degradado de fábrica)"
+              onClick={() => void clearBackdrop()}
+              className="grid size-8 place-items-center rounded-md text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-signal"
+            >
+              <Trash2 size={13} strokeWidth={1.75} aria-hidden="true" />
+            </button>
           )}
-          <div className="mt-2.5 flex items-center gap-3">
-            {state.kind === "available" ? (
-              <button
-                type="button"
-                onClick={() => install(state.info)}
-                className="h-7 rounded-md bg-accent px-3 text-[12px] font-medium text-on-accent hover:opacity-90"
-              >
-                Instalar y reiniciar
-              </button>
-            ) : (
-              <span className="font-mono text-[12px] text-ink-2" aria-live="polite">
-                {state.progress
-                  ? percent !== null
-                    ? `Descargando… ${percent} %`
-                    : `Descargando… ${formatMb(state.progress.downloaded)}`
-                  : "Preparando…"}
-              </span>
-            )}
-          </div>
         </div>
-      )}
+      </Row>
+      <Row
+        label="Opacidad del vidrio"
+        hint={
+          clamped
+            ? `Con esta imagen no baja de ${pct(floor)}: más claro, el texto no se leería`
+            : "Más bajo, se ve más tu fondo; más alto, se lee mejor"
+        }
+      >
+        <Stepper
+          value={settings.glassTint}
+          {...LIMITS.glassTint}
+          step={0.04}
+          format={pct}
+          onChange={(glassTint) => update({ glassTint })}
+        />
+      </Row>
+      <Row label="Desenfoque" hint="0 es lo más ligero para la batería">
+        <Stepper value={settings.glassBlur} {...LIMITS.glassBlur} step={4} suffix="px" onChange={(glassBlur) => update({ glassBlur })} />
+      </Row>
+    </>
+  );
+};
+
+/** Versión y actualizaciones; el resto (sistema, enlaces) en «Acerca de termCode». */
+const AboutSection: React.FC = () => {
+  const openAbout = useUiStore((s) => s.openAbout);
+  return (
+    <Section title="Acerca de">
+      <div className="flex items-center justify-between gap-3 py-1">
+        <span className="flex items-center gap-3">
+          <LogoMark title="termCode" className="h-6 w-auto text-ink" />
+          <span className="text-[11.5px] text-ink-3">by CODERGENIUS MX</span>
+        </span>
+        <button
+          type="button"
+          onClick={() => openAbout()}
+          className="h-7 rounded-md px-2.5 text-[12px] text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
+        >
+          Más información…
+        </button>
+      </div>
+      <UpdateControls />
     </Section>
   );
 };

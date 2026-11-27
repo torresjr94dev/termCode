@@ -1,7 +1,9 @@
 //! termCode desktop app: Tauri commands bridging the webview and `pty-core`.
 
 pub mod agents;
+mod app_menu;
 mod approvals;
+mod backdrop;
 mod clipboard;
 mod cloud;
 mod codex_status;
@@ -123,7 +125,11 @@ fn install_panic_logger() {
 pub fn run() {
     install_panic_logger();
 
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // macOS: el menú de siempre con «Acerca de» y «Buscar actualizaciones…» propios.
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(app_menu::build);
+    let app = builder
         .plugin(
             tauri_plugin_log::Builder::new()
                 .clear_targets()
@@ -153,6 +159,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .on_menu_event(app_menu::on_event)
         .manage(PtyManager::default())
         .manage(pty::SessionOwners::default())
         .manage(UsageHub::default())
@@ -223,6 +230,7 @@ pub fn run() {
             git::git_commit_diff,
             git::branches::git_branches,
             git::branches::git_switch,
+            git::branches::git_switch_carrying,
             git::branches::git_stash_list,
             git::branches::git_stash_push,
             git::branches::git_stash_action,
@@ -255,6 +263,10 @@ pub fn run() {
             updater::update_supported,
             updater::update_check,
             updater::update_install,
+            app_menu::app_info,
+            backdrop::backdrop_save,
+            backdrop::backdrop_load,
+            backdrop::backdrop_clear,
             editor_set_unsaved,
             app_quit,
         ])

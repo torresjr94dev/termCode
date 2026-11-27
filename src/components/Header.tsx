@@ -1,17 +1,35 @@
-import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Bell, Check, ChevronDown, GitBranch, Maximize2, PanelLeft, Plus, Search, Settings, X } from "lucide-react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  ArrowRightLeft,
+  Bell,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  GitBranch,
+  Group,
+  Maximize2,
+  PanelLeft,
+  Pencil,
+  Plus,
+  Search,
+  Settings,
+  Ungroup,
+  X,
+} from "lucide-react";
 import { ClaudeCodeLogo, CodexLogo } from "./agentLogos";
 import { usePaneAgent, useTerminalStore } from "../store/terminalStore";
 import { useProjectStore } from "../store/projectStore";
 import { useApprovalStore } from "../store/approvalStore";
-import { openProject } from "../lib/project";
+import { openBranchPicker } from "../lib/project";
+import { BranchPicker } from "./project/BranchPicker";
+import { HeaderFestive, SantaHat, useFestive } from "./festive/Festive";
 import { actions } from "../lib/actions";
 import { basename, cn, collectPanes, findPane } from "../lib/layout";
 import { projectColor, shortCommand, tabDisplayName } from "../lib/identity";
 import { attentionCandidates } from "../lib/attention";
 import { useRunningCommand } from "../terminal/useRunningCommand";
 import { IS_WINDOWS, shortcutLabel, tabShortcutLabel } from "../lib/shortcuts";
-import type { ProviderUsage, Tab } from "../types/layout";
+import type { ProviderUsage, Tab, TabGroup } from "../types/layout";
 import { terminalManager } from "../terminal/TerminalManager";
 import { AgentGlyph, IconButton, Kbd, Lamp, Ring } from "./ui";
 import { WindowControls } from "./WindowControls";
@@ -20,54 +38,165 @@ import { useNow } from "../lib/useNow";
 import { useSettingsStore } from "../store/settingsStore";
 import { tildify } from "../lib/paths";
 import { useTrafficLights } from "../lib/fullscreen";
+import { GROUP_COLORS, GROUP_COLOR_NAMES, groupColorVar, stripItems, type TabDrop } from "../lib/tabGroups";
+import { showContextMenu } from "./ContextMenu";
+import { useUiStore, type MenuItem } from "../store/uiStore";
 
 interface HeaderProps {
   onOpenPalette: () => void;
 }
 
+/** Lo que se arrastra en la tira: una pestaña o un grupo entero (por su cápsula). */
+type StripDrag =
+  | { kind: "tab"; tabId: string; drop: TabDrop | null }
+  | { kind: "group"; groupId: string; before: string | null | undefined };
+
+/** Umbral para que un clic no se vuelva arrastre. */
+const DRAG_THRESHOLD = 5;
+
+/**
+ * Dónde caería una pestaña con el puntero en `x`. Sobre el tercio central de
+ * otra pestaña se agrupan; en sus bordes se pone al lado. Sobre una cápsula:
+ * su borde izquierdo queda fuera del grupo, el resto entra.
+ */
+function tabDropAt(list: HTMLElement, x: number, draggedId: string): TabDrop | null {
+  for (const el of list.querySelectorAll<HTMLElement>("[data-slot]")) {
+    const r = el.getBoundingClientRect();
+    if (x > r.right) continue;
+    const rel = (x - r.left) / Math.max(r.width, 1);
+    if (el.dataset.slot === "chip") {
+      const groupId = el.dataset.groupId ?? "";
+      return rel < 0.35 ? { kind: "chip-before", groupId } : { kind: "chip-into", groupId };
+    }
+    const targetId = el.dataset.tabId ?? "";
+    if (targetId === draggedId) return null;
+    if (rel < 0.3) return { kind: "before", targetId };
+    if (rel > 0.7) return { kind: "after", targetId };
+    return { kind: "onto", targetId };
+  }
+  return { kind: "end" };
+}
+
+/**
+ * Antes de qué pestaña cae un grupo arrastrado (`null`: al final; `undefined`:
+ * donde ya estaba). Solo cuentan las pestañas sueltas y las cápsulas.
+ */
+function groupDropAt(list: HTMLElement, x: number, groupId: string): string | null | undefined {
+  for (const el of list.querySelectorAll<HTMLElement>("[data-top]")) {
+    if (el.dataset.groupId === groupId && el.dataset.slot === "chip") continue;
+    const r = el.getBoundingClientRect();
+    if (x < r.left + r.width / 2) return el.dataset.top;
+  }
+  return null;
+}
+
 export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
   const tabs = useTerminalStore((s) => s.tabs);
+  const groups = useTerminalStore((s) => s.groups);
   const activeTabId = useTerminalStore((s) => s.activeTabId);
   const isSidebarOpen = useTerminalStore((s) => s.isSidebarOpen);
   const setActiveTab = useTerminalStore((s) => s.setActiveTab);
   const attention = useTerminalStore((s) => s.attention);
-  const moveTab = useTerminalStore((s) => s.moveTab);
   const listRef = useRef<HTMLUListElement | null>(null);
   // Hueco para los semáforos de macOS: solo con la ventana normal y sin barra lateral (que los aloja).
   const lightsGap = useTrafficLights() && !isSidebarOpen;
-  const [drag, setDrag] = useState<{ from: number; to: number; dragging: boolean } | null>(null);
+  const [drag, setDrag] = useState<StripDrag | null>(null);
+  /** Grupo con su editor abierto (nombre, color, acciones). */
+  const [editingGroup, setEditingGroup] = useState<string | null>(null);
+  const closeEditor = useCallback(() => setEditingGroup(null), []);
+  const items = useMemo(() => stripItems(tabs, groups), [tabs, groups]);
+  /** Soltar un arrastre sobre la propia cápsula no debe contar como clic (plegaría el grupo). */
+  const justDragged = useRef(false);
 
-  /** Arrastrar una pestaña la reordena (umbral de 5 px para no robar clics). */
-  const startDrag = (from: number, e: React.PointerEvent) => {
+  /** Sigue el puntero con umbral; `onUp` decide qué hacer si hubo arrastre. */
+  const track = (e: React.PointerEvent, onMove: (x: number) => void, onUp: () => void) => {
     if (e.button !== 0) return;
     const startX = e.clientX;
-    let state = { from, to: from, dragging: false };
-    setDrag(state);
-    const onMove = (ev: PointerEvent) => {
-      if (!state.dragging && Math.abs(ev.clientX - startX) < 5) return;
-      const items = [...(listRef.current?.querySelectorAll<HTMLElement>("li[data-index]") ?? [])];
-      const to = items.findIndex((el) => {
-        const r = el.getBoundingClientRect();
-        return ev.clientX < r.left + r.width / 2;
-      });
-      state = { from, to: to === -1 ? items.length - 1 : to > from ? to - 1 : to, dragging: true };
-      setDrag(state);
+    let dragging = false;
+    const move = (ev: PointerEvent) => {
+      if (!dragging && Math.abs(ev.clientX - startX) < DRAG_THRESHOLD) return;
+      dragging = true;
+      onMove(ev.clientX);
     };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      if (state.dragging && state.to !== state.from) moveTab(state.from, state.to);
-      setDrag(null);
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      if (!dragging) return;
+      justDragged.current = true;
+      setTimeout(() => (justDragged.current = false), 0);
+      onUp();
     };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   };
+
+  /** Arrastrar una pestaña: la reordena, la mete o saca de un grupo, o crea uno. */
+  const startTabDrag = (tabId: string, e: React.PointerEvent) => {
+    let current: StripDrag = { kind: "tab", tabId, drop: null };
+    track(
+      e,
+      (x) => {
+        const list = listRef.current;
+        if (!list) return;
+        current = { kind: "tab", tabId, drop: tabDropAt(list, x, tabId) };
+        setDrag(current);
+      },
+      () => {
+        setDrag(null);
+        if (current.kind !== "tab" || !current.drop) return;
+        const created = useTerminalStore.getState().dropTab(tabId, current.drop);
+        // Grupo recién nacido: se le pone nombre y color en el momento.
+        if (created) setEditingGroup(created);
+      },
+    );
+  };
+
+  /** Arrastrar la cápsula mueve el grupo entero. */
+  const startGroupDrag = (groupId: string, e: React.PointerEvent) => {
+    let current: StripDrag = { kind: "group", groupId, before: undefined };
+    track(
+      e,
+      (x) => {
+        const list = listRef.current;
+        if (!list) return;
+        current = { kind: "group", groupId, before: groupDropAt(list, x, groupId) };
+        setDrag(current);
+      },
+      () => {
+        setDrag(null);
+        if (current.kind === "group" && current.before !== undefined) {
+          useTerminalStore.getState().moveGroup(groupId, current.before);
+        }
+      },
+    );
+  };
+
+  const groupOf = (tabId: string) => tabs.find((t) => t.id === tabId)?.groupId;
+  /** Marca de dónde cae lo arrastrado, para la pestaña o la cápsula que la lleva. */
+  const tabHint = (tabId: string): TabDropHint | null => {
+    if (drag?.kind === "group") return drag.before === tabId && !groupOf(tabId) ? { side: "before", color: null } : null;
+    const drop = drag?.drop;
+    if (!drop || !("targetId" in drop) || drop.targetId !== tabId) return null;
+    const joins = groupOf(tabId);
+    const color = joins ? groupColorVar(groups.find((g) => g.id === joins)?.color ?? "gris") : null;
+    return { side: drop.kind, color };
+  };
+  const chipHint = (group: TabGroup, firstTabId: string): "before" | "into" | null => {
+    if (drag?.kind === "group") return drag.before === firstTabId && drag.groupId !== group.id ? "before" : null;
+    const drop = drag?.drop;
+    if (!drop || !("groupId" in drop) || drop.groupId !== group.id) return null;
+    return drop.kind === "chip-before" ? "before" : "into";
+  };
+  const dropAtEnd = drag?.kind === "tab" ? drag.drop?.kind === "end" : drag?.kind === "group" && drag.before === null;
 
   const canClose = tabs.length > 1;
 
   return (
     <header
       data-tauri-drag-region
+      data-chrome
       // En Windows la ventana no tiene marco: esta es la barra de título y los
       // botones de ventana van pegados al borde derecho.
       className={cn("relative z-20 flex h-11 shrink-0 items-center bg-chrome", IS_WINDOWS ? "pr-0" : "pr-2")}
@@ -87,21 +216,57 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
 
       <nav aria-label="Pestañas" className="ml-1.5 flex min-w-0 items-center">
         <ul ref={listRef} data-tauri-drag-region className="scrollbar-none flex min-w-0 items-center gap-0.5 overflow-x-auto py-1">
-          {tabs.map((tab, index) => (
-            <TabItem
-              key={tab.id}
-              tab={tab}
-              index={index}
-              isActive={tab.id === activeTabId}
-              canClose={canClose}
-              needsAttention={collectPanes(tab.root).some((p) => p.id in attention)}
-              dropMarker={drag?.dragging && drag.to === index ? (drag.to > drag.from ? "after" : drag.to < drag.from ? "before" : null) : null}
-              isDragged={Boolean(drag?.dragging && drag.from === index)}
-              onPointerDownTab={(e) => startDrag(index, e)}
-              onSelect={() => setActiveTab(tab.id)}
-            />
-          ))}
+          {items.map((item) => {
+            const renderTab = ({ tab, index }: { tab: Tab; index: number }, group?: TabGroup, last?: boolean) => (
+              <TabItem
+                key={tab.id}
+                tab={tab}
+                index={index}
+                group={group}
+                lastInGroup={last}
+                isActive={tab.id === activeTabId}
+                canClose={canClose}
+                needsAttention={collectPanes(tab.root).some((p) => p.id in attention)}
+                dropHint={tabHint(tab.id)}
+                isDragged={
+                  drag?.kind === "tab"
+                    ? drag.tabId === tab.id && drag.drop !== null
+                    : drag?.kind === "group" && drag.before !== undefined && drag.groupId === group?.id
+                }
+                onPointerDownTab={(e) => startTabDrag(tab.id, e)}
+                onSelect={() => setActiveTab(tab.id)}
+                onEditGroup={setEditingGroup}
+              />
+            );
+            if (item.kind === "tab") return renderTab(item);
+            const { group, tabs: members } = item;
+            return (
+              <React.Fragment key={group.id}>
+                <GroupChip
+                  group={group}
+                  count={members.length}
+                  firstTabId={members[0].tab.id}
+                  needsAttention={members.some(({ tab }) => collectPanes(tab.root).some((p) => p.id in attention))}
+                  dropHint={chipHint(group, members[0].tab.id)}
+                  isDragged={drag?.kind === "group" && drag.groupId === group.id && drag.before !== undefined}
+                  isEditing={editingGroup === group.id}
+                  onPointerDownChip={(e) => startGroupDrag(group.id, e)}
+                  onToggle={() => {
+                    if (!justDragged.current) actions.toggleGroup(group.id);
+                  }}
+                  onEdit={() => setEditingGroup(group.id)}
+                />
+                {!group.collapsed && members.map((m, i) => renderTab(m, group, i === members.length - 1))}
+              </React.Fragment>
+            );
+          })}
+          {dropAtEnd && (
+            <li aria-hidden="true" className="relative h-[30px] w-0 shrink-0">
+              <span className="absolute inset-y-1 -left-1 w-0.5 rounded-full bg-accent" />
+            </li>
+          )}
         </ul>
+        {editingGroup && <GroupEditor key={editingGroup} groupId={editingGroup} onClose={closeEditor} />}
 
         <div className="flex items-center pl-1">
           <IconButton icon={Plus} label="Nueva pestaña" shortcut={shortcutLabel("newTab")} onClick={actions.newTab} />
@@ -109,7 +274,9 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPalette }) => {
         </div>
       </nav>
 
-      <div data-tauri-drag-region className="min-w-4 flex-1" />
+      <div data-tauri-drag-region className="@container relative min-w-4 flex-1 self-stretch">
+        <HeaderFestive />
+      </div>
 
       <div className="flex items-center gap-1.5">
         <BranchButton />
@@ -229,11 +396,16 @@ const UsageButton: React.FC = () => {
   );
 };
 
-/** Rama del repo donde está el panel activo; abre la vista de cambios. */
+/**
+ * Rama del repo donde está el panel activo. Es un selector: despliega las
+ * ramas ahí mismo y cambiar es un `git switch` (si hay cambios sin commit,
+ * antes pregunta qué hacer con ellos).
+ */
 const BranchButton: React.FC = () => {
   const repo = useProjectStore((s) => s.repo);
   const status = useProjectStore((s) => s.status);
-  const isOpen = useProjectStore((s) => s.isOpen && s.tab === "changes");
+  const isOpen = useProjectStore((s) => s.isBranchPickerOpen && s.branchPickerAt === "header");
+  const busy = useProjectStore((s) => s.busy === "branch");
   if (!repo || !status) return null;
 
   const branch = status.branch ?? (status.head ? `@${status.head.slice(0, 7)}` : "sin commits");
@@ -241,36 +413,60 @@ const BranchButton: React.FC = () => {
   const sync = [status.ahead ? `↑${status.ahead}` : "", status.behind ? `↓${status.behind}` : ""].filter(Boolean).join(" ");
 
   return (
-    <button
-      type="button"
-      onClick={() => openProject("changes")}
-      aria-pressed={isOpen}
-      aria-label={`Rama ${branch}${changes ? `, ${changes} cambios` : ""}`}
-      title={`${repo.name} · ${branch}  ${shortcutLabel("projectChanges")}`}
-      className={cn(
-        "flex h-[30px] max-w-[220px] items-center gap-1.5 rounded-[10px] px-2.5 font-mono text-[12px] transition-colors duration-150",
-        isOpen ? "glass-pill text-ink" : "text-ink-2 hover:bg-hover hover:text-ink",
-      )}
-    >
-      <GitBranch size={13} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-ink-3" />
-      <span className="truncate">{branch}</span>
-      {changes > 0 && <span className="shrink-0 tabular-nums text-accent">●{changes}</span>}
-      {sync && <span className="shrink-0 tabular-nums text-ink-3">{sync}</span>}
-    </button>
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => openBranchPicker("header")}
+        aria-haspopup="dialog"
+        aria-expanded={isOpen}
+        aria-busy={busy}
+        aria-label={`Rama ${branch}${changes ? `, ${changes} cambios sin commit` : ""}. Cambiar de rama`}
+        title={`${repo.name} · ${branch} · cambiar de rama  ${shortcutLabel("switchBranch")}`}
+        className={cn(
+          "flex h-[30px] max-w-[240px] items-center gap-1.5 rounded-[10px] px-2.5 font-mono text-[12px] transition-colors duration-150",
+          isOpen ? "glass-pill text-ink" : "text-ink-2 hover:bg-hover hover:text-ink",
+          busy && "opacity-60",
+        )}
+      >
+        <GitBranch size={13} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-ink-3" />
+        <span className="truncate">{branch}</span>
+        {changes > 0 && <span className="shrink-0 tabular-nums text-accent">●{changes}</span>}
+        {sync && <span className="shrink-0 tabular-nums text-ink-3">{sync}</span>}
+        <ChevronDown
+          size={11}
+          strokeWidth={2.25}
+          aria-hidden="true"
+          className={cn("shrink-0 text-ink-3 transition-transform duration-150", isOpen && "rotate-180")}
+        />
+      </button>
+      <BranchPicker at="header" />
+    </div>
   );
 };
+
+/** Dónde caería lo arrastrado respecto a esta pestaña; `color`: el del grupo al que entraría. */
+interface TabDropHint {
+  side: "before" | "after" | "onto";
+  color: string | null;
+}
 
 interface TabItemProps {
   tab: Tab;
   index: number;
+  /** Grupo desplegado al que pertenece (lleva su línea de color debajo). */
+  group?: TabGroup;
+  lastInGroup?: boolean;
   isActive: boolean;
   canClose: boolean;
   needsAttention: boolean;
-  dropMarker: "before" | "after" | null;
+  dropHint: TabDropHint | null;
   isDragged: boolean;
   onPointerDownTab: (e: React.PointerEvent) => void;
   onSelect: () => void;
+  onEditGroup: (groupId: string) => void;
 }
+
+const groupLabel = (g: TabGroup) => g.name || `Grupo ${GROUP_COLOR_NAMES[g.color].toLowerCase()}`;
 
 /** Progreso que reporta el programa del panel activo (OSC 9;4). */
 function useTabProgress(paneId: string): { state: number; value: number } {
@@ -285,16 +481,21 @@ function useTabProgress(paneId: string): { state: number; value: number } {
 const TabItem: React.FC<TabItemProps> = ({
   tab,
   index,
+  group,
+  lastInGroup,
   isActive,
   canClose,
   needsAttention,
-  dropMarker,
+  dropHint,
   isDragged,
   onPointerDownTab,
   onSelect,
+  onEditGroup,
 }) => {
   const renameTab = useTerminalStore((s) => s.renameTab);
   const paneProject = useTerminalStore((s) => s.paneProject);
+  const groups = useTerminalStore((s) => s.groups);
+  const festive = useFestive();
   const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const label = tabDisplayName(tab, paneProject);
@@ -320,26 +521,80 @@ const TabItem: React.FC<TabItemProps> = ({
     setEditing(false);
   };
 
+  /** Agrupar, mover a otro grupo, sacar, renombrar y cerrar. */
+  const menu = (): MenuItem[] => {
+    const store = useTerminalStore.getState();
+    const others = groups.filter((g) => g.id !== tab.groupId).slice(0, 8);
+    return [
+      {
+        label: "Añadir a grupo nuevo",
+        icon: Group,
+        onSelect: () => {
+          const created = store.groupTab(tab.id);
+          if (created) onEditGroup(created);
+        },
+      },
+      ...others.map(
+        (g): MenuItem => ({ label: `Mover a ${groupLabel(g)}`, icon: ArrowRightLeft, onSelect: () => store.joinGroup(tab.id, g.id) }),
+      ),
+      ...(tab.groupId ? [{ label: "Quitar del grupo", icon: Ungroup, onSelect: () => store.leaveGroup(tab.id) } satisfies MenuItem] : []),
+      "separator",
+      { label: "Renombrar pestaña", icon: Pencil, hint: "doble clic", onSelect: () => setEditing(true) },
+      { label: "Cerrar pestaña", icon: X, disabled: !canClose, onSelect: () => actions.closeTab(tab.id) },
+    ];
+  };
+
+  const groupColor = group ? groupColorVar(group.color) : null;
+
   return (
     <li
       data-index={index}
+      data-slot="tab"
+      data-tab-id={tab.id}
+      // Las sueltas cuentan como posición al arrastrar un grupo entero.
+      {...(group ? {} : { "data-top": tab.id })}
       onPointerDown={(e) => {
         if (!editing && !(e.target as HTMLElement).closest("[data-no-drag]")) onPointerDownTab(e);
       }}
+      onContextMenu={(e) => showContextMenu(e, `Pestaña ${label}`, menu())}
       className={cn(
         // Cápsula de vidrio solo para la activa; el resto, texto que se ilumina al pasar.
         // Como en un navegador, con muchas pestañas se encogen (el nombre se corta)
         // antes de que la tira se desborde y esconda la activa.
-        "group relative flex h-[30px] min-w-[64px] shrink items-center rounded-[10px] transition-[background-color,color] duration-150",
+        "group relative flex h-[30px] min-w-[64px] shrink items-center rounded-[10px] transition-[background-color,color,box-shadow] duration-150",
         isActive ? "glass-pill z-10 text-ink" : "text-ink-3 hover:bg-hover hover:text-ink-2",
         isDragged && "opacity-50",
       )}
+      style={
+        dropHint?.side === "onto"
+          ? { boxShadow: `inset 0 0 0 1.5px ${dropHint.color ?? "var(--color-accent)"}` }
+          : undefined
+      }
     >
-      {dropMarker && (
+      {festive && isActive && <SantaHat />}
+      {/* Línea del grupo: une sus pestañas con la cápsula, como en un navegador. */}
+      {groupColor && (
         <span
           aria-hidden="true"
-          className={cn("absolute inset-y-1 w-0.5 rounded-full bg-accent", dropMarker === "before" ? "-left-1" : "-right-1")}
+          className={cn("pointer-events-none absolute -bottom-[3px] left-0 h-[2px] rounded-full", lastInGroup ? "right-1" : "-right-0.5")}
+          style={{ background: groupColor }}
         />
+      )}
+      {dropHint && dropHint.side !== "onto" && (
+        <span
+          aria-hidden="true"
+          className={cn("absolute inset-y-1 w-0.5 rounded-full", dropHint.side === "before" ? "-left-1" : "-right-1")}
+          style={{ background: dropHint.color ?? "var(--color-accent)" }}
+        />
+      )}
+      {dropHint?.side === "onto" && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute -top-1.5 right-1 z-20 grid size-4 place-items-center rounded-full text-on-accent shadow"
+          style={{ background: dropHint.color ?? "var(--color-accent)" }}
+        >
+          <Plus size={10} strokeWidth={3} />
+        </span>
       )}
       {editing ? (
         <input
@@ -363,6 +618,14 @@ const TabItem: React.FC<TabItemProps> = ({
           onDoubleClick={() => setEditing(true)}
           onAuxClick={(e) => {
             if (e.button === 1 && canClose) actions.closeTab(tab.id);
+          }}
+          onKeyDown={(e) => {
+            // El menú también con teclado (tecla de menú o Shift+F10).
+            if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+              e.preventDefault();
+              const r = e.currentTarget.getBoundingClientRect();
+              useUiStore.getState().openContextMenu({ x: r.left, y: r.bottom + 4, label: `Pestaña ${label}`, items: menu() });
+            }
           }}
           className="flex h-full min-w-0 items-center gap-2 pl-2.5 pr-1 outline-offset-[-2px]"
         >
@@ -424,6 +687,284 @@ const TabItem: React.FC<TabItemProps> = ({
     </li>
   );
 };
+
+interface GroupChipProps {
+  group: TabGroup;
+  count: number;
+  firstTabId: string;
+  /** Plegado esconde sus pestañas: si alguna te espera, lo dice la cápsula. */
+  needsAttention: boolean;
+  dropHint: "before" | "into" | null;
+  isDragged: boolean;
+  isEditing: boolean;
+  onPointerDownChip: (e: React.PointerEvent) => void;
+  onToggle: () => void;
+  onEdit: () => void;
+}
+
+/**
+ * Cápsula del grupo: clic pliega o despliega, clic derecho (o F2) lo edita,
+ * arrastrarla mueve el grupo entero. Plegado muestra cuántas pestañas guarda.
+ */
+const GroupChip: React.FC<GroupChipProps> = ({
+  group,
+  count,
+  firstTabId,
+  needsAttention,
+  dropHint,
+  isDragged,
+  isEditing,
+  onPointerDownChip,
+  onToggle,
+  onEdit,
+}) => {
+  const color = groupColorVar(group.color);
+  const label = groupLabel(group);
+  const highlighted = dropHint === "into" || isEditing;
+  return (
+    <li
+      data-slot="chip"
+      data-group-id={group.id}
+      data-top={firstTabId}
+      className={cn("relative flex h-[30px] shrink-0 items-center px-0.5", isDragged && "opacity-50")}
+    >
+      {dropHint === "before" && <span aria-hidden="true" className="absolute inset-y-1 -left-1 w-0.5 rounded-full bg-accent" />}
+      {!group.collapsed && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute -bottom-[3px] -right-0.5 left-1/2 h-[2px] rounded-full"
+          style={{ background: color }}
+        />
+      )}
+      <button
+        type="button"
+        data-group-chip={group.id}
+        aria-expanded={!group.collapsed}
+        aria-label={`${label}: ${count} ${count === 1 ? "pestaña" : "pestañas"}`}
+        title={`${label} · clic para ${group.collapsed ? "desplegar" : "plegar"} · clic derecho para editar`}
+        onPointerDown={onPointerDownChip}
+        onClick={onToggle}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onEdit();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "F2" || e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+            e.preventDefault();
+            onEdit();
+          }
+        }}
+        className="flex h-[22px] max-w-[160px] items-center gap-1 rounded-[7px] px-2 text-[11.5px] font-semibold leading-none transition-[box-shadow,filter] duration-150 hover:brightness-110"
+        style={{
+          background: color,
+          color: "var(--tg-ink)",
+          boxShadow: highlighted ? `0 0 0 2px var(--color-chrome), 0 0 0 3.5px ${color}` : undefined,
+        }}
+      >
+        {group.name ? (
+          <span className="truncate">{group.name}</span>
+        ) : (
+          <span aria-hidden="true" className="size-2 rounded-full bg-current opacity-60" />
+        )}
+        {group.collapsed && (
+          <span className="rounded-full bg-black/15 px-1 py-px font-mono text-[10px] tabular-nums">{count}</span>
+        )}
+      </button>
+      {group.collapsed && needsAttention && (
+        <span className="pointer-events-none absolute -right-0.5 -top-0.5">
+          <Lamp state="attention" />
+        </span>
+      )}
+    </li>
+  );
+};
+
+const EDITOR_WIDTH = 272;
+
+const findChip = (groupId: string) => document.querySelector<HTMLElement>(`[data-group-chip="${CSS.escape(groupId)}"]`);
+
+/** Nombre, color y acciones del grupo, en un globo bajo su cápsula. */
+const GroupEditor: React.FC<{ groupId: string; onClose: () => void }> = ({ groupId, onClose }) => {
+  const group = useTerminalStore((s) => s.groups.find((g) => g.id === groupId));
+  const count = useTerminalStore((s) => s.tabs.filter((t) => t.groupId === groupId).length);
+  const updateGroup = useTerminalStore((s) => s.updateGroup);
+  const ref = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  // Borrador local: el store recorta espacios y no dejaría escribir «mi grupo».
+  const [draft, setDraft] = useState(group?.name ?? "");
+
+  /** `restoreFocus`: cerrado con teclado, el foco vuelve a la cápsula (con el ratón, se queda donde hiciste clic). */
+  const close = useCallback(
+    (restoreFocus: boolean) => {
+      onClose();
+      if (restoreFocus) findChip(groupId)?.focus();
+    },
+    [groupId, onClose],
+  );
+
+  // Bajo la cápsula y dentro de la ventana. La cápsula se mueve al plegar o
+  // desplegar el grupo o al sumar pestañas: se recoloca con cada cambio. Es
+  // un efecto de layout: se coloca antes del primer pintado, así que no hace
+  // falta esconderlo mientras tanto (y escondido no podría recibir el foco).
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const r = findChip(groupId)?.getBoundingClientRect();
+    el.style.left = `${r ? Math.min(Math.max(8, r.left), window.innerWidth - EDITOR_WIDTH - 8) : 8}px`;
+    el.style.top = `${r ? r.bottom + 8 : 52}px`;
+  }, [groupId, group?.collapsed, count]);
+
+  // Se abre listo para escribir el nombre. Al soltar un arrastre, el navegador
+  // puede seguir procesando el ratón después de este efecto y dejar el foco en
+  // ninguna parte (body): entonces el nombre lo recupera en el cuadro siguiente.
+  // Si el foco ya está en otro sitio (lo movió quien usa la app), no se toca.
+  useEffect(() => {
+    const take = () => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    };
+    take();
+    const frame = requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (!active || active === document.body) take();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    if (!group) onClose();
+  }, [group, onClose]);
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) close(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      close(true);
+    };
+    const onResize = () => close(false);
+    window.addEventListener("mousedown", onDown, true);
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("mousedown", onDown, true);
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [close]);
+
+  if (!group) return null;
+  const label = groupLabel(group);
+
+  return (
+    <div
+      ref={ref}
+      role="dialog"
+      aria-label={`Editar ${label}`}
+      className="fixed z-50 animate-pop-in rounded-lg border border-[var(--glass-border)] p-3 glass"
+      style={{ left: 0, top: 0, width: EDITOR_WIDTH }}
+    >
+      <input
+        ref={inputRef}
+        value={draft}
+        maxLength={40}
+        spellCheck={false}
+        placeholder="Nombre del grupo"
+        aria-label="Nombre del grupo"
+        onChange={(e) => {
+          setDraft(e.target.value);
+          updateGroup(groupId, { name: e.target.value });
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            close(true);
+          }
+        }}
+        className="h-8 w-full select-text rounded-md border border-line bg-canvas px-2.5 text-[12.5px] text-ink outline-none placeholder:text-ink-3 focus:border-line-strong"
+      />
+      <div role="radiogroup" aria-label="Color del grupo" className="mt-3 grid grid-cols-9 justify-items-center gap-1">
+        {GROUP_COLORS.map((c) => (
+          <button
+            key={c}
+            type="button"
+            role="radio"
+            aria-checked={group.color === c}
+            aria-label={GROUP_COLOR_NAMES[c]}
+            title={GROUP_COLOR_NAMES[c]}
+            onClick={() => updateGroup(groupId, { color: c })}
+            className="grid size-6 place-items-center rounded-full transition-transform duration-150 hover:scale-110"
+            style={{
+              background: groupColorVar(c),
+              boxShadow: group.color === c ? `0 0 0 2px var(--color-raised), 0 0 0 3.5px ${groupColorVar(c)}` : undefined,
+            }}
+          >
+            {group.color === c && <Check size={13} strokeWidth={3} aria-hidden="true" style={{ color: "var(--tg-ink)" }} />}
+          </button>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-col border-t border-line pt-1.5">
+        <EditorAction
+          icon={Plus}
+          label="Nueva pestaña en el grupo"
+          onClick={() => {
+            close(false);
+            void actions.newTabInGroup(groupId);
+          }}
+        />
+        <EditorAction
+          icon={group.collapsed ? ChevronDown : ChevronRight}
+          label={group.collapsed ? "Desplegar" : "Plegar"}
+          hint="clic en la cápsula"
+          onClick={() => actions.toggleGroup(groupId)}
+        />
+        <EditorAction
+          icon={Ungroup}
+          label="Desagrupar"
+          onClick={() => {
+            close(false);
+            useTerminalStore.getState().ungroup(groupId);
+          }}
+        />
+        <EditorAction
+          icon={X}
+          label="Cerrar grupo"
+          hint={count === 1 ? "1 pestaña" : `${count} pestañas`}
+          danger
+          onClick={() => {
+            close(false);
+            void actions.closeGroup(groupId);
+          }}
+        />
+      </div>
+    </div>
+  );
+};
+
+const EditorAction: React.FC<{
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string; "aria-hidden"?: boolean }>;
+  label: string;
+  hint?: string;
+  danger?: boolean;
+  onClick: () => void;
+}> = ({ icon: Icon, label, hint, danger, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={cn(
+      "flex h-8 items-center gap-2 rounded-md px-2 text-left text-[12.5px] transition-colors duration-150 hover:bg-hover focus-visible:bg-hover",
+      danger ? "text-signal" : "text-ink",
+    )}
+  >
+    <Icon size={14} strokeWidth={1.75} aria-hidden={true} className={danger ? undefined : "text-ink-3"} />
+    <span className="flex-1">{label}</span>
+    {hint && <span className="text-[11px] text-ink-3">{hint}</span>}
+  </button>
+);
 
 /**
  * Elegir con qué shell abrir la pestaña nueva (las que hay instaladas). La

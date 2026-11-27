@@ -4,7 +4,7 @@ import { clampDock, useProjectStore, initialRepoState, sameSource, type DiffSour
 import { useTerminalStore } from "../store/terminalStore";
 import { useUiStore } from "../store/uiStore";
 import { terminalManager } from "../terminal/TerminalManager";
-import { gitApi, isStaged, isUnstaged, type FilePreview, type GitChange, type StashEntry } from "./git";
+import { gitApi, isStaged, isUnstaged, LEFT_ON_TAG, type FilePreview, type GitChange, type StashEntry } from "./git";
 import { IS_TAURI, ipc, quotePath } from "./ipc";
 import { settingsNow } from "../store/settingsStore";
 import { collectPanes, findOwnerTab, findPane } from "./layout";
@@ -1090,19 +1090,22 @@ function afterHeadMove() {
   void refreshStashes();
 }
 
-/** ⌘⇧B: panel de Cambios abierto y el selector de ramas desplegado. */
-export function openBranchPicker() {
-  const { repo, isOpen, tab, isBranchPickerOpen } = project();
+/**
+ * ⌘⇧B o clic en la rama de la barra de título: el selector se despliega ahí
+ * mismo. Desde Cambios (`panel`), sobre su barra de sincronización.
+ */
+export function openBranchPicker(at: "header" | "panel" = "header") {
+  const { repo, isOpen, tab, isBranchPickerOpen, branchPickerAt } = project();
   if (!repo) {
     toast("El panel activo no está dentro de un repositorio git.");
     return;
   }
   if (isBranchPickerOpen) {
     project().set({ isBranchPickerOpen: false });
-    return;
+    if (branchPickerAt === at) return;
   }
-  if (!isOpen || tab !== "changes") openProject("changes");
-  project().set({ isBranchPickerOpen: true });
+  if (at === "panel" && (!isOpen || tab !== "changes")) openProject("changes");
+  project().set({ isBranchPickerOpen: true, branchPickerAt: at });
 }
 
 interface SwitchOptions {
@@ -1111,45 +1114,108 @@ interface SwitchOptions {
   remote?: boolean;
 }
 
+/** Nombre de la rama local a la que se llega (`origin/x` → `x`). */
+const localName = (name: string, remote?: boolean) => (remote ? name.replace(/^[^/]+\//, "") : name);
+
+/**
+ * Cambia de rama. Con cambios sin commit no adivina: abre el diálogo para
+ * elegir si se quedan en la rama actual o viajan contigo (como GitHub Desktop).
+ */
 export async function switchBranch(name: string, options: SwitchOptions = {}): Promise<boolean> {
   const root = project().repo?.root;
   if (!root || project().busy) return false;
+  // El estado del panel puede tener unos segundos: se pregunta a git ahora.
+  const status = await gitApi.status(root).catch(() => project().status);
+  if (status?.operation) {
+    toast(`Hay un ${status.operation} a medias: termínalo o cancélalo en Cambios antes de cambiar de rama.`, "error");
+    return false;
+  }
+  if (status?.changes.length) {
+    project().set({
+      pendingSwitch: {
+        root,
+        name,
+        create: Boolean(options.create),
+        remote: Boolean(options.remote),
+        from: status.branch,
+        files: status.changes.map((c) => c.path),
+      },
+    });
+    return false;
+  }
+  return runSwitch(root, name, options);
+}
+
+async function runSwitch(root: string, name: string, options: SwitchOptions): Promise<boolean> {
   project().set({ busy: "branch" });
   try {
     await gitApi.switchBranch(root, name, Boolean(options.create), Boolean(options.remote));
-    const local = options.remote ? name.replace(/^[^/]+\//, "") : name;
-    toast(options.create ? `Rama ${name} creada desde ${project().status?.branch ?? "HEAD"}.` : `Ahora estás en ${local}.`);
+    toast(options.create ? `Rama ${name} creada desde ${project().status?.branch ?? "HEAD"}.` : `Ahora estás en ${localName(name, options.remote)}.`);
     afterHeadMove();
+    void offerLeftChanges(root, localName(name, options.remote));
     return true;
   } catch (err) {
-    const text = errorText(err);
-    if (text.includes("stash")) {
-      useUiStore.getState().askConfirm({
-        title: `¿Guardar tus cambios en el stash y cambiar a ${name}?`,
-        body: "Tus cambios sin commitear (incluidos archivos nuevos) se guardan en el stash. Los recuperas desde Cambios → Stash.",
-        confirmLabel: "Guardar y cambiar",
-        onConfirm: () => void stashThenSwitch(name, options),
-      });
-    } else {
-      toast(text, "error");
-    }
+    toast(errorText(err), "error");
     return false;
   } finally {
     project().set({ busy: null });
-    void refreshStatus();
+    void refreshStatus({ force: true });
   }
 }
 
-async function stashThenSwitch(name: string, options: SwitchOptions) {
-  const root = project().repo?.root;
-  if (!root) return;
-  try {
-    await gitApi.stashPush(root, `termCode: antes de cambiar a ${name}`, true);
-  } catch (err) {
-    toast(errorText(err), "error");
+/** Respuesta del diálogo de cambios sin commit. */
+export async function resolvePendingSwitch(mode: "leave" | "bring" | "cancel"): Promise<void> {
+  const pending = project().pendingSwitch;
+  project().set({ pendingSwitch: null });
+  if (!pending || mode === "cancel") return;
+  if (project().repo?.root !== pending.root || project().busy) {
+    toast("El repositorio cambió mientras decidías: vuelve a elegir la rama.", "error");
     return;
   }
-  await switchBranch(name, options);
+  const target = localName(pending.name, pending.remote);
+  const from = pending.from ?? "HEAD";
+  project().set({ busy: "branch" });
+  try {
+    const outcome = await gitApi.switchCarrying(pending.root, pending.name, pending.create, pending.remote, mode);
+    afterHeadMove();
+    if (outcome.conflicts) {
+      toast(`Ahora estás en ${target}, pero tus cambios chocaron con los suyos: resuelve los conflictos en Cambios. Una copia sigue en el stash.`, "error");
+      openProject("changes");
+    } else if (outcome.keptInStash) {
+      toast(`Ahora estás en ${target}. Tus cambios no se pudieron aplicar aquí: siguen a salvo en el stash (Cambios → Stash).`, "error");
+      openProject("changes");
+    } else if (outcome.leftBehind) {
+      toast(`Tus cambios se quedaron guardados en ${from}. Ahora estás en ${target}.`);
+      void offerLeftChanges(pending.root, target);
+    } else {
+      toast(`Ahora estás en ${target}, con tus cambios.`);
+    }
+  } catch (err) {
+    // El backend devuelve tus cambios a su sitio si el cambio de rama falla.
+    toast(errorText(err), "error");
+  } finally {
+    project().set({ busy: null });
+    void refreshStatus({ force: true });
+  }
+}
+
+/** Al llegar a una rama donde dejaste cambios guardados, ofrece traerlos de vuelta. */
+async function offerLeftChanges(root: string, branch: string) {
+  let stashes: StashEntry[];
+  try {
+    stashes = await gitApi.stashList(root);
+  } catch {
+    return;
+  }
+  // El más reciente primero (stash@{0}).
+  const entry = stashes.find((s) => s.message.endsWith(`${LEFT_ON_TAG}${branch}`));
+  if (!entry || project().repo?.root !== root) return;
+  useUiStore.getState().askConfirm({
+    title: `Dejaste cambios sin commit en ${branch}`,
+    body: "Están guardados en el stash desde que cambiaste de rama. ¿Los restauro ahora? Si prefieres hacerlo después, están en Cambios → Stash.",
+    confirmLabel: "Restaurar cambios",
+    onConfirm: () => void stashApply(entry, true),
+  });
 }
 
 /* ------------------------------------------------------------------ */

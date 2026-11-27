@@ -10,11 +10,13 @@ import type {
   ShellInfo,
   SplitDirection,
   Tab,
+  TabGroup,
   UsageSnapshot,
 } from "../types/layout";
 import { terminalManager } from "../terminal/TerminalManager";
 import { collectPanes, equalize, findOwnerTab, findPane, movePane, removePane, replacePane, setSplitRatio, type DropZone } from "../lib/layout";
 import { paneAgent } from "../lib/attention";
+import * as grouping from "../lib/tabGroups";
 
 let nextId = 1;
 export const genId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${nextId++}`;
@@ -47,6 +49,8 @@ export interface Attention {
 export interface PersistedSession {
   version: 1;
   tabs: Tab[];
+  /** Grupos de pestañas (falta en sesiones de versiones anteriores). */
+  groups?: TabGroup[];
   activeTabId: string;
   isSidebarOpen: boolean;
   /** Panel de proyecto abierto o plegado en su riel (falta en sesiones de versiones anteriores). */
@@ -112,6 +116,20 @@ export function findDrawerOwner(tabs: Tab[], drawerId: string): PaneNode | undef
   return undefined;
 }
 
+/**
+ * La pestaña activa nunca queda escondida en un grupo plegado: si lo está, el
+ * grupo se despliega (⌘3, la barra lateral o un aviso pueden llevarte ahí).
+ */
+function revealActive(groups: TabGroup[], tabs: Tab[], activeTabId: string): TabGroup[] {
+  const groupId = tabs.find((t) => t.id === activeTabId)?.groupId;
+  if (!groupId || !groups.some((g) => g.id === groupId && g.collapsed)) return groups;
+  return groups.map((g) => (g.id === groupId ? { ...g, collapsed: false } : g));
+}
+
+function newGroup(groups: TabGroup[]): TabGroup {
+  return { id: genId("group"), name: "", color: grouping.nextGroupColor(groups), collapsed: false };
+}
+
 function omit<T>(record: Record<string, T>, keys: string[]): Record<string, T> {
   if (!keys.some((k) => k in record)) return record;
   const next = { ...record };
@@ -121,6 +139,7 @@ function omit<T>(record: Record<string, T>, keys: string[]): Record<string, T> {
 
 interface TerminalState {
   tabs: Tab[];
+  groups: TabGroup[];
   activeTabId: string;
   isBroadcastEnabled: boolean;
   isUsageDrawerOpen: boolean;
@@ -158,6 +177,20 @@ interface TerminalState {
   toggleSidebar: () => void;
   renameTab: (tabId: string, title: string) => void;
   moveTab: (from: number, to: number) => void;
+  /** Suelta una pestaña arrastrada. Devuelve el grupo nuevo, si nació uno. */
+  dropTab: (tabId: string, drop: grouping.TabDrop) => string | null;
+  moveGroup: (groupId: string, beforeTabId: string | null) => void;
+  /** Grupo nuevo con esa pestaña. Devuelve su id. */
+  groupTab: (tabId: string) => string | null;
+  joinGroup: (tabId: string, groupId: string) => void;
+  leaveGroup: (tabId: string) => void;
+  ungroup: (groupId: string) => void;
+  updateGroup: (groupId: string, patch: Partial<Pick<TabGroup, "name" | "color">>) => void;
+  /**
+   * Pliega o despliega. Plegar el grupo de la pestaña activa pasa a la de al
+   * lado; si el grupo es todo lo que hay, no se pliega (devuelve false).
+   */
+  setGroupCollapsed: (groupId: string, collapsed: boolean) => boolean;
   toggleZoom: (paneId?: string) => void;
   equalizeSplits: () => void;
   rememberClosed: (entry: ClosedEntry) => void;
@@ -192,6 +225,7 @@ const firstTab = newTab();
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   tabs: [firstTab],
+  groups: [],
   activeTabId: firstTab.id,
   isBroadcastEnabled: false,
   isUsageDrawerOpen: false,
@@ -226,6 +260,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const fresh = newTab();
       set((state) => ({
         tabs: [fresh],
+        groups: [],
         activeTabId: fresh.id,
         agentStatus: omit(state.agentStatus, paneIds),
         agentActivity: omit(state.agentActivity, paneIds),
@@ -236,10 +271,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return;
     }
 
-    const remaining = tabs.filter((t) => t.id !== tabId);
-    const nextActive = activeTabId === tabId ? remaining[Math.max(0, index - 1)].id : activeTabId;
+    const remaining = grouping.normalizeGroups(
+      tabs.filter((t) => t.id !== tabId),
+      get().groups,
+    );
+    const nextActive = activeTabId === tabId ? remaining.tabs[Math.max(0, index - 1)].id : activeTabId;
     set((state) => ({
-      tabs: remaining,
+      tabs: remaining.tabs,
+      groups: revealActive(remaining.groups, remaining.tabs, nextActive),
       activeTabId: nextActive,
       agentStatus: omit(state.agentStatus, paneIds),
       agentActivity: omit(state.agentActivity, paneIds),
@@ -250,8 +289,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   setActiveTab: (tabId) => {
-    if (get().activeTabId === tabId) return;
-    set({ activeTabId: tabId });
+    const { activeTabId, groups, tabs } = get();
+    const visible = revealActive(groups, tabs, tabId);
+    if (activeTabId === tabId && visible === groups) return;
+    set({ activeTabId: tabId, groups: visible });
   },
 
   splitPane: (targetPaneId, direction, spec) => {
@@ -354,7 +395,67 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (from === to || from < 0 || to < 0 || from >= tabs.length || to >= tabs.length) return;
     const [moved] = tabs.splice(from, 1);
     tabs.splice(to, 0, moved);
-    set({ tabs });
+    commitGrouping(grouping.normalizeGroups(tabs, get().groups));
+  },
+
+  dropTab: (tabId, drop) => {
+    const { tabs, groups } = get();
+    const result = grouping.dropTab({ tabs, groups }, tabId, drop, newGroup);
+    commitGrouping(result);
+    return result.created;
+  },
+
+  moveGroup: (groupId, beforeTabId) => {
+    const { tabs, groups } = get();
+    commitGrouping(grouping.moveGroup({ tabs, groups }, groupId, beforeTabId));
+  },
+
+  groupTab: (tabId) => {
+    const { tabs, groups } = get();
+    if (!tabs.some((t) => t.id === tabId)) return null;
+    const group = newGroup(groups);
+    commitGrouping(grouping.groupTab({ tabs, groups }, tabId, group));
+    return group.id;
+  },
+
+  joinGroup: (tabId, groupId) => {
+    const { tabs, groups } = get();
+    commitGrouping(grouping.joinGroup({ tabs, groups }, tabId, groupId));
+  },
+
+  leaveGroup: (tabId) => {
+    const { tabs, groups } = get();
+    commitGrouping(grouping.leaveGroup({ tabs, groups }, tabId));
+  },
+
+  ungroup: (groupId) => {
+    const { tabs, groups } = get();
+    commitGrouping(grouping.ungroup({ tabs, groups }, groupId));
+  },
+
+  updateGroup: (groupId, patch) => {
+    const { groups } = get();
+    const current = groups.find((g) => g.id === groupId);
+    if (!current) return;
+    const name = patch.name === undefined ? current.name : grouping.cleanGroupName(patch.name);
+    const color = patch.color && grouping.isGroupColor(patch.color) ? patch.color : current.color;
+    if (name === current.name && color === current.color) return;
+    set({ groups: groups.map((g) => (g.id === groupId ? { ...g, name, color } : g)) });
+  },
+
+  setGroupCollapsed: (groupId, collapsed) => {
+    const { tabs, groups, activeTabId } = get();
+    const current = groups.find((g) => g.id === groupId);
+    if (!current) return false;
+    if (current.collapsed === collapsed) return true;
+    let nextActive = activeTabId;
+    if (collapsed && tabs.find((t) => t.id === activeTabId)?.groupId === groupId) {
+      const outside = grouping.tabOutsideGroup(tabs, groupId);
+      if (!outside) return false;
+      nextActive = outside.id;
+    }
+    set({ activeTabId: nextActive, groups: groups.map((g) => (g.id === groupId ? { ...g, collapsed } : g)) });
+    return true;
   },
 
   toggleZoom: (paneId) => {
@@ -521,15 +622,24 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   hydrate: (session) => {
     if (!session.tabs.length) return;
+    const { tabs, groups } = grouping.normalizeGroups(session.tabs, session.groups ?? []);
+    const activeTabId = tabs.some((t) => t.id === session.activeTabId) ? session.activeTabId : tabs[0].id;
     set({
-      tabs: session.tabs,
-      activeTabId: session.tabs.some((t) => t.id === session.activeTabId)
-        ? session.activeTabId
-        : session.tabs[0].id,
+      tabs,
+      groups: revealActive(groups, tabs, activeTabId),
+      activeTabId,
       isSidebarOpen: session.isSidebarOpen,
     });
   },
 }));
+
+/** Aplica un cambio de pestañas/grupos con las invariantes y la activa a la vista. */
+function commitGrouping(next: grouping.Grouping) {
+  const { tabs, groups, activeTabId } = useTerminalStore.getState();
+  const visible = revealActive(next.groups, next.tabs, activeTabId);
+  if (next.tabs === tabs && visible === groups) return;
+  useTerminalStore.setState({ tabs: next.tabs, groups: visible });
+}
 
 /** El agente del panel ahora: lanzado por termCode, anunciado por OSC 7501 o escrito a mano en la shell. */
 export function liveAgent(state: Pick<TerminalState, "agentActivity" | "runningAgent">, pane: PaneNode): AgentKind | null {

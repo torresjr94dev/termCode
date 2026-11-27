@@ -187,6 +187,50 @@ export const actions = {
     void confirmIfBusy(panes, "la pestaña", () => state().closeTab(tabId));
   },
 
+  /** Pestaña nueva (en la carpeta del panel activo) al final del grupo. */
+  newTabInGroup: async (groupId: string) => {
+    await actions.newTab();
+    state().joinGroup(state().activeTabId, groupId);
+  },
+
+  /**
+   * Plegar el grupo de la pestaña activa la cambia por la de al lado. Si el
+   * grupo es todo lo que hay, no hay a dónde ir: se avisa en vez de esconder
+   * la pestaña en la que estás.
+   */
+  toggleGroup: (groupId: string) => {
+    const group = state().groups.find((g) => g.id === groupId);
+    if (!group) return;
+    if (!state().setGroupCollapsed(groupId, !group.collapsed)) {
+      ui().showToast("Para plegar este grupo necesitas al menos una pestaña fuera de él.");
+    }
+  },
+
+  /** Cierra todas las pestañas del grupo. Siempre pregunta: son varias terminales a la vez. */
+  closeGroup: async (groupId: string) => {
+    const group = state().groups.find((g) => g.id === groupId);
+    const members = state().tabs.filter((t) => t.groupId === groupId);
+    if (!group || !members.length) return;
+    const name = group.name ? `«${group.name}»` : "sin nombre";
+    const paneIds = members.flatMap((t) => collectPanes(t.root).map((p) => p.id));
+    const close = () => {
+      void remember(paneIds, `grupo ${name}`).finally(() => {
+        for (const tab of members) state().closeTab(tab.id);
+      });
+    };
+    const infos = await Promise.all(paneIds.map((id) => terminalManager.info(id)));
+    const busy = [...new Set(infos.filter((i) => i?.busy).map((i) => i?.foregroundName ?? "un proceso"))];
+    const count = members.length === 1 ? "su pestaña" : `sus ${members.length} pestañas`;
+    ui().askConfirm({
+      title: `¿Cerrar el grupo ${name}?`,
+      body: busy.length
+        ? `Se cierran ${count}. ${busy.join(", ")} ${busy.length === 1 ? "sigue" : "siguen"} en ejecución y se ${busy.length === 1 ? "detendrá" : "detendrán"}.`
+        : `Se cierran ${count}.`,
+      confirmLabel: "Cerrar grupo",
+      onConfirm: close,
+    });
+  },
+
   splitRight: () => split("horizontal"),
   splitDown: () => split("vertical"),
 

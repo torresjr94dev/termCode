@@ -330,11 +330,11 @@ const SyncBar: React.FC = () => {
 
   return (
     <div className="relative flex shrink-0 flex-wrap items-center gap-2 border-t border-line px-3 py-2.5">
-      <BranchPicker />
+      <BranchPicker at="panel" />
       <span className="flex min-w-0 items-center gap-1.5 font-mono text-[12px] text-ink-2">
         <button
           type="button"
-          onClick={openBranchPicker}
+          onClick={() => openBranchPicker("panel")}
           title={`Cambiar de rama  ${shortcutLabel("switchBranch")}`}
           className="-ml-1.5 flex min-w-0 items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-hover hover:text-ink"
         >
