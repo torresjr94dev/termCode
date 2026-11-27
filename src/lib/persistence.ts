@@ -7,6 +7,7 @@ import type { LayoutNode, PaneShell, ResumableAgent, Tab } from "../types/layout
 import { basename } from "./layout";
 import { IS_TAURI } from "./ipc";
 import { isSafeSessionId } from "./resume";
+import { normalizeGroups, sanitizeGroups } from "./tabGroups";
 
 const KEY = "session";
 const SAVE_DEBOUNCE_MS = 1500;
@@ -97,11 +98,15 @@ export async function loadSession(timeoutMs = 800): Promise<PersistedSession | n
       new Promise<undefined>((resolve) => setTimeout(resolve, timeoutMs)),
     ]);
     if (!saved || saved.version !== 1 || !Array.isArray(saved.tabs)) return null;
-    const tabs = saved.tabs.filter(isTab).map((tab) => ({ ...tab, root: asShells(tab.root), zoomedPaneId: null }));
-    if (!tabs.length) return null;
+    const restored = saved.tabs.filter(isTab).map((tab) => ({ ...tab, root: asShells(tab.root), zoomedPaneId: null }));
+    if (!restored.length) return null;
+    // Un groupId que no es texto (archivo editado a mano) no llega al store.
+    const withGroupIds = restored.map(({ groupId, ...tab }) => (typeof groupId === "string" ? { ...tab, groupId } : tab));
+    const { tabs, groups } = normalizeGroups(withGroupIds, sanitizeGroups(saved.groups));
     return {
       version: 1,
       tabs,
+      groups,
       activeTabId: saved.activeTabId,
       isSidebarOpen: Boolean(saved.isSidebarOpen),
       ...(typeof saved.isProjectOpen === "boolean" ? { isProjectOpen: saved.isProjectOpen } : {}),
@@ -125,11 +130,12 @@ async function withLiveCwd(node: LayoutNode): Promise<LayoutNode> {
 
 async function save() {
   if (!store) return;
-  const { tabs, activeTabId, isSidebarOpen } = useTerminalStore.getState();
+  const { tabs, groups, activeTabId, isSidebarOpen } = useTerminalStore.getState();
   try {
     const session: PersistedSession = {
       version: 1,
       tabs: await Promise.all(tabs.map(async (tab) => ({ ...tab, root: await withLiveCwd(tab.root) }))),
+      groups,
       activeTabId,
       isSidebarOpen,
       isProjectOpen: useProjectStore.getState().isOpen,
@@ -153,6 +159,7 @@ export function startAutosave(): () => void {
   const unsubscribe = useTerminalStore.subscribe((s, prev) => {
     if (
       s.tabs !== prev.tabs ||
+      s.groups !== prev.groups ||
       s.activeTabId !== prev.activeTabId ||
       s.isSidebarOpen !== prev.isSidebarOpen
     ) {

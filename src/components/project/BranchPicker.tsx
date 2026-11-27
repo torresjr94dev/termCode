@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Cloud, GitBranch, Plus, Search } from "lucide-react";
 import { useProjectStore } from "../../store/projectStore";
 import { gitApi, type GitBranch as Branch } from "../../lib/git";
-import { switchBranch } from "../../lib/project";
+import { openProject, switchBranch } from "../../lib/project";
 import { fuzzyFilter } from "../../lib/fuzzy";
 import { formatAgo } from "../../lib/format";
 import { cn } from "../../lib/layout";
@@ -13,16 +13,20 @@ type Item = { kind: "branch"; branch: Branch } | { kind: "create"; name: string 
 /** Lo que el usuario escribe → nombre de rama razonable (espacios a guiones). */
 const toBranchName = (text: string) => text.trim().replace(/\s+/g, "-");
 
-/** Selector de ramas: se despliega sobre la barra de sincronización. */
-export const BranchPicker: React.FC = () => {
-  const open = useProjectStore((s) => s.isBranchPickerOpen);
+/**
+ * Selector de ramas. `header`: cae bajo la rama de la barra de título.
+ * `panel`: sube sobre la barra de sincronización de Cambios.
+ */
+export const BranchPicker: React.FC<{ at: "header" | "panel" }> = ({ at }) => {
+  const open = useProjectStore((s) => s.isBranchPickerOpen && s.branchPickerAt === at);
   if (!open) return null;
-  return <PickerPanel />;
+  return <PickerPanel at={at} />;
 };
 
-const PickerPanel: React.FC = () => {
+const PickerPanel: React.FC<{ at: "header" | "panel" }> = ({ at }) => {
   const root = useProjectStore((s) => s.repo?.root);
   const current = useProjectStore((s) => s.status?.branch);
+  const changes = useProjectStore((s) => s.status?.changes.length ?? 0);
   const set = useProjectStore((s) => s.set);
   const [branches, setBranches] = useState<Branch[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -77,7 +81,12 @@ const PickerPanel: React.FC = () => {
       <div
         role="dialog"
         aria-label="Cambiar de rama"
-        className="absolute bottom-full left-2 right-2 z-40 mb-1.5 flex max-h-[min(440px,60vh)] animate-pop-in flex-col overflow-hidden rounded-lg border border-[var(--glass-border)] glass"
+        className={cn(
+          "absolute z-40 flex animate-pop-in flex-col overflow-hidden rounded-lg border border-[var(--glass-border)] glass",
+          at === "header"
+            ? "right-0 top-full mt-1.5 max-h-[min(480px,70vh)] w-[min(380px,calc(100vw-24px))]"
+            : "bottom-full left-2 right-2 mb-1.5 max-h-[min(440px,60vh)]",
+        )}
       >
         <div className="flex items-center gap-2 border-b border-line px-3">
           <Search size={13} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-ink-3" />
@@ -143,6 +152,23 @@ const PickerPanel: React.FC = () => {
             </li>
           ))}
         </ul>
+        {at === "header" && (
+          <div className="flex shrink-0 items-center justify-between gap-2 border-t border-line px-3 py-2 text-[11.5px] text-ink-3">
+            <span className="min-w-0 truncate">
+              {changes > 0 ? `${changes} sin commit · te pregunto qué hacer al cambiar` : "Sin cambios pendientes"}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                close();
+                openProject("changes");
+              }}
+              className="shrink-0 rounded px-1.5 py-0.5 text-ink-2 hover:bg-hover hover:text-ink"
+            >
+              Ver cambios
+            </button>
+          </div>
+        )}
       </div>
     </>
   );

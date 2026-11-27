@@ -1,4 +1,5 @@
 import { fileURLToPath, URL } from "node:url";
+import { execFileSync } from "node:child_process";
 import process from "node:process";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
@@ -6,9 +7,23 @@ import { defineConfig } from "vite";
 
 const host = process.env.TAURI_DEV_HOST;
 
+/** Commit de esta compilación (para «Acerca de» y para reportar problemas). Sin git, nada. */
+function buildCommit(): string {
+  try {
+    return execFileSync("git", ["rev-parse", "--short=8", "HEAD"], { encoding: "utf8", timeout: 3000 }).trim();
+  } catch {
+    return "";
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig(() => ({
   plugins: [react(), tailwindcss()],
+
+  define: {
+    __TERMCODE_COMMIT__: JSON.stringify(buildCommit()),
+    __TERMCODE_BUILT_AT__: JSON.stringify(new Date().toISOString()),
+  },
 
   resolve: {
     alias: {

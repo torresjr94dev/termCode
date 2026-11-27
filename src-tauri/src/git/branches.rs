@@ -119,7 +119,8 @@ fn explain_switch_error(raw: &str) -> String {
 }
 
 /// `create`: new branch from HEAD. `remote`: `origin/x` → local `x` tracking it.
-fn switch(root: &Path, name: &str, create: bool, remote: bool) -> Result<(), String> {
+/// The error is git's own text (see [`switch`] for the readable one).
+fn switch_raw(root: &Path, name: &str, create: bool, remote: bool) -> Result<(), String> {
     valid_branch(root, name)?;
     let args: Vec<&str> = if create {
         vec!["switch", "-c", name]
@@ -128,9 +129,11 @@ fn switch(root: &Path, name: &str, create: bool, remote: bool) -> Result<(), Str
     } else {
         vec!["switch", name]
     };
-    git(root, &args)
-        .map(|_| ())
-        .map_err(|e| explain_switch_error(&e))
+    git(root, &args).map(|_| ())
+}
+
+fn switch(root: &Path, name: &str, create: bool, remote: bool) -> Result<(), String> {
+    switch_raw(root, name, create, remote).map_err(|e| explain_switch_error(&e))
 }
 
 #[tauri::command]
@@ -141,6 +144,131 @@ pub async fn git_switch(
     remote: bool,
 ) -> Result<(), String> {
     blocking(move || switch(&checked_root(&root)?, &name, create, remote)).await
+}
+
+// ---------------------------------------------------------------------------
+// Switching with uncommitted changes (como GitHub Desktop)
+// ---------------------------------------------------------------------------
+
+/// Message of the stash that keeps the changes you left on a branch. The
+/// webview looks for it when you come back to offer restoring them.
+pub const LEFT_ON_TAG: &str = "termCode · cambios de ";
+const CARRIED_TAG: &str = "termCode · llevados a ";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CarryMode {
+    /// Stash them on the branch you leave; they wait for you there.
+    Leave,
+    /// Take them to the new branch (git does it when nothing collides;
+    /// otherwise stash, switch and pop, which can leave conflicts).
+    Bring,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchOutcome {
+    /// The changes stayed in the stash of the branch you left.
+    pub left_behind: bool,
+    /// They came along but collided: conflicts to resolve; a copy stays in the stash.
+    pub conflicts: bool,
+    /// They could not be applied on the new branch: still in the stash, untouched.
+    pub kept_in_stash: bool,
+}
+
+/// The branch HEAD is on (`None` when detached).
+fn current_branch(root: &Path) -> Option<String> {
+    git(root, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .ok()
+        .map(|b| b.trim().to_owned())
+        .filter(|b| !b.is_empty())
+}
+
+fn has_unmerged(root: &Path) -> bool {
+    git(root, &["diff", "--name-only", "--diff-filter=U"]).is_ok_and(|out| !out.trim().is_empty())
+}
+
+/// Undo our own stash after a switch that failed: the tree is as it was.
+fn restore_after_failed_switch(root: &Path) {
+    if let Err(e) = git(root, &["stash", "pop", "--index", "stash@{0}"]) {
+        log::warn!("git: no se pudo devolver el stash tras un cambio de rama fallido: {e}");
+    }
+}
+
+fn switch_carrying(
+    root: &Path,
+    name: &str,
+    create: bool,
+    remote: bool,
+    mode: CarryMode,
+) -> Result<SwitchOutcome, String> {
+    valid_branch(root, name)?;
+    if let Some(op) = operation(root) {
+        return Err(format!(
+            "Hay un {op} a medias: termínalo o cancélalo antes de cambiar de rama."
+        ));
+    }
+    let from = current_branch(root).unwrap_or_else(|| "HEAD".into());
+    match mode {
+        CarryMode::Leave => {
+            let stashed = match stash_push(root, &format!("{LEFT_ON_TAG}{from}"), true) {
+                Ok(()) => true,
+                Err(e) if e.starts_with("No hay cambios") => false,
+                Err(e) => return Err(e),
+            };
+            if let Err(e) = switch_raw(root, name, create, remote) {
+                if stashed {
+                    restore_after_failed_switch(root);
+                }
+                return Err(explain_switch_error(&e));
+            }
+            Ok(SwitchOutcome {
+                left_behind: stashed,
+                ..SwitchOutcome::default()
+            })
+        }
+        CarryMode::Bring => {
+            // Lo normal: git se los lleva solo si nada choca.
+            let err = match switch_raw(root, name, create, remote) {
+                Ok(()) => return Ok(SwitchOutcome::default()),
+                Err(e) => e,
+            };
+            if !err.contains("would be overwritten") {
+                return Err(explain_switch_error(&err));
+            }
+            stash_push(root, &format!("{CARRIED_TAG}{name}"), true)?;
+            if let Err(e) = switch_raw(root, name, create, remote) {
+                restore_after_failed_switch(root);
+                return Err(explain_switch_error(&e));
+            }
+            match git(root, &["stash", "pop", "stash@{0}"]) {
+                Ok(_) => Ok(SwitchOutcome::default()),
+                // Con conflictos git deja las marcas y conserva el stash.
+                Err(_) if has_unmerged(root) => Ok(SwitchOutcome {
+                    conflicts: true,
+                    ..SwitchOutcome::default()
+                }),
+                Err(e) => {
+                    log::info!("git: los cambios llevados a {name} siguen en el stash: {e}");
+                    Ok(SwitchOutcome {
+                        kept_in_stash: true,
+                        ..SwitchOutcome::default()
+                    })
+                }
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn git_switch_carrying(
+    root: String,
+    name: String,
+    create: bool,
+    remote: bool,
+    mode: CarryMode,
+) -> Result<SwitchOutcome, String> {
+    blocking(move || switch_carrying(&checked_root(&root)?, &name, create, remote, mode)).await
 }
 
 // ---------------------------------------------------------------------------
@@ -431,6 +559,84 @@ mod tests {
         stash_action(&dir, "pop", 0).unwrap();
         assert!(dir.join("nuevo.txt").exists());
         assert!(stash_action(&dir, "clear", 0).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// `main` con `a.txt`; `otra` cambia la segunda línea. Vuelve en `main`.
+    fn repo_with_branch(name: &str) -> PathBuf {
+        let dir = repo(name);
+        git(&dir, &["switch", "-q", "-c", "otra"]).unwrap();
+        fs::write(dir.join("a.txt"), "uno\nDOS (otra)\ntres\n").unwrap();
+        git(&dir, &["commit", "-qam", "otra"]).unwrap();
+        git(&dir, &["switch", "-q", "main"]).unwrap();
+        dir
+    }
+
+    fn stash_messages(dir: &Path) -> Vec<String> {
+        parse_stash(&git(dir, &["stash", "list", "--format=%gd%x00%ct%x00%gs"]).unwrap())
+            .into_iter()
+            .map(|e| e.message)
+            .collect()
+    }
+
+    #[test]
+    fn leaving_changes_stashes_them_on_the_branch_you_leave() {
+        let dir = repo_with_branch("leave");
+        fs::write(dir.join("a.txt"), "UNO\ndos\ntres\n").unwrap();
+        fs::write(dir.join("nuevo.txt"), "x\n").unwrap();
+        let out = switch_carrying(&dir, "otra", false, false, CarryMode::Leave).unwrap();
+        assert!(out.left_behind);
+        assert_eq!(current_branch(&dir).as_deref(), Some("otra"));
+        // En `otra` no hay nada tuyo: ni el cambio ni el archivo nuevo.
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "uno\nDOS (otra)\ntres\n"
+        );
+        assert!(!dir.join("nuevo.txt").exists());
+        assert!(
+            stash_messages(&dir)[0].ends_with(&format!("{LEFT_ON_TAG}main")),
+            "{:?}",
+            stash_messages(&dir)
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn bringing_changes_that_do_not_collide_needs_no_stash() {
+        let dir = repo_with_branch("bring-ok");
+        fs::write(dir.join("b.txt"), "nuevo\n").unwrap();
+        let out = switch_carrying(&dir, "otra", false, false, CarryMode::Bring).unwrap();
+        assert_eq!(out, SwitchOutcome::default());
+        assert!(dir.join("b.txt").exists());
+        assert!(stash_messages(&dir).is_empty());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn bringing_changes_that_collide_leaves_conflicts_and_a_copy() {
+        let dir = repo_with_branch("bring-conflict");
+        fs::write(dir.join("a.txt"), "uno\nDOS (mío)\ntres\n").unwrap();
+        let out = switch_carrying(&dir, "otra", false, false, CarryMode::Bring).unwrap();
+        assert!(out.conflicts, "{out:?}");
+        assert_eq!(current_branch(&dir).as_deref(), Some("otra"));
+        assert!(has_markers(&fs::read_to_string(dir.join("a.txt")).unwrap()));
+        assert_eq!(stash_messages(&dir).len(), 1, "la copia sigue en el stash");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_switch_gives_the_changes_back() {
+        let dir = repo_with_branch("leave-fail");
+        fs::write(dir.join("a.txt"), "UNO\ndos\ntres\n").unwrap();
+        let err = switch_carrying(&dir, "no-existe", false, false, CarryMode::Leave).unwrap_err();
+        assert!(!err.is_empty());
+        assert_eq!(current_branch(&dir).as_deref(), Some("main"));
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "UNO\ndos\ntres\n"
+        );
+        assert!(stash_messages(&dir).is_empty());
+        assert!(switch_carrying(&dir, "--x", false, false, CarryMode::Bring).is_err());
         fs::remove_dir_all(dir).unwrap();
     }
 

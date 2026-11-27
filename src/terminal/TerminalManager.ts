@@ -20,7 +20,7 @@ import { fileLinkProvider, type FileLinkTarget } from "./links";
 import { sanitizePaste } from "./paste";
 import { needsRichPaste, snapshotClipboard, type ClipboardSnapshot } from "./clipboard";
 import { clearEnd, initialClearState, type ClearState } from "./clear";
-import { XTERM_THEMES } from "./themes";
+import { SEE_THROUGH_THEMES, XTERM_THEMES } from "./themes";
 import { parseProgramStatus, PROGRAM_STATUS_REPLY, type ProgramStatus } from "./programStatus";
 
 export const FONT_SIZE = { min: 9, max: 24, default: DEFAULT_SETTINGS.fontSize } as const;
@@ -187,7 +187,7 @@ function isShiftEnter(e: KeyboardEvent): boolean {
 function terminalTheme(s: Settings) {
   const theme = XTERM_THEMES[s.theme];
   const glass = s.theme === "neon" && typeof document !== "undefined" && document.documentElement.dataset.glass === "on";
-  return glass ? { ...theme, background: "#00000000" } : theme;
+  return glass || SEE_THROUGH_THEMES.has(s.theme) ? { ...theme, background: "#00000000" } : theme;
 }
 
 function terminalOptions(s: Settings) {

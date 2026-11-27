@@ -42,6 +42,7 @@ export const ProjectPanel: React.FC = () => {
   return (
     <aside
       aria-label="Proyecto"
+      data-glass-card
       className="flex h-full w-[clamp(260px,28vw,360px)] shrink-0 flex-col overflow-hidden rounded-xl border border-line bg-canvas"
     >
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line pl-3 pr-1.5">
@@ -105,7 +106,7 @@ export const ProjectPanel: React.FC = () => {
 
 /** El panel plegado: sus vistas como íconos, con los cambios contados. */
 const ProjectRail: React.FC<{ changeCount: number }> = ({ changeCount }) => (
-  <aside aria-label="Proyecto (plegado)" className="flex h-full w-10 shrink-0 flex-col items-center gap-1 rounded-xl border border-line bg-canvas py-1.5">
+  <aside aria-label="Proyecto (plegado)" data-glass-card className="flex h-full w-10 shrink-0 flex-col items-center gap-1 rounded-xl border border-line bg-canvas py-1.5">
     <IconButton icon={PanelRightOpen} label="Mostrar panel de proyecto" onClick={() => openProject(useProjectStore.getState().tab)} />
     <IconButton icon={TextSearch} label="Buscar en archivos del proyecto" shortcut={shortcutLabel("searchText")} onClick={() => openFinder("text")} />
     <span aria-hidden="true" className="my-0.5 h-px w-5 bg-line" />

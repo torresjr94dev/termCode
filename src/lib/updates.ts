@@ -83,7 +83,7 @@ export function startUpdateChecks(): () => void {
       if (update) {
         useUiStore
           .getState()
-          .showToast(`termCode ${update.version} está disponible: instálala desde Ajustes → Acerca de.`);
+          .showToast(`termCode ${update.version} está disponible: instálala desde «Acerca de termCode» (menú termCode o la paleta de comandos).`);
       }
     } catch {
       // Sin red al arrancar: no vale la pena molestar; se reintenta en el próximo arranque.

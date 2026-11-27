@@ -48,6 +48,19 @@ export interface GitBranch {
   subject: string;
 }
 
+/** Qué pasó con tus cambios al cambiar de rama (ver git_switch_carrying). */
+export interface SwitchOutcome {
+  /** Quedaron en el stash de la rama que dejaste. */
+  leftBehind: boolean;
+  /** Llegaron, pero con conflictos por resolver (una copia sigue en el stash). */
+  conflicts: boolean;
+  /** No se pudieron aplicar en la rama nueva: siguen en el stash. */
+  keptInStash: boolean;
+}
+
+/** Stash con lo que dejaste en una rama: termCode te ofrece restaurarlo al volver. */
+export const LEFT_ON_TAG = "termCode · cambios de ";
+
 export interface StashEntry {
   index: number;
   message: string;
@@ -227,6 +240,9 @@ export const gitApi = {
   branches: (root: string) => call<GitBranch[]>("git_branches", { root }),
   switchBranch: (root: string, name: string, create: boolean, remote: boolean) =>
     call<void>("git_switch", { root, name, create, remote }),
+  /** Cambia de rama decidiendo qué hacer con los cambios sin commit: dejarlos en la rama de origen o llevarlos. */
+  switchCarrying: (root: string, name: string, create: boolean, remote: boolean, mode: "leave" | "bring") =>
+    call<SwitchOutcome>("git_switch_carrying", { root, name, create, remote, mode }),
   stashList: (root: string) => call<StashEntry[]>("git_stash_list", { root }),
   stashPush: (root: string, message: string, includeUntracked: boolean) =>
     call<void>("git_stash_push", { root, message, includeUntracked }),

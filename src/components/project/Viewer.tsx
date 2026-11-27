@@ -95,6 +95,7 @@ export const Viewer: React.FC = () => {
               : `Archivo ${viewer.path}`
       }
       data-viewer
+      data-glass-card
       onKeyDown={(e) => {
         if (e.key === "Escape") {
           if (e.defaultPrevented) return;

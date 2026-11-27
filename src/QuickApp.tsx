@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TerminalPane } from "./components/TerminalPane";
 import { ToastHost } from "./components/Overlays";
+import { ThemeBackdrop } from "./components/ThemeBackdrop";
 import { useTerminalStore } from "./store/terminalStore";
 import { settingsNow } from "./store/settingsStore";
 import { terminalManager } from "./terminal/TerminalManager";
@@ -38,6 +39,7 @@ export const QuickApp: React.FC = () => {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-canvas text-ink">
+      <ThemeBackdrop />
       <div className="relative min-h-0 flex-1">{pane && <TerminalPane key={pane.id} pane={pane} isActive isSplit={false} shellBar={false} />}</div>
       <div className="flex h-6 shrink-0 items-center justify-between border-t border-accent/40 bg-chrome px-3 font-mono text-[11px] text-ink-3">
         <span>termCode · terminal rápida</span>

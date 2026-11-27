@@ -32,6 +32,7 @@ import { useLastCommand } from "../terminal/useRunningCommand";
 import { terminalManager } from "../terminal/TerminalManager";
 import type { PaneNode, Tab } from "../types/layout";
 import { Kbd, Lamp, Ring, SectionLabel, toneFor } from "./ui";
+import { SidebarFestive } from "./festive/Festive";
 import { LogoMark } from "./Logo";
 import { SystemPanel } from "./SystemMonitor";
 import { PortChips } from "./PortChips";
@@ -67,10 +68,11 @@ export const Sidebar: React.FC = () => {
   if (!isOpen) return null;
 
   return (
-    <aside aria-label="Sesiones" className="flex h-full w-64 shrink-0 flex-col bg-chrome">
+    <aside aria-label="Sesiones" data-chrome className="flex h-full w-64 shrink-0 flex-col bg-chrome">
       {/* Zona de arrastre a la altura del header (es parte de la barra de título): aquí
           viven los semáforos de macOS; la marca, a la derecha (no captura el arrastre). */}
-      <div data-tauri-drag-region className="flex h-11 shrink-0 items-center justify-end pr-3.5">
+      <div data-tauri-drag-region className="flex h-11 shrink-0 items-center justify-end gap-2 pr-3.5">
+        <SidebarFestive />
         <LogoMark title="termCode" className="pointer-events-none h-3.5 w-auto text-ink-2" />
       </div>
 

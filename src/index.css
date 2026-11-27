@@ -201,6 +201,196 @@
   --color-proj-5: #8a6d0f;
 }
 
+/*
+ * Grupos de pestañas. En los temas oscuros, tonos claros con texto oscuro
+ * encima; en Papel, tonos hondos con texto blanco. El texto de la cápsula
+ * pasa 4.5:1 sobre todos.
+ */
+:root {
+  --tg-ink: #0b0d10;
+  --tg-gris: #bdc1c6;
+  --tg-azul: #8ab4f8;
+  --tg-rojo: #f28b82;
+  --tg-amarillo: #fdd663;
+  --tg-verde: #81c995;
+  --tg-rosa: #ff8bcb;
+  --tg-morado: #c58af9;
+  --tg-cian: #78d9ec;
+  --tg-naranja: #fcad70;
+}
+:root[data-theme="papel"] {
+  --tg-ink: #ffffff;
+  --tg-gris: #5f6368;
+  --tg-azul: #1967d2;
+  --tg-rojo: #c5221f;
+  --tg-amarillo: #9a5700;
+  --tg-verde: #137333;
+  --tg-rosa: #b80672;
+  --tg-morado: #8430ce;
+  --tg-cian: #007b83;
+  --tg-naranja: #b94a00;
+}
+
+/*
+ * Navidad: noche de pino, tinta de nieve, rojo de caramelo como acento y
+ * dorado de estrella para avisos. El peligro es naranja (el rojo ya es el
+ * acento: si fueran iguales, un error y lo seleccionado se confundirían).
+ * Los adornos de pixel art viven en components/festive.
+ */
+:root[data-theme="navidad"] {
+  --color-canvas: #0b1512;
+  --color-chrome: #0e1a16;
+  --color-raised: #13221d;
+  --color-hover: #1a2c26;
+  --color-press: #22372f;
+  --color-line: #1d2f28;
+  --color-line-strong: #2c443a;
+  --color-ink: #eef4f0;
+  --color-ink-2: #b3c7bd;
+  --color-ink-3: #93ab9f;
+  --color-accent: #ff4d6d;
+  --color-on-accent: #2a0710;
+  --color-signal: #ff9f43;
+  --color-warn: #ffd166;
+  --color-add: #4fd182;
+  --color-del: #ff7b86;
+  --color-proj-0: #ff8a96;
+  --color-proj-1: #4fd182;
+  --color-proj-2: #ffd166;
+  --color-proj-3: #7fb2ff;
+  --color-proj-4: #e08ad6;
+  --color-proj-5: #6fd6c8;
+  --accent-glow: 0 0 18px -6px rgb(255 77 109 / 0.6);
+  --prompt-halo: 0 0 24px -12px rgb(255 77 109 / 0.65);
+  --syn-keyword: #ff8a96;
+  --syn-string: #86e8a8;
+  --syn-number: #ffd166;
+  --syn-title: #f6faf7;
+  --syn-type: #a8cbff;
+  --syn-attr: #f0b3e8;
+  --syn-meta: #9ab8aa;
+}
+
+/*
+ * Vidrio líquido: vidrio ahumado sobre tu imagen (o el degradado de fábrica).
+ * `--lg-tint` (opacidad del vidrio) y `--lg-blur` los pone la app desde los
+ * ajustes; el tinte nunca baja de lo que hace falta para que el texto se lea
+ * sobre esa imagen (ver lib/backdrop.ts). La ventana y sus barras son
+ * transparentes: el fondo lo pinta `ThemeBackdrop`.
+ */
+:root[data-theme="vidrio"] {
+  --lg-tint: 0.62;
+  --lg-blur: 24px;
+  --color-window: transparent;
+  --color-chrome: rgb(12 14 22 / calc(var(--lg-tint) * 0.82));
+  --color-canvas: rgb(12 14 22 / var(--lg-tint));
+  --color-raised: rgb(255 255 255 / 0.07);
+  --color-hover: rgb(255 255 255 / 0.1);
+  --color-press: rgb(255 255 255 / 0.14);
+  --color-line: rgb(255 255 255 / 0.12);
+  --color-line-strong: rgb(255 255 255 / 0.22);
+  --color-ink: #f4f6fb;
+  --color-ink-2: #cfd5e1;
+  --color-ink-3: #aab2c3;
+  --color-accent: #7cc4ff;
+  --color-on-accent: #04162a;
+  --color-signal: #ff6b7a;
+  --color-warn: #ffd479;
+  --color-add: #6ee7a0;
+  --color-del: #ff7b86;
+  --color-proj-0: #ffb38a;
+  --color-proj-1: #8ff0b8;
+  --color-proj-2: #d9b3ff;
+  --color-proj-3: #8fd8ff;
+  --color-proj-4: #ffe08f;
+  --color-proj-5: #ff9ec7;
+  --glass-bg: rgb(16 18 28 / 0.6);
+  --glass-blur: 40px;
+  --glass-saturate: 1.9;
+  --glass-border: rgb(255 255 255 / 0.2);
+  --glass-highlight: rgb(255 255 255 / 0.3);
+  --glass-sheen: linear-gradient(160deg, rgb(255 255 255 / 0.12), rgb(255 255 255 / 0) 38%, rgb(255 255 255 / 0) 70%, rgb(255 255 255 / 0.05));
+  --accent-glow: 0 0 22px -6px rgb(124 196 255 / 0.6);
+  --prompt-halo: 0 0 24px -12px rgb(124 196 255 / 0.7);
+  --syn-keyword: #8fd0ff;
+  --syn-string: #9ff2c2;
+  --syn-number: #ffc48a;
+  --syn-title: #ffffff;
+  --syn-type: #e5c1ff;
+  --syn-attr: #ffe4a6;
+  --syn-meta: #b5bdcc;
+}
+
+/*
+ * Lo de detrás del vidrio. Sin imagen propia: una aurora oscura (índigo,
+ * magenta, verde agua y ámbar sobre casi negro) que da color al desenfoque
+ * sin aclarar el fondo.
+ */
+.lg-backdrop {
+  background-color: #070910;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+.lg-backdrop[data-default] {
+  background-image:
+    radial-gradient(60% 55% at 12% 18%, rgb(99 102 241 / 0.55), transparent 70%),
+    radial-gradient(50% 45% at 88% 22%, rgb(236 72 153 / 0.38), transparent 70%),
+    radial-gradient(55% 50% at 72% 88%, rgb(20 184 166 / 0.42), transparent 70%),
+    radial-gradient(40% 40% at 22% 86%, rgb(245 158 11 / 0.22), transparent 70%),
+    linear-gradient(160deg, #0b0f1f, #0a0712 60%, #050a10);
+}
+
+/* Barras (título, estado, sesiones): vidrio esmerilado, para que el texto no quede sobre la foto cruda. */
+:root[data-theme="vidrio"] [data-chrome] {
+  -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(1.6);
+  backdrop-filter: blur(var(--lg-blur)) saturate(1.6);
+}
+
+/*
+ * Tarjetas (terminales, proyecto, visor): vidrio con canto de luz. Solo
+ * sombras (sin máscaras, que WebKit y WebView2 componen distinto): filo
+ * brillante arriba y a la izquierda, como si la luz viniera de ahí, un brillo
+ * suave que baja desde el borde y la sombra que la separa del fondo.
+ * Estas reglas no van en una capa: ganan a las utilidades de Tailwind.
+ */
+:root[data-theme="vidrio"] [data-glass-card] {
+  -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(1.7);
+  backdrop-filter: blur(var(--lg-blur)) saturate(1.7);
+  border-color: rgb(255 255 255 / 0.14);
+  box-shadow:
+    inset 1px 1px 0 rgb(255 255 255 / 0.3),
+    inset -1px -1px 0 rgb(255 255 255 / 0.07),
+    inset 0 14px 28px -20px rgb(255 255 255 / 0.18),
+    0 18px 48px -20px rgb(0 0 0 / 0.7),
+    0 2px 8px -2px rgb(0 0 0 / 0.35);
+}
+/* Con divisiones, el panel activo conserva su anillo de acento. */
+:root[data-theme="vidrio"] [data-glass-card].border-accent\/35 {
+  border-color: color-mix(in oklab, var(--color-accent) 55%, transparent);
+  box-shadow:
+    inset 1px 1px 0 rgb(255 255 255 / 0.3),
+    inset 0 14px 28px -20px rgb(255 255 255 / 0.18),
+    0 0 0 3px color-mix(in oklab, var(--color-accent) 18%, transparent),
+    0 18px 48px -20px rgb(0 0 0 / 0.7);
+}
+:root[data-theme="vidrio"] .glass-pill {
+  background-color: rgb(255 255 255 / 0.13);
+  background-image: linear-gradient(180deg, rgb(255 255 255 / 0.16), rgb(255 255 255 / 0.02));
+  box-shadow:
+    inset 0 1px 0 0 rgb(255 255 255 / 0.32),
+    inset 0 0 0 1px rgb(255 255 255 / 0.1),
+    0 2px 8px -2px rgb(0 0 0 / 0.45);
+}
+
+/* Sin transparencias del sistema: el vidrio se vuelve sólido y sin desenfoque. */
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-theme="vidrio"] {
+    --lg-tint: 0.94 !important;
+    --lg-blur: 0px !important;
+  }
+}
+
 /* Sintaxis del visor: tonos cálidos (sin cian); los comentarios usan ink-3 (contraste ≥ 4.5:1). */
 :root {
   --syn-keyword: #e3a35a;
@@ -550,6 +740,121 @@
     scrollbar-width: none;
   }
   .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ---- Navidad: adornos (components/festive) ---- */
+
+/* Nieve acumulada sobre cada tarjeta: 5 px de pixeles, encima del borde.
+   El panel de proyecto no es posicionado: lo necesita para colgarle la nieve. */
+:root[data-theme="navidad"] aside[data-glass-card] {
+  position: relative;
+}
+:root[data-theme="navidad"] [data-glass-card]::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 5px;
+  z-index: 30;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='5' shape-rendering='crispEdges'%3E%3Crect x='0' y='0' width='24' height='2' fill='%23ffffff'/%3E%3Crect x='1' y='2' width='6' height='1' fill='%23ffffff'/%3E%3Crect x='2' y='3' width='4' height='1' fill='%23ffffff'/%3E%3Crect x='3' y='4' width='2' height='1' fill='%23dfe9f0'/%3E%3Crect x='10' y='2' width='9' height='1' fill='%23ffffff'/%3E%3Crect x='11' y='3' width='7' height='1' fill='%23ffffff'/%3E%3Crect x='13' y='4' width='3' height='1' fill='%23dfe9f0'/%3E%3Crect x='21' y='2' width='3' height='1' fill='%23ffffff'/%3E%3Crect x='22' y='3' width='2' height='1' fill='%23dfe9f0'/%3E%3Crect x='0' y='1' width='24' height='1' fill='%23eef5fa'/%3E%3C/svg%3E");
+  background-repeat: repeat-x;
+  background-size: 24px 5px;
+  image-rendering: pixelated;
+  opacity: 0.92;
+}
+
+/* Foquitos: tres turnos que se encienden por pasos (sin transiciones: pocas repintadas). */
+.festive-bulb {
+  animation: festive-twinkle 2.4s steps(1, end) infinite;
+}
+.festive-bulb-1 {
+  animation-delay: -0.8s;
+}
+.festive-bulb-2 {
+  animation-delay: -1.6s;
+}
+@keyframes festive-twinkle {
+  0% {
+    opacity: 1;
+  }
+  33% {
+    opacity: 0.35;
+  }
+  66% {
+    opacity: 0.8;
+  }
+}
+
+.festive-snow {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  overflow: hidden;
+  pointer-events: none;
+}
+.festive-flake {
+  position: absolute;
+  top: -10px;
+  background: #ffffff;
+  animation-name: festive-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+@keyframes festive-fall {
+  from {
+    transform: translate3d(0, -12px, 0);
+  }
+  to {
+    transform: translate3d(var(--drift, 0px), 104vh, 0);
+  }
+}
+
+.festive-sleigh {
+  left: 0;
+  animation-name: festive-fly;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+  will-change: transform;
+}
+@keyframes festive-fly {
+  0% {
+    transform: translate3d(100vw, 0, 0);
+  }
+  25% {
+    transform: translate3d(70vw, -10px, 0);
+  }
+  50% {
+    transform: translate3d(40vw, 4px, 0);
+  }
+  75% {
+    transform: translate3d(10vw, -8px, 0);
+  }
+  100% {
+    transform: translate3d(calc(-100% - 40px), 0, 0);
+  }
+}
+
+@keyframes festive-swing {
+  0%,
+  100% {
+    transform: rotate(-9deg);
+  }
+  50% {
+    transform: rotate(9deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .festive-bulb,
+  .festive-flake,
+  .festive-sleigh {
+    animation: none !important;
+  }
+  .festive-snow,
+  .festive-sleigh {
     display: none;
   }
 }

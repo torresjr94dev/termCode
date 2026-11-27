@@ -4,6 +4,19 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ## [Sin publicar]
 
+### Añadido
+
+- Grupos de pestañas: arrastra una pestaña encima de otra (al centro) y quedan agrupadas; a sus bordes, se pone al lado y entra o sale del grupo de su vecina. Cada grupo lleva nombre y color (nueve, legibles en todos los temas) y una línea de su color une sus pestañas. Clic en la cápsula pliega el grupo a una sola cápsula con el número de pestañas (y un aviso si alguna te espera); clic derecho o F2 la edita: nombre, color, pestaña nueva en el grupo, desagrupar o cerrarlo entero (siempre pregunta). Arrastrar la cápsula mueve el grupo completo. También desde el clic derecho de la pestaña y desde la paleta. Ir a una pestaña de un grupo plegado (⌘3, la barra lateral, un aviso) lo despliega, y plegar el grupo de la pestaña en la que estás te pasa a la de al lado. Los grupos se guardan con la sesión.
+- La rama de la barra de título es un selector: despliega las ramas ahí mismo (⌘⇧B también lo abre ahí) y cambiar es un `git switch`. Con cambios sin commit pregunta qué hacer con ellos, como GitHub Desktop: dejarlos guardados en la rama que dejas (en el stash, archivos nuevos incluidos; al volver a esa rama te ofrece restaurarlos) o llevarlos a la nueva, avisando que si esa rama cambió los mismos archivos quedarán conflictos por resolver (con una copia en el stash por si acaso). Si el cambio de rama falla, tus cambios vuelven a su sitio.
+- Dos temas nuevos, con su etiqueta «Nuevo» en Ajustes hasta que los pruebas:
+  - **Navidad**: noche de pino con adornos 8-bit: guirnalda de foquitos que se encienden por turnos, nieve de pixeles cayendo, nieve acumulada sobre cada panel, gorro de Santa en la pestaña activa, Santa con su árbol y sus regalos en la barra de título (si hay espacio), árbol, regalos, bastón y muñeco de nieve en la barra de estado, y de vez en cuando Santa cruzando el cielo en su trineo. La nieve y el trineo se apagan en Ajustes; con «reducir movimiento» del sistema nada se mueve.
+  - **Vidrio líquido**: paneles de vidrio ahumado y esmerilado con canto de luz sobre una aurora oscura o sobre tu propia imagen (PNG, JPG, WebP, GIF o AVIF, hasta 25 MB; termCode guarda su copia). Opacidad y desenfoque ajustables. termCode mide qué tan clara es tu imagen y no deja que el vidrio baje de lo necesario para que el texto se lea (contraste ≥ 4.5:1).
+- «Acerca de termCode» propio (menú termCode en macOS, la paleta o Ajustes → Más información): versión, commit y fecha de compilación, sistema, motor, enlaces a novedades, código, reportar un problema y licencia, un botón para copiar todo eso a un reporte y la búsqueda de actualizaciones. «Buscar actualizaciones…» en el menú de la app abre esa ventana y busca de una vez.
+
+### Corregido
+
+- Los puertos junto a un panel incluían los que el sistema reparte al azar (rango efímero, 49152–65535 en macOS), como el servidor interno que abre Claude Code: aparecía un `:52263` que parecía un PID y no abría nada. Ahora solo se muestran los puertos que alguien eligió (3000, 5173, 8080…).
+
 ## [0.7.1] - 2026-11-10
 
 ### Añadido

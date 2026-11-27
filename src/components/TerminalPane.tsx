@@ -101,6 +101,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ pane, isActive, isSp
     <section
       aria-label={`Terminal ${pane.title}`}
       data-pane-id={pane.id}
+      data-glass-card
       // El foco del textarea de xterm (clic o teclado) marca el panel activo.
       onFocusCapture={() => {
         if (!isActive) setActivePane(pane.id, { focus: false });

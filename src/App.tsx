@@ -10,7 +10,11 @@ import { ConfirmDialog, ToastHost } from "./components/Overlays";
 import { ProjectPanel } from "./components/project/ProjectPanel";
 import { Viewer } from "./components/project/Viewer";
 import { PrDialog } from "./components/project/PrDialog";
+import { SwitchBranchDialog } from "./components/project/SwitchBranchDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { AboutDialog } from "./components/About";
+import { ThemeBackdrop } from "./components/ThemeBackdrop";
+import { FestiveLayer } from "./components/festive/Festive";
 import { MissionControl } from "./components/MissionControl";
 import { FileFinder } from "./components/FileFinder";
 import { ContextMenu } from "./components/ContextMenu";
@@ -173,6 +177,28 @@ function useRichPaste() {
   }, []);
 }
 
+/** «Acerca de termCode» y «Buscar actualizaciones…» del menú de la app (macOS). */
+function useAppMenu() {
+  useEffect(() => {
+    if (!IS_TAURI) return;
+    let disposed = false;
+    const unlisten: Array<() => void> = [];
+    const keep = (fn: () => void) => (disposed ? fn() : unlisten.push(fn));
+    void import("@tauri-apps/api/event").then(({ listen }) => {
+      listen("menu-about", () => useUiStore.getState().openAbout(false))
+        .then(keep)
+        .catch(() => {});
+      listen("menu-check-updates", () => useUiStore.getState().openAbout(true))
+        .then(keep)
+        .catch(() => {});
+    });
+    return () => {
+      disposed = true;
+      unlisten.forEach((fn) => fn());
+    };
+  }, []);
+}
+
 /** Cerrar la ventana o salir con un archivo sin guardar: se pregunta antes. */
 function useQuitGuard() {
   useEffect(() => {
@@ -215,6 +241,7 @@ export const App: React.FC = () => {
   useRichPaste();
   useNativeMenuGuard();
   useQuitGuard();
+  useAppMenu();
 
   const closePalette = useCallback(() => {
     setPaletteOpen(false);
@@ -252,7 +279,8 @@ export const App: React.FC = () => {
         return;
       }
       // Con la paleta o un diálogo abiertos, el resto de atajos no debe actuar a ciegas.
-      if (ui.isPaletteOpen || ui.confirm || ui.isSettingsOpen || !settingsNow().onboardingDone) return;
+      if (ui.isPaletteOpen || ui.confirm || ui.isSettingsOpen || ui.about || !settingsNow().onboardingDone) return;
+      if (useProjectStore.getState().pendingSwitch) return;
       if (ui.finder && shortcut !== "fileFinder" && shortcut !== "searchText") return;
       if (ui.isOverviewOpen && shortcut !== "overview") return;
       if (ui.isMissionOpen && shortcut !== "missionControl") return;
@@ -286,6 +314,8 @@ export const App: React.FC = () => {
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-window text-ink">
+      <ThemeBackdrop />
+      <FestiveLayer />
       <Sidebar />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -321,7 +351,9 @@ export const App: React.FC = () => {
       <UsagePopover onClose={closeUsage} />
       <CommandPalette isOpen={isPaletteOpen} onClose={closePalette} />
       <PrDialog />
+      <SwitchBranchDialog onSettled={focusActivePane} />
       <SettingsDialog onClosed={focusActivePane} />
+      <AboutDialog onClosed={focusActivePane} />
       <MissionControl onClosed={focusActivePane} />
       <FileFinder onClosed={focusActivePane} />
       <Overview onClosed={focusActivePane} />

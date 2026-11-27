@@ -14,6 +14,7 @@ import { shortcutLabel } from "../lib/shortcuts";
 import { Lamp, toneFor } from "./ui";
 import { SystemReadout } from "./SystemMonitor";
 import { PortChips } from "./PortChips";
+import { FestiveStatus } from "./festive/Festive";
 import { explainFailure, openOutput } from "../lib/output";
 import type { PaneNode } from "../types/layout";
 
@@ -34,7 +35,7 @@ export const StatusBar: React.FC = () => {
   const size = useTransientSize(activePane?.id);
 
   return (
-    <footer className="flex h-7 shrink-0 items-center justify-between gap-4 bg-chrome px-3.5 font-mono text-[11px] text-ink-3">
+    <footer data-chrome className="flex h-7 shrink-0 items-center justify-between gap-4 bg-chrome px-3.5 font-mono text-[11px] text-ink-3">
       <div className="flex min-w-0 items-center gap-3">
         {isBroadcastEnabled && (
           <button
@@ -73,6 +74,7 @@ export const StatusBar: React.FC = () => {
         <AgentsStatus />
         <SystemReadout />
         {tabs.length > 1 && <span title={`Pestaña ${tabIndex + 1} de ${tabs.length}`}>{tabIndex + 1}/{tabs.length}</span>}
+        <FestiveStatus />
       </div>
     </footer>
   );
