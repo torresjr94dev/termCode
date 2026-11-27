@@ -1485,9 +1485,18 @@ const TESTS = [
       await p.evaluate(`(() => {
         const desc = (el) => !el || el === document.body ? "BODY" : [el.tagName, el.getAttribute?.("aria-label"), el.closest?.(".xterm") && "xterm", el.closest?.('[role="dialog"]') && "editor"].filter(Boolean).join(":");
         window.__focusLog = [];
-        const log = (e) => window.__focusLog.push(Math.round(performance.now()) + " " + e.type + " " + desc(e.target) + (e.relatedTarget ? " ↔ " + desc(e.relatedTarget) : ""));
+        const now = () => Math.round(performance.now());
+        const log = (e) => window.__focusLog.push(now() + " " + e.type + " " + desc(e.target) + (e.relatedTarget ? " ↔ " + desc(e.relatedTarget) : ""));
         document.addEventListener("focusin", log, true);
         document.addEventListener("focusout", log, true);
+        // Cada focus() del código, con su resultado: si no toma, por qué (desconectado u oculto).
+        const focus = HTMLElement.prototype.focus;
+        window.__restoreFocus = () => (HTMLElement.prototype.focus = focus);
+        HTMLElement.prototype.focus = function (...args) {
+          focus.apply(this, args);
+          const ok = document.activeElement === this;
+          window.__focusLog.push(now() + " focus() " + desc(this) + (ok ? " ok" : " NO TOMÓ (conectado=" + this.isConnected + ", visibility=" + getComputedStyle(this).visibility + ", foco en " + desc(document.activeElement) + ")"));
+        };
       })()`);
       const from = await p.settledBox(`[data-tab-id="${b}"]`);
       const to = await p.settledBox(`[data-tab-id="${a}"]`);
@@ -1503,6 +1512,10 @@ const TESTS = [
             return desc + " | hasFocus=" + document.hasFocus() + " | visible=" + document.visibilityState + " | editor=" + Boolean(document.querySelector('[role="dialog"][aria-label^="Editar"]')) + " | " + (navigator.userAgent.match(/Chrome\\/[\\d.]+/)?.[0] ?? "") + " | historial: " + (window.__focusLog ?? []).join(" ; ");
           })()`);
           throw new Error(`${err.message} → foco en: ${who}`);
+        })
+        .finally(async () => {
+          if (DIAG) console.log(`    [diag] foco: ${await p.evaluate(`(window.__focusLog ?? []).join(" ; ")`)}`);
+          await p.evaluate(`window.__restoreFocus?.()`);
         });
       await p.type("API");
       await p.press("Escape");

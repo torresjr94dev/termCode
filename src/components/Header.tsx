@@ -804,19 +804,32 @@ const GroupEditor: React.FC<{ groupId: string; onClose: () => void }> = ({ group
   );
 
   // Bajo la cápsula y dentro de la ventana. La cápsula se mueve al plegar o
-  // desplegar el grupo o al sumar pestañas: se recoloca con cada cambio.
+  // desplegar el grupo o al sumar pestañas: se recoloca con cada cambio. Es
+  // un efecto de layout: se coloca antes del primer pintado, así que no hace
+  // falta esconderlo mientras tanto (y escondido no podría recibir el foco).
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const r = findChip(groupId)?.getBoundingClientRect();
     el.style.left = `${r ? Math.min(Math.max(8, r.left), window.innerWidth - EDITOR_WIDTH - 8) : 8}px`;
     el.style.top = `${r ? r.bottom + 8 : 52}px`;
-    el.style.visibility = "visible";
   }, [groupId, group?.collapsed, count]);
 
+  // Se abre listo para escribir el nombre. Al soltar un arrastre, el navegador
+  // puede seguir procesando el ratón después de este efecto y dejar el foco en
+  // ninguna parte (body): entonces el nombre lo recupera en el cuadro siguiente.
+  // Si el foco ya está en otro sitio (lo movió quien usa la app), no se toca.
   useEffect(() => {
-    inputRef.current?.focus();
-    inputRef.current?.select();
+    const take = () => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    };
+    take();
+    const frame = requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (!active || active === document.body) take();
+    });
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {
@@ -853,7 +866,7 @@ const GroupEditor: React.FC<{ groupId: string; onClose: () => void }> = ({ group
       role="dialog"
       aria-label={`Editar ${label}`}
       className="fixed z-50 animate-pop-in rounded-lg border border-[var(--glass-border)] p-3 glass"
-      style={{ left: 0, top: 0, width: EDITOR_WIDTH, visibility: "hidden" }}
+      style={{ left: 0, top: 0, width: EDITOR_WIDTH }}
     >
       <input
         ref={inputRef}
