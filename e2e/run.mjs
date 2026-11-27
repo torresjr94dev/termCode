@@ -22,6 +22,7 @@ import process from "node:process";
 import { DIAG, VITE_PORT, connect, makePage, sleep, startChrome, startVite, waitForHttp } from "./harness.mjs";
 
 const filter = process.argv.slice(2).find((a) => a !== "--");
+const CPU_SLOWDOWN = Math.max(1, Number(process.env.E2E_CPU) || 1);
 const TEST_TIMEOUT_MS = 30_000;
 // Tope de toda la corrida: pase lo que pase, CI no se queda esperando horas.
 const RUN_TIMEOUT_MS = 4 * 60_000;
@@ -1484,6 +1485,17 @@ const TESTS = [
       const to = await p.settledBox(`[data-tab-id="${a}"]`);
       await p.drag({ x: from.left + from.width / 2, y: from.top + from.height / 2 }, { x: to.left + to.width / 2, y: to.top + to.height / 2 });
       await p.waitFor(`document.querySelector('[role="dialog"][aria-label^="Editar"] input')`, "el grupo nuevo abre su editor");
+      // Se escribe sin hacer clic: si el foco no está en el nombre, lo tecleado acabaría en otro sitio (o en la terminal).
+      await p
+        .waitFor(`document.activeElement === document.querySelector('[role="dialog"][aria-label^="Editar"] input')`, "el editor se queda con el foco")
+        .catch(async (err) => {
+          const who = await p.evaluate(`(() => {
+            const a = document.activeElement;
+            const desc = a ? [a.tagName, a.getAttribute("aria-label"), a.getAttribute("data-group-chip") && "cápsula", a.closest(".xterm") && "xterm"].filter(Boolean).join(" · ") : "nada";
+            return desc + " | hasFocus=" + document.hasFocus() + " | visible=" + document.visibilityState + " | editor=" + Boolean(document.querySelector('[role="dialog"][aria-label^="Editar"]'));
+          })()`);
+          throw new Error(`${err.message} → foco en: ${who}`);
+        });
       await p.type("API");
       await p.press("Escape");
       const group = await p.run(`
@@ -1577,6 +1589,8 @@ async function main() {
       });
     }
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+    // E2E_CPU=6: la CPU N veces más lenta, como un runner de CI; saca a la luz las carreras de tiempos.
+    if (CPU_SLOWDOWN > 1) await cdp.send("Emulation.setCPUThrottlingRate", { rate: CPU_SLOWDOWN });
     await cdp.send("Page.navigate", { url: `http://127.0.0.1:${VITE_PORT}/` });
     const page = makePage(cdp);
     await page.waitFor(`document.querySelector("#root")?.childElementCount > 0`, "la app arranca", 20_000);
