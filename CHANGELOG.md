@@ -4,6 +4,8 @@ Todos los cambios importantes de termCode. El formato sigue [Keep a Changelog](h
 
 ## [Sin publicar]
 
+## [0.8.0] - 2026-11-27
+
 ### Añadido
 
 - Grupos de pestañas: arrastra una pestaña encima de otra (al centro) y quedan agrupadas; a sus bordes, se pone al lado y entra o sale del grupo de su vecina. Cada grupo lleva nombre y color (nueve, legibles en todos los temas) y una línea de su color une sus pestañas. Clic en la cápsula pliega el grupo a una sola cápsula con el número de pestañas (y un aviso si alguna te espera); clic derecho o F2 la edita: nombre, color, pestaña nueva en el grupo, desagrupar o cerrarlo entero (siempre pregunta). Arrastrar la cápsula mueve el grupo completo. También desde el clic derecho de la pestaña y desde la paleta. Ir a una pestaña de un grupo plegado (⌘3, la barra lateral, un aviso) lo despliega, y plegar el grupo de la pestaña en la que estás te pasa a la de al lado. Los grupos se guardan con la sesión.
